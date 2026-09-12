@@ -1,3 +1,5 @@
+build/
+
 # Prerequisites
 *.d
 
@@ -60,10 +62,26 @@ compile_commands.json
 
 # vcpkg
 vcpkg_installed/
+vcpkg/
+!vcpkg.json
+
+# Local logs / run outputs
+logs/*
+!logs/.gitkeep
+
+# IDE / editor
+.vscode/
+.idea/
+*.user
+.clangd/
+.cache/
+
+# OS junk
+.DS_Store
+Thumbs.db
 
 # debug information files
 *.dwo
 
 # test output & cache
 Testing/
-.cache/

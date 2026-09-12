@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "sat-tracker",
+  "version-string": "0.1.0",
+  "description": "Self-Adaptive beacon Tracking for mobile FSOC coarse alignment (SIH PS 26169)",
+  "homepage": "https://github.com/kairav-pai/sih2026",
+  "license": "MIT",
+  "supports": "windows | linux",
+  "dependencies": [],
+  "builtin-baseline": "a1cae005c39be7b18ba319fced856b68d7276271"
+}
