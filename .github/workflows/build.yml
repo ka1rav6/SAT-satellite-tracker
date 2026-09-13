@@ -103,6 +103,16 @@ jobs:
         run: ./build/sat-tracker --version
         shell: bash
 
+      # CP 0.7 ★ GATE. Design §14: "Windows CI prints 320x240 @ 30.00 fps,
+      # 30 frames. If this fails, STOP and solve it — 30% of marks depend on
+      # it." Benchmark Performance-2 is entirely evaluator-supplied MP4s, so a
+      # platform where cv::VideoCapture cannot open H.264 is a platform where
+      # nothing downstream matters. Proving it on the Windows runner is the
+      # whole reason design decision 6 insists on a native Windows job.
+      - name: 'CP 0.7 GATE: OpenCV decodes a committed MP4'
+        run: ./build/sat-tracker --probe-video tests/video/clips/gate_320x240_30fps.mp4
+        shell: bash
+
       - name: Upload artifact
         if: matrix.build_type == 'Release'
         uses: actions/upload-artifact@v4

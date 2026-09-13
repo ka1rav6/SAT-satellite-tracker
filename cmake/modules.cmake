@@ -142,6 +142,8 @@ sat_add_module(sat_control
 # tracker, and it is responsible for keeping truth on the metrics side of the
 # wall (design §8.1: "truth — metrics only").
 sat_add_module(sat_engine
+    SOURCES
+        src/engine/video_probe.cpp
     PUBLIC_DEPS sat_core sat_world sat_camera sat_degrade sat_scenario
                 sat_perception sat_tracking sat_control sat_plant sat_search sat_ai
 )
@@ -247,8 +249,33 @@ message(STATUS "SAT: INV-1 link boundary verified for 6 tracker-side targets")
 if(SAT_HAVE_OPENCV)
     # OpenCV reaches the engine for cv::VideoCapture only (design §4.2). It is
     # deliberately NOT linked into sat_perception: nothing in the 30 Hz hot loop
-    # may call it.
-    target_compile_definitions(sat_engine INTERFACE SAT_HAVE_OPENCV=1)
+    # may call it, because cv::Mat allocates (violating INV-4) and OpenCV's
+    # runtime SIMD dispatch can differ across machines (risking INV-3).
+    #
+    # Only the three modules we actually use are linked. Pulling in all of
+    # OpenCV_LIBS would drag dnn, ml and photo into the binary for nothing, and
+    # design §15 budgets ~60 MB for the whole Windows drop.
+    target_compile_definitions(sat_engine PUBLIC SAT_HAVE_OPENCV=1)
+    target_include_directories(sat_engine SYSTEM PUBLIC ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(sat_engine PUBLIC
+        opencv_core        # cv::Mat, only at the decode boundary
+        opencv_videoio     # cv::VideoCapture -- the reason OpenCV is here at all
+        opencv_imgproc     # cvtColor to greyscale at decode (design §8.3 req 2)
+    )
+
+    # The test-oracle target. Design §16 requires our own kernels to be
+    # bit-identical to cv::medianBlur, cv::morphologyEx and
+    # cv::connectedComponents on 1000+ random inputs. That comparison lives in
+    # the TEST binaries, which must therefore see OpenCV -- while the shipping
+    # perception library still must not.
+    add_library(sat_cv_oracle INTERFACE)
+    target_compile_definitions(sat_cv_oracle INTERFACE SAT_HAVE_OPENCV=1)
+    target_include_directories(sat_cv_oracle SYSTEM INTERFACE ${OpenCV_INCLUDE_DIRS})
+    target_link_libraries(sat_cv_oracle INTERFACE opencv_core opencv_imgproc)
+else()
+    # A stand-in so test targets can link it unconditionally. Tests that need an
+    # oracle skip themselves at runtime when SAT_HAVE_OPENCV is not defined.
+    add_library(sat_cv_oracle INTERFACE)
 endif()
 if(SAT_HAVE_ONNX)
     target_compile_definitions(sat_ai INTERFACE SAT_HAVE_ONNX=1)

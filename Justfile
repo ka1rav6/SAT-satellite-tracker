@@ -122,6 +122,44 @@ run *ARGS: build
     "{{build_dir}}/sat-tracker" {{ARGS}}
 
 # ---------------------------------------------------------------------------
+# Video (design §8 — Benchmark Performance-2, 30% of marks)
+# ---------------------------------------------------------------------------
+
+# Regenerate the test clips with ffmpeg. They are committed (72 KB total), so
+# this is only needed when adding a case or after changing the generator.
+make-test-videos:
+    ./tools/make_test_videos.sh
+
+# CP 0.7 ★ GATE — prove this build can decode MP4 at all.
+#
+# Design §14: "If this fails, STOP and solve it — 30% of marks depend on it."
+# Run this first on any new machine or after changing the OpenCV configuration.
+gate-video: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "CP 0.7 gate: probing every committed test clip…"
+    failed=0
+    for f in tests/video/clips/*.mp4; do
+        name=$(basename "$f")
+        if out=$("{{build_dir}}/sat-tracker" --probe-video "$f" 2>/dev/null); then
+            printf "  %-28s %s\n" "$name" "$(echo "$out" | head -1)"
+        else
+            # truncated_noindex.mp4 is SUPPOSED to fail — it has no moov atom.
+            if [[ "$name" == truncated_noindex.mp4 ]]; then
+                printf "  %-28s refused cleanly (expected)\n" "$name"
+            else
+                printf "  %-28s FAILED\n" "$name"
+                failed=1
+            fi
+        fi
+    done
+    exit $failed
+
+# Probe a single video file: `just probe-video path/to/clip.mp4`
+probe-video file: build
+    "{{build_dir}}/sat-tracker" --probe-video "{{file}}"
+
+# ---------------------------------------------------------------------------
 # Invariant gates — these mirror the CI jobs (design §2, §16)
 # ---------------------------------------------------------------------------
 

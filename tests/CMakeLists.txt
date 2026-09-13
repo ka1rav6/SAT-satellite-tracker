@@ -75,6 +75,17 @@ sat_add_test(core_memory
     DEPS    sat_core
 )
 
+# --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------
+# Runs whether or not OpenCV is present: without it the gate test reports a loud
+# SKIP rather than passing silently, so a build that cannot do video says so.
+sat_add_test(video
+    SOURCES video/test_probe.cpp
+    DEPS    sat_core sat_engine
+)
+target_compile_definitions(test_video PRIVATE
+    SAT_TEST_CLIP_DIR="${CMAKE_CURRENT_SOURCE_DIR}/video/clips"
+)
+
 # ===========================================================================
 # End-to-end checks that run the real binary. These catch link and startup
 # breakage that a unit test linking a static library cannot.

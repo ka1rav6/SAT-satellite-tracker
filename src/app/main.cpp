@@ -10,6 +10,7 @@
 
 #include "core/frames.hpp"
 #include "core/units.hpp"
+#include "engine/video_probe.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -54,10 +55,58 @@ void print_derived_constants() {
     std::printf("  tracking error budget 10px = %.2f mrad\n", 10.0 * ifov / 1000.0);
 }
 
+// ---------------------------------------------------------------------------
+// CP 0.7 — the Stage 0 gate.
+//
+// Design §14: "cv::VideoCapture opens a committed test MP4, prints
+// resolution/fps/frames. If this fails, STOP and solve it — 30% of marks depend
+// on it." Kept as a user-facing flag rather than a throwaway, because it is the
+// first thing to run when a new machine or a new OpenCV build misbehaves.
+// ---------------------------------------------------------------------------
+int probe_video_command(const char* path) {
+    if (!sat::video_support_compiled_in()) {
+        std::fprintf(stderr,
+            "sat-tracker: this build has no video support.\n"
+            "  OpenCV was not found at configure time. Synthetic scenarios still\n"
+            "  work; MP4 ingest (design §8, Benchmark Performance-2) does not.\n"
+            "  Install OpenCV and reconfigure with -DSAT_WITH_OPENCV=ON.\n");
+        return 3;
+    }
+
+    // Decode as well as probe: a container can report a frame count it cannot
+    // deliver, and a truncated file is exactly that case.
+    auto r = sat::probe_video(path, -1);
+    if (!r) {
+        std::fprintf(stderr, "sat-tracker: %s\n", r.error().c_str());
+        return 1;
+    }
+
+    const sat::VideoProbe& p = *r;
+    std::printf("%s\n", p.summary().c_str());
+    std::printf("  decoded %lld frames\n", static_cast<long long>(p.frames_read));
+
+    if (!p.plausible()) {
+        std::fprintf(stderr,
+            "sat-tracker: the container's numbers are not usable "
+            "(need width>0, height>0, 0<fps<1000).\n");
+        return 1;
+    }
+    if (p.frame_count > 0 && p.frames_read < p.frame_count) {
+        // Not an error. Design §8.8 has a truncated clip on purpose, and the
+        // required behaviour is a clean termination, not a failure.
+        std::printf("  note: container claimed %lld frames but only %lld decoded "
+                    "(truncated or corrupt — this is handled, not fatal)\n",
+                    static_cast<long long>(p.frame_count),
+                    static_cast<long long>(p.frames_read));
+    }
+    return 0;
+}
+
 void print_usage() {
     std::printf("usage: sat-tracker [options]\n\n");
-    std::printf("  --version     print the version and build hash, then exit\n");
-    std::printf("  --help        print this message\n");
+    std::printf("  --version            print the version and build hash, then exit\n");
+    std::printf("  --probe-video FILE   open FILE and report resolution/fps/frames (CP 0.7)\n");
+    std::printf("  --help               print this message\n");
     std::printf("\nThe full command line from design §13.4 (--scenario, --video,\n");
     std::printf("--headless, --sweep, --no-ai) arrives with the scenario loader.\n");
 }
@@ -69,6 +118,13 @@ int main(int argc, char* argv[]) {
         if (std::strcmp(argv[i], "--version") == 0) {
             std::printf("%s %s+%s\n", SAT_PRODUCT_NAME, SAT_VERSION, SAT_GIT_HASH);
             return 0;
+        }
+        if (std::strcmp(argv[i], "--probe-video") == 0) {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "sat-tracker: --probe-video needs a file path\n");
+                return 2;
+            }
+            return probe_video_command(argv[++i]);
         }
         if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             print_usage();
