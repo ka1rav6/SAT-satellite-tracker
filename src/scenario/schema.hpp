@@ -151,4 +151,19 @@ void validate_scenario(const Scenario& sc, Validator& v);
 [[nodiscard]] double max_accel_px_s2(const MotionSpec& m, double duration_s) noexcept;
 [[nodiscard]] double max_accel_px_s2(const TargetSpec& t, double duration_s) noexcept;
 
+// ---------------------------------------------------------------------------
+// max_speed_px_s — the largest speed a motion stack can produce.
+//
+// The companion to max_accel_px_s2, and needed for the same reason: the Kalman
+// filter's one-point initialisation has to state a prior for a velocity it has
+// not yet observed, and §7.2's closed forms make that prior computable instead
+// of guessed.
+//
+// The distinction that matters is WHOSE speed. The mount's slew limit is the
+// wrong bound — it is the camera's authority, and the filter's state lives in
+// the world angular frame where the camera's motion has already been removed.
+// ---------------------------------------------------------------------------
+[[nodiscard]] double max_speed_px_s(const MotionSpec& m, double duration_s) noexcept;
+[[nodiscard]] double max_speed_px_s(const TargetSpec& t, double duration_s) noexcept;
+
 }  // namespace sat

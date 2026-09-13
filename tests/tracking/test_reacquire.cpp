@@ -229,21 +229,44 @@ TEST_CASE("CP 6.7: a short blink is ridden out on the prediction, with no mode c
 
     const float kept = p.source().emitters().intensity[ti];
     p.source().emitters().intensity[ti] = 0.0f;
+    int reacquire_frames = 0;
     for (int i = 0; i < 8; ++i) {                 // 8 frames, CP 6.4's number
         REQUIRE(p.step());
-        CHECK(p.last().has_lock);                 // never loses the lock
-        CHECK(p.last().mode == TrackMode::Reacquire);
-        // Note what is NOT asserted: that perception found nothing. It finds
-        // several candidates a frame from noise — CFAR's measured Pfa (CP 5.5)
-        // times 307,200 pixels, correlated into blobs by the matched filter's
-        // box kernel, is a handful of blobs per frame and always will be.
-        // Rejecting them is the gate's job, and that it does so is what the
-        // 5 px tracking error below actually measures.
+        // THE CHECKPOINT'S ACTUAL CRITERION: the track is not deleted and the
+        // camera keeps moving on the prediction. This holds on every frame.
+        CHECK(p.last().has_lock);
+        if (p.last().mode == TrackMode::Reacquire) ++reacquire_frames;
     }
+
+    // ------------------------------------------------------------------
+    // What is deliberately NOT asserted, and why it changed at Stage 7.
+    //
+    // This used to require mode == Reacquire on all eight frames. It no longer
+    // holds on all eight, and the reason is a fix rather than a regression: the
+    // measurement-noise floor is now sized for spec row 23's jitter (see
+    // PipelineConfig::pointing_sigma_px), so the gate reaches ~35 px instead of
+    // ~20. CFAR legitimately reports a handful of noise blobs per frame — its
+    // measured Pfa times 307,200 pixels, correlated into patches by the matched
+    // filter's box kernel — and with a wider gate one of them occasionally
+    // lands inside it and re-confirms the track for a frame.
+    //
+    // That is the price of a gate wide enough to accept the TRUE detection
+    // under the specified jitter, and it is the right side of the trade: before
+    // the fix the gate rejected the real beacon on a quarter of all frames and
+    // lock retention was 69%. A spurious association costs little because
+    // adaptive R (CP 6.5) gives a low-SNR blob a large R, so its update barely
+    // moves the estimate — which is what the error check below measures.
+    //
+    // So the assertion is on the property the checkpoint names: the lock
+    // survives, and mostly as Reacquire rather than by luck.
+    // ------------------------------------------------------------------
+    MESSAGE("Reacquire on " << reacquire_frames << " of 8 blanked frames");
+    CHECK(reacquire_frames >= 5);
     p.source().emitters().intensity[ti] = kept;
 
     // Back to Track, and the error must not have blown up: the camera kept
-    // moving on the prediction throughout.
+    // moving on the prediction throughout, and whatever spurious associations
+    // happened during the blink did not drag it anywhere.
     for (int i = 0; i < 10; ++i) REQUIRE(p.step());
     CHECK(p.last().mode == TrackMode::Track);
     MESSAGE("tracking error after an 8-frame blink: "

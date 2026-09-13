@@ -200,8 +200,10 @@ sat_add_module(sat_metrics
     SOURCES
         src/metrics/collector.cpp
         src/metrics/centroid_log.cpp
+        src/metrics/run_report.cpp
     PUBLIC_DEPS sat_core sat_world sat_engine
 )
+target_link_libraries(sat_metrics PRIVATE nlohmann_json::nlohmann_json)
 
 # gui — the dashboard (design §12). Deferred: the engine is built headless-first
 # with the triple-buffered snapshot seam already in place, so the dashboard
@@ -349,6 +351,7 @@ endif()
 # ===========================================================================
 add_executable(sat-tracker
     src/app/main.cpp
+    src/app/headless.cpp
     src/app/verify_repro.cpp
 )
 

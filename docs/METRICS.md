@@ -162,7 +162,45 @@ Every sample is kept rather than estimated by a streaming quantile algorithm. A
 computed exactly, to save 29 KB, is a poor trade when the output is a compliance
 matrix.
 
-### 2.10 Not yet implemented
+### 2.10 A derived floor on `tracking_error` (spec rows 17 vs 23)
+
+Spec row 17 caps tracking error at **10 px**. Spec row 23 independently
+specifies a camera jitter of up to **±20 px per frame**, applied to the *true*
+boresight and invisible to the encoder.
+
+These two requirements are in tension, and the arithmetic is short. Jitter is
+drawn uniformly on `[−A, A]` per axis (see
+[`src/degrade/disturbance.cpp`](../src/degrade/disturbance.cpp), which explains
+why uniform rather than Gaussian). A uniform distribution has variance `A²/3`,
+so with `A = 20 px` each axis contributes 133.3 px² and the magnitude over two
+independent axes has
+
+```
+RMS = sqrt(2 · 400/3) = 16.33 px
+```
+
+**That is a floor no controller can go below**, because the disturbance
+displaces the boresight *after* the command has been issued and nothing in the
+system observes it. A system reporting under 10 px on this metric with row 23's
+jitter applied is either not applying the specified jitter or not measuring
+against the true boresight.
+
+This is reported rather than engineered around, exactly as §10.5's acquisition
+bound is. The controllable part is measured by running the same scenario with
+the disturbance removed. Measured on `scenarios/baseline.toml`, beacon in view,
+10 s:
+
+| Configuration | tracking RMS |
+|---|---|
+| spec row 23 jitter (±20 px/frame) | 17.14 px |
+| derived floor from the jitter alone | 16.33 px |
+| jitter disabled | 2.86 px |
+
+The loop contributes ~0.8 px on top of the disturbance, and meets row 17 with
+room to spare once the disturbance is removed. Both figures are reported in the
+compliance matrix, labelled.
+
+### 2.11 Not yet implemented
 
 | Metric | Status |
 |---|---|

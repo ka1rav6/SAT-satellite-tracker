@@ -66,6 +66,34 @@ void Pipeline::build_stage6() {
     if (cfg_.tracking.kf.accel_psd_urad2_s3 <= 0.0) {
         cfg_.tracking.kf = KalmanParams::from_max_accel(a_max, dt);
     }
+    // -----------------------------------------------------------------------
+    // The velocity prior, and the gate's physical cap.
+    //
+    // ANOTHER CORRECTION IN THE SAME FAMILY AS q's. KalmanParams' default
+    // velocity prior is the mount's full slew rate (175,000 urad/s = 1,600
+    // px/s), on the reasoning that with no velocity information the honest
+    // prior is "anything up to the fastest thing that can happen". That is the
+    // fastest thing the CAMERA can do, and the filter's state is in the world
+    // frame where the camera's motion has already been removed.
+    //
+    // The cost was not subtle. A 1,600 px/s prior makes the predicted position
+    // uncertain by ~53 px after a single frame, so for the first several frames
+    // of a track the chi-square gate is over 150 px wide — and a CFAR noise
+    // blob 81 px from the beacon walked straight into it and captured the
+    // track. Sizing the prior from the target's own computable maximum speed
+    // closes that window.
+    //
+    // The reachability cap is belt and braces for the same failure, and it is
+    // the one that keeps holding later in a run: see TrackParams.
+    // -----------------------------------------------------------------------
+    cfg_.tracking.kf.initial_rate_sigma_urad_s = cfg_.max_target_speed_urad_s;
+    cfg_.tracking.max_target_speed_urad_s      = cfg_.max_target_speed_urad_s;
+    // The cap's padding is the measurement's own uncertainty, so a correct
+    // detection is never excluded by it: the pointing budget plus a couple of
+    // pixels of centroiding slack.
+    cfg_.tracking.gate_pad_urad =
+        (cfg_.pointing_sigma_px * 3.0 + 2.0) * cam.ifov_urad();
+
     tracker_.reset(cfg_.tracking);
 
     cfg_.mode.ifov_urad = cam.ifov_urad();
@@ -130,12 +158,20 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     // §7.2's closed forms turned into the filter's q. The largest acceleration
     // over every target, because the tracker does not know which one it will
     // end up on and must be able to follow any of them.
-    double a_px = 0.0;
+    double a_px = 0.0, v_px = 0.0;
     for (const TargetSpec& t : sc.targets) {
         a_px = std::max(a_px, max_accel_px_s2(t, sc.duration_s));
+        v_px = std::max(v_px, max_speed_px_s(t, sc.duration_s));
     }
     cfg.max_target_accel_urad_s2 = a_px * cfg.synthetic.camera.ifov_urad();
     cfg.min_target_accel_urad_s2 = 50.0 * cfg.synthetic.camera.ifov_urad();
+    // A floor here too, and for the same reason as the acceleration's: a
+    // stationary target has an analytic speed of exactly zero, and a filter
+    // that believes the target cannot move at all will reject the first frame
+    // where anything is slightly not as modelled. 50 px/s is well under the
+    // slowest interesting motion and well over the residual wander.
+    cfg.max_target_speed_urad_s =
+        std::max(v_px, 50.0) * cfg.synthetic.camera.ifov_urad();
 
     cfg_ = cfg;
     source_.build_from_scenario(sc);
@@ -263,14 +299,20 @@ bool Pipeline::step() {
     // cheat in this project.
     // -----------------------------------------------------------------------
     //
-    // The pointing-uncertainty floor on R: the encoder LSB is what the system
-    // knows it does not know about its own boresight. Jitter and platform drift
-    // are larger, but the tracker cannot observe them and must not be handed
-    // their magnitude — that would be reading a simulator parameter, which is
-    // the same class of mistake as reading the truth (INV-1). The filter
-    // discovers them as innovation, which is exactly what a filter is for.
-    const double pointing_sigma = std::max(cfg_.pan.encoder_lsb_urad,
-                                           cfg_.tilt.encoder_lsb_urad);
+    // The pointing-uncertainty floor on R. Two independent contributions, added
+    // in quadrature:
+    //
+    //   the encoder quantisation, which the mount's own datasheet states, and
+    //   the pointing stability budget (spec row 23), which is the disturbance
+    //   the system is required to tolerate.
+    //
+    // See PipelineConfig::pointing_sigma_px for why the second one is taken
+    // from the SPECIFICATION and never from the scenario, and for the
+    // measurement that showed it has to be there at all.
+    const double encoder = std::max(cfg_.pan.encoder_lsb_urad,
+                                    cfg_.tilt.encoder_lsb_urad);
+    const double budget  = cfg_.pointing_sigma_px * cfg_.synthetic.camera.ifov_urad();
+    const double pointing_sigma = std::sqrt(encoder * encoder + budget * budget);
     meas_.clear();
     for (size_t i = 0; i < dets_.size(); ++i) {
         meas_.push_back(to_measurement(dets_[i], cfg_.synthetic.camera, commanded,

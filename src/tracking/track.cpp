@@ -46,12 +46,29 @@ void Track::start(const Measurement& m, const TrackParams& p, int64_t frame) noe
 
 void Track::predict(double dt) noexcept {
     if (state_ == TrackState::Deleted) return;
+    dt_ = dt;
     kf_.predict(dt);
 }
 
 double Track::distance2(const Measurement& m) const noexcept {
     if (state_ == TrackState::Deleted) return std::numeric_limits<double>::max();
     return kf_.mahalanobis2(m.angle, sigma_for(m));
+}
+
+double Track::reach_urad() const noexcept {
+    if (p_.max_target_speed_urad_s <= 0.0) return std::numeric_limits<double>::max();
+    // misses_ + 1 frames of travel: the target was last seen one accepted
+    // measurement ago, and every miss since then is another frame in which it
+    // could have kept moving. dt is the nominal frame interval, which is exact
+    // here because the clock is derived (core/time.hpp), never wall-clock.
+    const double frames = static_cast<double>(misses_ + 1);
+    return p_.max_target_speed_urad_s * frames * dt_ + p_.gate_pad_urad;
+}
+
+bool Track::within_reach(const Measurement& m) const noexcept {
+    if (p_.max_target_speed_urad_s <= 0.0) return true;
+    const Angle2 d{m.angle.x - kf_.position().x, m.angle.y - kf_.position().y};
+    return d.norm() <= reach_urad();
 }
 
 double Track::assoc_score(const Measurement& m) const noexcept {
@@ -223,7 +240,7 @@ int Tracker::step(double dt, std::span<Measurement> meas, int64_t frame) noexcep
     int    best       = -1;
     double best_score = std::numeric_limits<double>::max();
     for (size_t i = 0; i < meas.size(); ++i) {
-        if (track_.distance2(meas[i]) < p_.gate_chi2) {
+        if (track_.gates(meas[i])) {
             ++gated_;
             const double score = track_.assoc_score(meas[i]);
             if (score < best_score) { best_score = score; best = static_cast<int>(i); }

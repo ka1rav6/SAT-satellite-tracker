@@ -104,6 +104,42 @@ struct TrackParams {
     /// hit, which is the worst of both).
     double min_r_sigma_urad = 5.0;
     double max_r_sigma_urad = 5.0e3;
+
+    // -----------------------------------------------------------------------
+    // A PHYSICAL CAP ON THE GATE, on top of the chi-square one.
+    //
+    // Added at Stage 7, because the metrics found the failure the chi-square
+    // gate cannot prevent on its own. The trace, from scenarios/baseline.toml
+    // with the beacon pinned in view:
+    //
+    //   frame 3   the beacon is briefly missed during the approach slew
+    //             (motion blur at ~18 px/frame), the only candidates are CFAR
+    //             noise blobs, and one 81 px away is INSIDE the gate — because
+    //             three frames after a one-point initialisation the position
+    //             covariance is still dominated by the velocity prior.
+    //   frame 4+  the corrupted velocity estimate drives the mount to its rate
+    //             limit, the real beacon falls outside the gate for good, and
+    //             the camera slews away for the remaining 446 frames.
+    //
+    // A chi-square gate is a statement about the filter's OWN uncertainty, so
+    // it is only as good as that uncertainty is honest — and right after
+    // initialisation it is deliberately not, because a wide prior is how you
+    // admit you know nothing about the velocity yet. That is the moment a
+    // track is most vulnerable and the moment the statistical gate is weakest.
+    //
+    // This cap is a different kind of claim, and one that stays true: the
+    // TARGET CANNOT HAVE MOVED FURTHER THAN ITS OWN MAXIMUM SPEED ALLOWS.
+    // §7.2 makes that speed computable (scenario::max_speed_px_s), and the
+    // budget below is
+    //
+    //     max_target_speed * elapsed_since_last_update + pointing allowance
+    //
+    // so it widens honestly while coasting — at the target's speed, not at the
+    // covariance's — and never admits a candidate that no physical target
+    // could have reached.
+    // -----------------------------------------------------------------------
+    double max_target_speed_urad_s = 0.0;   ///< 0 disables the cap
+    double gate_pad_urad           = 0.0;   ///< pointing + centroid allowance
 };
 
 // ---------------------------------------------------------------------------
@@ -122,10 +158,19 @@ public:
     /// "minimum distance" logic never selects one.
     [[nodiscard]] double distance2(const Measurement& m) const noexcept;
 
-    /// Is this measurement inside the gate?
+    /// Is this measurement inside the gate? BOTH gates: the chi-square one and
+    /// the physical reachability cap. See TrackParams::max_target_speed_urad_s.
     [[nodiscard]] bool gates(const Measurement& m) const noexcept {
-        return distance2(m) < p_.gate_chi2;
+        return distance2(m) < p_.gate_chi2 && within_reach(m);
     }
+
+    /// Could a target moving at its maximum speed have got here since the last
+    /// accepted measurement? Always true when the cap is disabled.
+    [[nodiscard]] bool within_reach(const Measurement& m) const noexcept;
+
+    /// The reachability radius this frame, microradians. Exposed so the GUI can
+    /// draw it and a test can assert it grows with the miss count.
+    [[nodiscard]] double reach_urad() const noexcept;
 
     // -----------------------------------------------------------------------
     // assoc_score — what nearest neighbour actually minimises.
@@ -209,6 +254,7 @@ private:
 
     float  mean_snr_   = 0.0f;
     double last_sigma_ = 0.0;
+    double dt_         = 1.0 / 30.0;   ///< frame interval, for reach_urad()
 };
 
 // ---------------------------------------------------------------------------

@@ -436,4 +436,54 @@ double max_accel_px_s2(const TargetSpec& t, double duration_s) noexcept {
     return sum;
 }
 
+double max_speed_px_s(const MotionSpec& m, double duration_s) noexcept {
+    const double w = (m.period_s > 0.0) ? (2.0 * kPi / m.period_s) : 0.0;
+
+    if (m.kind == "constant") return 0.0;
+    if (m.kind == "linear") {
+        return std::hypot(m.velocity_px_s[0], m.velocity_px_s[1]);
+    }
+    if (m.kind == "accel") {
+        // v(t) = v0 + a t, largest at the end of the run.
+        return std::hypot(m.velocity_px_s[0] + m.accel_px_s2[0] * duration_s,
+                          m.velocity_px_s[1] + m.accel_px_s2[1] * duration_s);
+    }
+    if (m.kind == "circular")  return w * std::fabs(m.radius_px);
+    if (m.kind == "sinusoid") {
+        const double a = (m.axis == 0) ? m.amplitude_px[0] : m.amplitude_px[1];
+        return w * std::fabs(a);
+    }
+    if (m.kind == "lissajous") {
+        return std::hypot(w * std::fabs(m.amplitude_px[0]),
+                          w * m.freq_ratio * std::fabs(m.amplitude_px[1]));
+    }
+    if (m.kind == "spiral") {
+        const double r_max = std::fabs(m.r0_px) + std::fabs(m.growth_px_s) * duration_s;
+        return std::hypot(std::fabs(m.growth_px_s), w * r_max);
+    }
+    if (m.kind == "ou_noise") {
+        // Stationary standard deviation of an OU velocity process driven by
+        // sigma with correlation time tau is sigma * sqrt(tau/2). Three of
+        // those covers it with the same 3-sigma convention used elsewhere.
+        return 3.0 * m.sigma_px_s * std::sqrt(std::max(m.tau_s, 0.0) / 2.0);
+    }
+    if (m.kind == "waypoints") {
+        double worst = 0.0;
+        for (size_t i = 1; i < m.points.size(); ++i) {
+            const double dt = m.points[i][0] - m.points[i - 1][0];
+            if (dt <= 0.0) continue;
+            worst = std::max(worst, std::hypot(m.points[i][1] - m.points[i - 1][1],
+                                               m.points[i][2] - m.points[i - 1][2]) / dt);
+        }
+        return worst;
+    }
+    return 0.0;
+}
+
+double max_speed_px_s(const TargetSpec& t, double duration_s) noexcept {
+    double sum = 0.0;
+    for (const MotionSpec& m : t.motion) sum += max_speed_px_s(m, duration_s);
+    return sum;
+}
+
 }  // namespace sat

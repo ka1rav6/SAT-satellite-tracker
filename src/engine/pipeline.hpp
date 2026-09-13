@@ -202,6 +202,73 @@ struct PipelineConfig {
     // -----------------------------------------------------------------------
     double max_target_accel_urad_s2 = 5.2e4;
 
+    /// The largest speed the target can reach, urad/s. Sizes the filter's
+    /// velocity prior (one-point initialisation has to state one) and the
+    /// physical reachability cap on the gate. Like the acceleration above it is
+    /// the TARGET's, computed from §7.2's closed forms by build_from_scenario;
+    /// the default here is the same representative motion, a 300 px circle at
+    /// 0.2 Hz, which peaks at 377 px/s.
+    double max_target_speed_urad_s = 377.0 * 109.08;
+
+    // -----------------------------------------------------------------------
+    // POINTING STABILITY BUDGET — the tracker's own assumption about how well
+    // it knows where it is pointing, in pixels, 1 sigma.
+    //
+    // A CORRECTION TO STAGE 6, found by Stage 7's metrics on the very first
+    // full-scenario run. The reasoning recorded there was:
+    //
+    //   "R's pointing floor is the encoder LSB, deliberately not the jitter
+    //    amplitude... the filter discovers them as innovation, which is what a
+    //    filter is for."
+    //
+    // The first half is right and the second half is wrong. A filter CANNOT
+    // discover noise its gate rejects. The measurement is
+    // `commanded_boresight + unproject(centroid)`, so the pointing error is
+    // additive measurement noise; with R set to the encoder quantisation the
+    // gate is about a pixel wide, and spec row 23's jitter moves the true
+    // boresight by up to 20 px per frame. The true detection fell outside the
+    // gate on almost every frame, so no innovation was ever accepted and there
+    // was nothing to adapt from.
+    //
+    // Measured on scenarios/baseline.toml with the beacon pinned in view and no
+    // clutter — the same run, the same seed, jitter the only difference:
+    //
+    //     jitter 20 px/frame   lock retention  0.6 %   acquisition 8.37 s
+    //     jitter  0 px/frame   lock retention 99.3 %   acquisition 0.07 s
+    //                          tracking 2.89 px RMS, centroid 0.26 px RMSE
+    //
+    // WHY THIS NUMBER IS NOT CHEATING. It is NOT read from the scenario — doing
+    // that would be reading simulator state, the same class of mistake as
+    // reading the truth, and INV-1 exists to prevent it. It comes from spec row
+    // 23, which states the disturbance the system is REQUIRED to tolerate:
+    // "Max camera jitter +/- 20 px/frame". That is a published requirement, and
+    // sizing a filter for its specified disturbance envelope is what designing
+    // to a specification means. A scenario that jitters less gets a filter that
+    // is merely conservative; one that jitters more is out of spec.
+    //
+    // THE DISTRIBUTION MATTERS, not just the bound. degrade/disturbance.cpp
+    // draws jitter UNIFORMLY in [-20, +20] px per axis, once per camera frame,
+    // and says why: "a uniform bound means the stated figure is exactly the
+    // worst case". The standard deviation of that distribution is 20/sqrt(3) =
+    // 11.55 px, not 20/3.
+    //
+    // The first version of this line used peak/3, reasoning about a Gaussian
+    // when the process is uniform. It is 1.7x too small, and the consequence
+    // was measurable rather than theoretical: the chi-square gate's radius is
+    // sqrt(9.21) = 3.03 sigma, so at 6.67 px it reached 20 px — exactly the
+    // jitter's peak — and rejected the true detection on roughly a quarter of
+    // frames. The track oscillated Confirmed/Coasting about six times a second
+    // and lock retention sat at 69%. At the correct sigma the gate reaches
+    // 35 px, which covers the box's 28.3 px corner.
+    //
+    // The better long-term answer is to ESTIMATE this from the innovation
+    // sequence rather than assume it (Mehra-style adaptive R), which would let
+    // a well-stabilised mount earn a tighter gate. That needs the gate to be
+    // accepting measurements first, which is what this floor makes true, and
+    // it belongs with CP 10.3's platform-drift estimation.
+    // -----------------------------------------------------------------------
+    double pointing_sigma_px = 20.0 / 1.7320508075688772;   // spec row 23's peak / sqrt(3)
+
     /// Floor on the above. A purely linear target has an analytic acceleration
     /// of exactly zero, and a filter with q = 0 is not a filter — it becomes
     /// arbitrarily confident and then refuses every measurement, including the
@@ -265,6 +332,12 @@ public:
     /// the simulator as a frame source and run their own perception — for which
     /// paying for the full §9.4 pipeline twice per frame is pure waste.
     void set_detector(PipelineConfig::Detector d) noexcept { cfg_.detector = d; }
+
+    /// Turn snapshot publishing on or off after build(). A published snapshot
+    /// costs a ~300 KB frame copy and is what produces the INV-3 fingerprint,
+    /// so a pure speed run turns it off — measuring it would mean measuring
+    /// the measuring — and anything that has to be reproducible turns it on.
+    void set_publish_snapshots(bool on) noexcept { cfg_.publish_snapshots = on; }
     [[nodiscard]] PipelineConfig::Detector detector() const noexcept { return cfg_.detector; }
 
     /// Flip the loop open or closed mid-run. Used by the CP 1.8 test and by the

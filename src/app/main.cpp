@@ -10,6 +10,7 @@
 
 #include "core/frames.hpp"
 #include "core/units.hpp"
+#include "app/headless.hpp"
 #include "app/verify_repro.hpp"
 #include "scenario/schema.hpp"
 
@@ -178,14 +179,19 @@ void print_usage() {
     std::printf("usage: sat-tracker [options]\n\n");
     std::printf("  --version            print the version and build hash, then exit\n");
     std::printf("  --gui [--scenario F] open the live dashboard (design §12)\n");
+    std::printf("  --headless [--scenario F] [--out DIR] [--seed N] [--duration S]\n");
+    std::printf("             [--no-ai] [--bench] [--quiet]\n");
+    std::printf("                       run with no window; writes centroid.csv and\n");
+    std::printf("                       run.json to --out and prints the design 13.1\n");
+    std::printf("                       metric summary (CP 7.3, CP 7.4)\n");
     std::printf("  --probe-video FILE   open FILE and report resolution/fps/frames (CP 0.7)\n");
     std::printf("  --has-video          exit 0 if this build can decode video, 1 if not\n");
     std::printf("  --verify-reproducibility [--seeds N] [--duration S]\n");
     std::printf("                       run every built-in scenario twice and compare\n");
     std::printf("                       frame fingerprints (CP 2.6, INV-3)\n");
     std::printf("  --help               print this message\n");
-    std::printf("\nThe full command line from design §13.4 (--scenario, --video,\n");
-    std::printf("--headless, --sweep, --no-ai) arrives with the scenario loader.\n");
+    std::printf("\nStill to come from design 13.4: --video, --sweep, --gen-dataset,\n");
+    std::printf("--fuzz-scenarios.\n");
 }
 
 }  // namespace
@@ -198,6 +204,9 @@ int main(int argc, char* argv[]) {
         }
         if (std::strcmp(argv[i], "--gui") == 0) {
             return gui_command(argc, argv, i);
+        }
+        if (std::strcmp(argv[i], "--headless") == 0) {
+            return sat::headless_command(argc, argv, i);
         }
         if (std::strcmp(argv[i], "--verify-reproducibility") == 0) {
             return verify_reproducibility_command(argc, argv, i);

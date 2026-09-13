@@ -355,3 +355,20 @@ info: configure
 docker-setup:
     @echo "docker-setup: Dockerfile not added yet (planned alongside the CI pipeline)."
     @echo "For now: just build && just test"
+
+# ---------------------------------------------------------------------------
+# Stage 7 — metrics, logs, batch (design §13)
+# ---------------------------------------------------------------------------
+
+# One headless run with the §13.1 metric summary, centroid.csv and run.json.
+#   just headless                                  the baseline scenario
+#   just headless "--scenario scenarios/fog_figure8.toml --duration 20"
+headless *ARGS: build
+    "{{build_dir}}/sat-tracker" --headless --out logs {{ARGS}}
+
+# The §3.2 graded requirements, measured on the specification's OWN defaults —
+# row 23's jitter included, which is the configuration that exposed the
+# mis-sized gate at Stage 7. Prints the numbers rather than just pass/fail.
+spec-run: build
+    "{{build_dir}}/test_metrics" -tc="*specification's own jitter*,*derived floor*,*clutter costs*" \
+        --success | grep -E "MESSAGE|TEST CASE|ERROR|test cases"
