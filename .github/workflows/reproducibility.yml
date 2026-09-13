@@ -1,0 +1,115 @@
+# .github/workflows/reproducibility.yml — CP 2.6, the Stage 2 ★ GATE.
+#
+# Design §14: "--verify-reproducibility; CI job running 5 scenarios x 3 seeds at
+# -O0 and -O2, comparing hashes."
+#
+# INV-3 is what makes every other number in the project trustworthy. A
+# compliance matrix from 1500 runs is evidence only if rerunning those runs
+# gives the same answer, and an ablation showing feedforward helps is evidence
+# only if the two arms differ by feedforward and nothing else. Without this,
+# every measurement is an anecdote.
+
+name: reproducibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: repro-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Determinism within each build, at both optimisation levels.
+  # -------------------------------------------------------------------------
+  within-build:
+    name: deterministic at ${{ matrix.opt }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - opt: O0
+            build_type: Debug
+          - opt: O2
+            build_type: Release
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libeigen3-dev
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_TESTING=OFF
+          cmake --build build --target sat-tracker --parallel
+
+      - name: Verify reproducibility
+        run: ./build/sat-tracker --verify-reproducibility --seeds 3 --duration 2.0 | tee repro-${{ matrix.opt }}.txt
+
+      # The digest lines are what the cross-build job compares. Uploading them
+      # rather than recomputing keeps the two jobs comparing the same artifact.
+      - name: Extract digests
+        run: grep -E '^(static|linear|fast|multi|offset)' repro-${{ matrix.opt }}.txt | awk '{print $1, $2, $5}' > digests-${{ matrix.opt }}.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.opt }}
+          path: digests-${{ matrix.opt }}.txt
+
+  # -------------------------------------------------------------------------
+  # Agreement ACROSS optimisation levels. This is the half that catches an FMA
+  # contraction or a reassociated floating-point expression — the reason
+  # -ffp-contract=off and /fp:precise are mandatory (design §2, INV-3).
+  # -------------------------------------------------------------------------
+  across-builds:
+    name: -O0 and -O2 agree
+    runs-on: ubuntu-latest
+    needs: within-build
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: 'digests-*', merge-multiple: true }
+
+      - name: Compare digests
+        run: |
+          set -euo pipefail
+          echo "=== -O0 ==="; cat digests-O0.txt
+          echo "=== -O2 ==="; cat digests-O2.txt
+          if ! diff -u digests-O0.txt digests-O2.txt; then
+            echo ""
+            echo "INV-3 VIOLATION: the same scenario produced different results at" >&2
+            echo "different optimisation levels. The usual cause is floating-point" >&2
+            echo "contraction or reassociation — check that -ffp-contract=off and" >&2
+            echo "-fno-fast-math are still being applied (see CMakeLists.txt)." >&2
+            exit 1
+          fi
+          echo ""
+          echo "PASS: -O0 and -O2 produce bit-identical results."
+
+  # -------------------------------------------------------------------------
+  # Prove the check can fail. Design §14 CP 2.6 asks for this explicitly:
+  # "deliberately inject a std::chrono call into the sim path and confirm the
+  # job goes red."
+  #
+  # A reproducibility check nobody has watched fail is indistinguishable from
+  # one that always prints PASS.
+  # -------------------------------------------------------------------------
+  self-test:
+    name: the check detects an injected clock read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libeigen3-dev
+
+      - name: Inject a violation and confirm the check goes red
+        run: ./tools/verify_repro_guard.sh

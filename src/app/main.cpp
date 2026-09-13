@@ -10,7 +10,11 @@
 
 #include "core/frames.hpp"
 #include "core/units.hpp"
+#include "app/verify_repro.hpp"
 #include "engine/video_probe.hpp"
+
+#include <cstdlib>
+#include <vector>
 
 #include <cstdio>
 #include <cstring>
@@ -102,10 +106,40 @@ int probe_video_command(const char* path) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// CP 2.6 — the Stage 2 gate. See app/verify_repro.hpp for why it is a gate.
+// ---------------------------------------------------------------------------
+int verify_reproducibility_command(int argc, char* argv[], int& i) {
+    std::vector<uint64_t> seeds{1, 2, 3};
+    double duration_s = 2.0;
+
+    // --seeds N   sweep seeds 1..N
+    // --duration S
+    for (int k = i + 1; k < argc; ++k) {
+        if (std::strcmp(argv[k], "--seeds") == 0 && k + 1 < argc) {
+            const int n = std::atoi(argv[++k]);
+            seeds.clear();
+            for (int s = 1; s <= n; ++s) seeds.push_back(static_cast<uint64_t>(s));
+            i = k;
+        } else if (std::strcmp(argv[k], "--duration") == 0 && k + 1 < argc) {
+            duration_s = std::atof(argv[++k]);
+            i = k;
+        } else {
+            break;
+        }
+    }
+
+    const auto results = sat::verify_reproducibility(seeds, duration_s);
+    return sat::report_reproducibility(results);
+}
+
 void print_usage() {
     std::printf("usage: sat-tracker [options]\n\n");
     std::printf("  --version            print the version and build hash, then exit\n");
     std::printf("  --probe-video FILE   open FILE and report resolution/fps/frames (CP 0.7)\n");
+    std::printf("  --verify-reproducibility [--seeds N] [--duration S]\n");
+    std::printf("                       run every built-in scenario twice and compare\n");
+    std::printf("                       frame fingerprints (CP 2.6, INV-3)\n");
     std::printf("  --help               print this message\n");
     std::printf("\nThe full command line from design §13.4 (--scenario, --video,\n");
     std::printf("--headless, --sweep, --no-ai) arrives with the scenario loader.\n");
@@ -118,6 +152,9 @@ int main(int argc, char* argv[]) {
         if (std::strcmp(argv[i], "--version") == 0) {
             std::printf("%s %s+%s\n", SAT_PRODUCT_NAME, SAT_VERSION, SAT_GIT_HASH);
             return 0;
+        }
+        if (std::strcmp(argv[i], "--verify-reproducibility") == 0) {
+            return verify_reproducibility_command(argc, argv, i);
         }
         if (std::strcmp(argv[i], "--probe-video") == 0) {
             if (i + 1 >= argc) {

@@ -222,11 +222,47 @@ gate-no-rand:
 gate-inv1-selftest:
     ./tools/verify_inv1_guard.sh
 
+# INV-3 ★ GATE (CP 2.6) — run every built-in scenario twice and compare
+# frame fingerprints. This is what makes every benchmark number evidence rather
+# than an anecdote.
+gate-repro: build
+    "{{build_dir}}/sat-tracker" --verify-reproducibility --seeds 3 --duration 2.0
+
+# INV-3 — prove the reproducibility check can actually fail, by injecting a
+# wall-clock-derived timestep into the simulation path. Design §14 CP 2.6 asks
+# for exactly this.
+gate-repro-selftest:
+    ./tools/verify_repro_guard.sh
+
+# INV-3 — confirm -O0 and -O2 produce bit-identical results. This is the half
+# that catches FP contraction or reassociation, which is why -ffp-contract=off
+# is mandatory rather than a preference.
+gate-repro-opt: build build-debug
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Comparing digests across optimisation levels…"
+    "{{build_dir}}"/sat-tracker --verify-reproducibility --seeds 2 --duration 1.0 \
+        | grep -E '^(static|linear|fast|multi|offset)' | awk '{print $1, $2, $5}' > /tmp/sat-O2.txt
+    "{{build_dir}}"-debug/sat-tracker --verify-reproducibility --seeds 2 --duration 1.0 \
+        | grep -E '^(static|linear|fast|multi|offset)' | awk '{print $1, $2, $5}' > /tmp/sat-O0.txt
+    if diff -u /tmp/sat-O0.txt /tmp/sat-O2.txt; then
+        echo "PASS: -O0 and -O2 produce bit-identical results."
+    else
+        echo "INV-3 VIOLATION: optimisation level changed the results." >&2
+        exit 1
+    fi
+
 # Run every static invariant gate.
 gates: gate-inv1 gate-no-chrono gate-no-rand gate-inv1-selftest
 
+# Every gate including the slower reproducibility ones. This is what CI runs.
+gates-full: gates gate-repro gate-repro-opt gate-repro-selftest
+
 # Everything CI runs, in the same order. Use this before pushing.
 ci: gates test
+
+# The full pre-push check, including cross-optimisation reproducibility.
+ci-full: gates-full test
 
 # ---------------------------------------------------------------------------
 # Housekeeping
