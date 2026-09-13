@@ -36,6 +36,7 @@
 #include "core/triple_buffer.hpp"
 #include "engine/snapshot.hpp"
 #include "engine/synthetic_source.hpp"
+#include "scenario/scenario.hpp"
 #include "perception/simple_detector.hpp"
 #include "plant/gimbal.hpp"
 
@@ -63,8 +64,45 @@ struct FrameRecord {
     bool    truth_valid       = false;
     Pixel2  truth_screen{};
     bool    truth_in_fov      = false;
-    double  centroid_error_px = 0.0;   ///< |reported centre − true centre|, SCREEN px
-    double  tracking_error_px = 0.0;   ///< |boresight − true target angle|, px
+    // -----------------------------------------------------------------------
+    // CENTROIDING ERROR, IN BOTH FRAMES — and they are not the same number.
+    //
+    // Design §13.2's centroid.csv carries both cx_cam/cy_cam and
+    // cx_screen/cy_screen, with the note "you do not know which they want".
+    // Working through it, they measure genuinely different things:
+    //
+    //   IMAGE frame   |detection - true position in the image|. This is the
+    //                 DETECTOR's accuracy and nothing else. It is the quantity
+    //                 §10.1.1's theoretical bound sigma >= w/(2*SNR) applies to,
+    //                 and the one §10.1.3's bias correction improves.
+    //
+    //   SCREEN frame  the same, after converting through the COMMANDED
+    //                 boresight — which is all the system knows. It therefore
+    //                 also contains the unmeasured pointing error: jitter
+    //                 (row 23) and platform drift (row 25) move the true
+    //                 boresight, and §10.3's encoder does not see them.
+    //
+    // So the screen-frame number can never beat the jitter amplitude, and
+    // reporting it alone would make the 60%-weighted metric dominated by a
+    // disturbance the detector has no influence over — exactly the conflation
+    // INV-6 forbids. Both are reported, labelled, and plotted separately.
+    //
+    // In VIDEO modes the two coincide, because INV-8 disables the disturbances
+    // and the crop offset is known exactly (design §8.3 requirement 6). That is
+    // the mode Benchmark Performance-2 grades centroiding in.
+    // -----------------------------------------------------------------------
+    double  centroid_error_px        = 0.0;   ///< IMAGE frame: the detector alone
+    double  centroid_error_screen_px = 0.0;   ///< SCREEN frame: + pointing knowledge
+    bool    centroid_error_valid     = false;
+
+    /// A detection was reported while the beacon was NOT in the field of view.
+    /// Feeds §13.1's false_track_rate; it is not a centroiding error.
+    bool    false_alarm = false;
+
+    /// |boresight - true target angle| in px. Independent of whether the beacon
+    /// was detected this frame — it measures the CONTROL LOOP, not the detector
+    /// (INV-6).
+    double  tracking_error_px = 0.0;
 };
 
 /// Stage 1 pipeline configuration. Stage 3 folds this into the Scenario struct.
@@ -101,6 +139,11 @@ struct PipelineConfig {
 class Pipeline {
 public:
     void build(const PipelineConfig& cfg, EmitterSoA emitters);
+
+    /// Build everything from a parsed scenario: world, clutter, decoys, damage
+    /// chain, disturbances, plant and controller. Design §6.1's startup
+    /// sequence, in one call.
+    void build_from_scenario(const Scenario& sc);
 
     /// Run one camera frame: sub-ticks, acquire, detect, control.
     /// Returns false when the source is exhausted.

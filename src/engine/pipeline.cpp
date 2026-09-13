@@ -28,6 +28,43 @@ void Pipeline::build(const PipelineConfig& cfg, EmitterSoA emitters) {
     }
 }
 
+void Pipeline::build_from_scenario(const Scenario& sc) {
+    PipelineConfig cfg;
+    cfg.synthetic.camera        = sc.camera_geometry();
+    cfg.synthetic.screen        = sc.screen_geometry();
+    cfg.synthetic.truth_hz      = sc.truth_hz;
+    cfg.synthetic.camera_hz     = sc.camera_hz;
+    cfg.synthetic.control_hz    = sc.control_hz;
+    cfg.synthetic.duration_s    = sc.duration_s;
+    cfg.synthetic.seed          = sc.seed;
+    cfg.synthetic.blur_substeps = sc.blur_substeps;
+    cfg.synthetic.exposure_s    = sc.exposure_ms * 1e-3;
+
+    // Spec rows 13-15. from_dps converts to microradians (INV-5); the remaining
+    // non-idealities come straight from the scenario.
+    cfg.pan  = GimbalParams::from_dps(sc.max_pan_dps,  sc.max_accel_dps2);
+    cfg.tilt = GimbalParams::from_dps(sc.max_tilt_dps, sc.max_accel_dps2);
+    cfg.pan.tau_s  = cfg.tilt.tau_s  = sc.time_constant_s;
+    cfg.pan.latency_s = cfg.tilt.latency_s = sc.latency_s;
+    cfg.pan.encoder_lsb_urad = cfg.tilt.encoder_lsb_urad = sc.encoder_lsb_urad;
+    cfg.pan.resonance_hz = cfg.tilt.resonance_hz = sc.resonance_hz;
+
+    cfg.initial_boresight = sc.initial_boresight();   // spec row 6
+
+    cfg_ = cfg;
+    source_.build_from_scenario(sc);
+    gimbal_.reset(cfg_.pan, cfg_.tilt, cfg_.initial_boresight);
+    control_.reset(cfg_.gains);
+    cmd_rate_ = Rate2{};
+    frame_    = 0;
+    last_     = FrameRecord{};
+
+    SimSnapshot proto;
+    proto.reserve_preview(cfg_.synthetic.camera.width, cfg_.synthetic.camera.height);
+    snapshots_.reset(proto);
+    fingerprints_.clear();
+}
+
 bool Pipeline::step() {
     SAT_ZONE(timers_, Stage::FrameTotal);
 
@@ -71,6 +108,12 @@ bool Pipeline::step() {
     SourceFrame frame;
     {
         SAT_ZONE(timers_, Stage::FrameAcquire);
+        // The mount's real slew, for the exposure smear. Gimbal rate plus the
+        // platform's analytic rate — both smooth, both physical. Jitter is
+        // excluded on purpose; see SyntheticSource::render_frame.
+        const Rate2 gr = gimbal_.rate();
+        const Rate2 pr = source_.disturbance().platform_rate(frame_ / 30.0);
+        source_.set_blur_rate(Rate2{gr.x + pr.x, gr.y + pr.y});
         if (!source_.next(commanded, frame)) return false;
     }
 
@@ -155,10 +198,35 @@ bool Pipeline::step() {
             rec.truth_screen = t->screen_pos;
             rec.truth_in_fov = t->in_fov;
 
-            // Centroiding error: how well we located the beacon in the image.
-            // Computed ONLY on frames with a detection (design §13.1).
-            if (rec.detected) {
-                rec.centroid_error_px = (rec.detection_screen - t->screen_pos).norm();
+            // -------------------------------------------------------------
+            // Centroiding error: how well we located the beacon IN THE IMAGE.
+            //
+            // Design §13.1 says "computed ONLY on frames with a detection", and
+            // there is a second condition it leaves implicit: the beacon has to
+            // be in the field of view. Scoring a reported centroid against a
+            // beacon that is off-screen is not a measurement of centroiding
+            // accuracy — the detector cannot locate something that is not
+            // there, and whatever it reported is a FALSE ALARM, which is a
+            // different metric (§13.1's false_track_rate).
+            //
+            // Without this condition the number is dominated by frames where
+            // the camera was pointed somewhere else entirely: an early ablation
+            // measured 38 px of "centroiding error" that was really the
+            // distance to an off-screen target.
+            // -------------------------------------------------------------
+            if (rec.detected && t->in_fov) {
+                // IMAGE frame: truth.image_pos is where the beacon actually
+                // landed on the sensor, computed at the TRUE boresight. The
+                // difference is the detector's error and nothing else.
+                rec.centroid_error_px = (rec.detection_img - t->image_pos).norm();
+                // SCREEN frame: additionally carries the pointing error, since
+                // detection_screen was converted through the commanded
+                // boresight.
+                rec.centroid_error_screen_px =
+                    (rec.detection_screen - t->screen_pos).norm();
+                rec.centroid_error_valid = true;
+            } else if (rec.detected) {
+                rec.false_alarm = true;
             }
             // Tracking error: how well the mount is pointed at the beacon.
             // Independent of whether we detected it this frame.

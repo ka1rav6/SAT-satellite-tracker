@@ -106,6 +106,16 @@ target_compile_definitions(test_schema PRIVATE
     SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 
+# --- CP 4.4-4.9: the degradation chain and the disturbances ----------------
+sat_add_test(degrade
+    SOURCES degrade/test_noise.cpp
+            degrade/test_ablation.cpp
+    DEPS    sat_core sat_degrade sat_scenario sat_world sat_engine
+)
+target_compile_definitions(test_degrade PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+)
+
 # --- CP 2.3-2.5: snapshots and the reproducibility fingerprint --------------
 sat_add_test(repro
     SOURCES repro/test_fingerprint.cpp

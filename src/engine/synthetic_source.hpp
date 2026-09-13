@@ -34,8 +34,12 @@
 #include "core/frames.hpp"
 #include "core/rng.hpp"
 #include "core/time.hpp"
+#include "degrade/disturbance.hpp"
+#include "degrade/sensor.hpp"
 #include "engine/frame_source.hpp"
+#include "scenario/scenario.hpp"
 #include "world/emitters.hpp"
+#include "world/world_builder.hpp"
 
 #include <memory>
 #include <vector>
@@ -76,6 +80,11 @@ public:
     /// touching the heap.
     void build(const SyntheticConfig& cfg, EmitterSoA emitters);
 
+    /// Build from a parsed scenario: world, damage chain and disturbances all
+    /// configured from one file. This is design §6.1's startup sequence, and
+    /// it is what the real entry points use.
+    void build_from_scenario(const Scenario& sc);
+
     // --- IFrameSource ------------------------------------------------------
     [[nodiscard]] bool next(Angle2 commanded_boresight, SourceFrame& out) override;
     [[nodiscard]] FrameGeometry geometry() const override;
@@ -84,18 +93,31 @@ public:
 
     // --- simulation-side access (engine and metrics only) ------------------
 
-    /// The disturbance to apply to the true boresight this frame. Set by the
-    /// engine before calling next(); it is an input to rendering, not something
-    /// the source invents, because jitter and platform motion are modelled by
-    /// sat_degrade and the source must not duplicate them.
-    void set_boresight_disturbance(Angle2 d) noexcept { disturbance_ = d; }
+    /// Override the boresight disturbance directly. Used by tests that want a
+    /// known, fixed perturbation; normal runs let the DisturbanceGenerator
+    /// produce it.
+    void set_boresight_disturbance(Angle2 d) noexcept {
+        disturbance_ = d;
+        manual_disturbance_ = true;
+    }
+
+    /// The mount's physical slew rate, used to smear the exposure (design
+    /// §9.2). Set by the engine from the gimbal's rate plus the platform's
+    /// analytic rate; it deliberately excludes jitter (see render_frame).
+    void set_blur_rate(Rate2 r) noexcept { blur_rate_ = r; }
+
+    [[nodiscard]] DisturbanceGenerator& disturbance() noexcept { return disturb_; }
+    [[nodiscard]] SensorChain&          sensor()      noexcept { return sensor_; }
+    [[nodiscard]] const World&          world()  const noexcept { return world_; }
 
     /// Advance the world by one truth tick. Called `camera_divisor` times per
     /// frame by the engine, so the world moves at 300 Hz while frames come at 30.
     void advance_world(double dt) noexcept;
 
-    [[nodiscard]] EmitterSoA&       emitters()       noexcept { return emitters_; }
-    [[nodiscard]] const EmitterSoA& emitters() const noexcept { return emitters_; }
+    /// The emitters. They live inside `world_` so that World::advance writes
+    /// into the same arrays the renderer reads — there is exactly one copy.
+    [[nodiscard]] EmitterSoA&       emitters()       noexcept { return world_.emitters; }
+    [[nodiscard]] const EmitterSoA& emitters() const noexcept { return world_.emitters; }
     [[nodiscard]] const Clock&      clock()    const noexcept { return clock_; }
     [[nodiscard]] RngSet&           rng()            noexcept { return rng_; }
 
@@ -108,15 +130,21 @@ private:
     void fill_truth(Angle2 true_bore, Angle2 commanded_bore, FrameTruth& t) const;
 
     SyntheticConfig cfg_{};
-    EmitterSoA      emitters_{};
+    World           world_{};
+    SensorChain     sensor_{};
+    DisturbanceGenerator disturb_{};
     Clock           clock_{};
     RngSet          rng_{};
+    bool            have_world_ = false;
+    bool            manual_disturbance_ = false;
 
     std::vector<float>    radiance_;   ///< float accumulation target
     std::vector<uint8_t>  frame_;      ///< the 8-bit image the detector sees
     std::vector<uint32_t> visible_;    ///< scratch for query_visible
 
     Angle2  disturbance_{};            ///< jitter + platform, applied to truth
+    Rate2   blur_rate_{};              ///< physical slew, for exposure smear
+    double  sim_time_s_ = 0.0;         ///< advanced by advance_world()
     Angle2  prev_true_bore_{};         ///< for blur: where the boresight was
     bool    have_prev_bore_ = false;
     int64_t frame_index_    = 0;

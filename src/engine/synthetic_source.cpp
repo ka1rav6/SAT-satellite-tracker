@@ -11,7 +11,8 @@ void SyntheticSource::build(const SyntheticConfig& cfg, EmitterSoA emitters) {
     cfg_.screen = ScreenGeometry::make(cfg.screen.width  ? cfg.screen.width  : 2000,
                                        cfg.screen.height ? cfg.screen.height : 2000,
                                        cfg.camera);
-    emitters_ = std::move(emitters);
+    world_ = World{};
+    world_.emitters = std::move(emitters);
 
     auto clk = Clock::make(cfg_.truth_hz, cfg_.camera_hz, cfg_.control_hz);
     // The scenario loader validates these before we get here (design §6.1 A1),
@@ -24,7 +25,7 @@ void SyntheticSource::build(const SyntheticConfig& cfg, EmitterSoA emitters) {
     const size_t px = static_cast<size_t>(cfg_.camera.pixel_count());
     radiance_.assign(px, 0.0f);
     frame_.assign(px, 0);
-    visible_.reserve(emitters_.n);
+    visible_.reserve(world_.emitters.n);
 
     frame_index_    = 0;
     max_frames_     = static_cast<int64_t>(cfg_.duration_s * cfg_.camera_hz + 0.5);
@@ -33,14 +34,52 @@ void SyntheticSource::build(const SyntheticConfig& cfg, EmitterSoA emitters) {
 }
 
 void SyntheticSource::advance_world(double dt) noexcept {
-    // Stage 1: emitters move at their constant configured velocity. The full
-    // motion algebra (design §7.2) replaces this at CP 3.3-3.4, which is why
-    // this integrates rather than evaluating a closed form — the positions are
-    // about to become a function of t, and the interface should not change.
-    for (size_t i = 0; i < emitters_.n; ++i) {
-        emitters_.x[i] += emitters_.vx[i] * dt;
-        emitters_.y[i] += emitters_.vy[i] * dt;
+    sim_time_s_ += dt;
+
+    if (have_world_) {
+        // Design §7.2's motion algebra: each emitter's position comes from
+        // evaluating its stack at absolute time t, not from integrating a
+        // velocity. That is what makes the position exact for an accelerating
+        // target and what lets the analytic velocity be reported as truth.
+        world_.advance(sim_time_s_, dt, rng_);
+        disturb_.advance(dt, rng_);
+        return;
     }
+
+    // No scenario: emitters carry a constant configured velocity. Kept for the
+    // tests and benchmarks that build a world by hand rather than from TOML.
+    for (size_t i = 0; i < world_.emitters.n; ++i) {
+        world_.emitters.x[i] += world_.emitters.vx[i] * dt;
+        world_.emitters.y[i] += world_.emitters.vy[i] * dt;
+    }
+}
+
+void SyntheticSource::build_from_scenario(const Scenario& sc) {
+    // Design §6.1's startup sequence, in order.
+    SyntheticConfig cfg;
+    cfg.camera        = sc.camera_geometry();               // A2
+    cfg.screen        = sc.screen_geometry();
+    cfg.truth_hz      = sc.truth_hz;
+    cfg.camera_hz     = sc.camera_hz;
+    cfg.control_hz    = sc.control_hz;
+    cfg.duration_s    = sc.duration_s;
+    cfg.seed          = sc.seed;                            // A3
+    cfg.blur_substeps = sc.blur_substeps;
+    cfg.exposure_s    = sc.exposure_ms * 1e-3;
+
+    build(cfg, EmitterSoA{});
+
+    // A5: emitters, compiled motion stacks, clutter and decoys. They live
+    // inside `world_` and stay there — World::advance writes into exactly the
+    // arrays the renderer reads, so there is never a second copy to keep in
+    // step.
+    world_      = build_world(sc, rng_);
+    have_world_ = true;
+
+    sensor_.build(sc, cfg.camera.width, cfg.camera.height, rng_);
+    disturb_.build(sc, cfg.screen);
+    visible_.reserve(world_.emitters.n);
+    manual_disturbance_ = false;
 }
 
 void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
@@ -78,13 +117,26 @@ void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
     // -----------------------------------------------------------------------
     const double exposure_s = std::max(0.0, cfg_.exposure_s);
 
-    // Boresight rate, estimated from the previous frame. Zero on the first
-    // frame, which is correct: the mount starts at rest.
-    Angle2 bore_rate{};
-    if (have_prev_bore_ && clock_.camera_dt() > 0.0) {
-        bore_rate = Angle2{(true_bore.x - prev_true_bore_.x) / clock_.camera_dt(),
-                           (true_bore.y - prev_true_bore_.y) / clock_.camera_dt()};
-    }
+    // -----------------------------------------------------------------------
+    // The boresight rate used for blur is the mount's PHYSICAL SLEW — the
+    // gimbal's rate plus the platform's analytic rate — supplied by the engine.
+    // It deliberately EXCLUDES jitter.
+    //
+    // Why: spec row 23 specifies jitter as "+/- 20 px per FRAME", which is a
+    // frame-to-frame pointing displacement. Differencing consecutive true
+    // boresights would fold that displacement into a rate of up to
+    // 40 px / 33 ms = 1200 px/s and smear every frame by ~6 px, inventing a
+    // difficulty the specification does not describe. (An early version did
+    // exactly that and produced 38 px of centroiding error on a beacon that was
+    // sitting in plain view.)
+    //
+    // Treating jitter as a pointing offset held constant across the 5 ms
+    // exposure is the standard "vibration is slow compared to the shutter"
+    // assumption. It is also the conservative direction: it does not make the
+    // problem artificially easier, because the jitter still moves the boresight
+    // by its full amplitude between frames, which is what row 23 states.
+    // -----------------------------------------------------------------------
+    const Angle2 bore_rate{blur_rate_.x, blur_rate_.y};
 
     for (int s = 0; s < substeps; ++s) {
         // Substep CENTRES, offset so the samples straddle the timestamp:
@@ -99,23 +151,24 @@ void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
                           true_bore.y + bore_rate.y * dt_s};
 
         const Aabb box = view_aabb(cfg_.camera, cfg_.screen, bore)
-                             .expanded(emitters_.max_extent_px());
-        emitters_.query_visible(box, visible_);
+                             .expanded(world_.emitters.max_extent_px());
+        world_.emitters.query_visible(box, visible_);
 
         for (const uint32_t idx : visible_) {
             const size_t i = idx;
-            const Pixel2 screen_pos{emitters_.x[i] + emitters_.vx[i] * dt_s,
-                                    emitters_.y[i] + emitters_.vy[i] * dt_s};
+            const Pixel2 screen_pos{world_.emitters.x[i] + world_.emitters.vx[i] * dt_s,
+                                    world_.emitters.y[i] + world_.emitters.vy[i] * dt_s};
             const Pixel2 img = screen_to_image(cfg_.camera, cfg_.screen, screen_pos, bore);
             splat_emitter(radiance_, cfg_.camera.width, cfg_.camera.height, img,
-                          static_cast<double>(emitters_.size_px[i]),
-                          emitters_.shape_of(i), emitters_.intensity[i], w);
+                          static_cast<double>(world_.emitters.size_px[i]),
+                          world_.emitters.shape_of(i), world_.emitters.intensity[i], w);
         }
     }
 
-    // Stage 4 inserts the full damage chain (design §9.3) between here and the
-    // quantisation below.
-    quantise_u8(radiance_, frame_);
+    // The full damage chain (design §9.3): atmosphere, shot noise, read noise,
+    // fixed pattern, salt and pepper, defects, clip and quantise. In a video
+    // mode it degenerates to the quantisation alone (INV-8).
+    sensor_.apply(radiance_, frame_, rng_);
 
     prev_true_bore_ = true_bore;
     have_prev_bore_ = true;
@@ -128,21 +181,21 @@ void SyntheticSource::fill_truth(Angle2 true_bore, Angle2 commanded_bore,
     t.boresight_commanded = commanded_bore;
     t.n                   = 0;
 
-    for (size_t i = 0; i < emitters_.n && t.n < kMaxTargets; ++i) {
-        const EmitterKind k = emitters_.kind_of(i);
+    for (size_t i = 0; i < world_.emitters.n && t.n < kMaxTargets; ++i) {
+        const EmitterKind k = world_.emitters.kind_of(i);
         // Clutter is not reported: truth exists to score the beacon, and a
         // hundred clutter entries would just make FrameTruth expensive to copy.
         if (k != EmitterKind::Target && k != EmitterKind::Decoy) continue;
 
         FrameTruth::Target& e = t.targets[t.n];
-        e.id         = emitters_.id[i];
-        e.screen_pos = emitters_.position(i);
+        e.id         = world_.emitters.id[i];
+        e.screen_pos = world_.emitters.position(i);
         e.world_ang  = cfg_.screen.to_angle(e.screen_pos);
         e.image_pos  = screen_to_image(cfg_.camera, cfg_.screen, e.screen_pos, true_bore);
         // Velocity in angle space. Screen pixels and angle share the IFOV
         // (core/frames.hpp), so this is a pure scale.
-        e.world_rate = Rate2{emitters_.vx[i] * cfg_.screen.ifov_x_urad,
-                             emitters_.vy[i] * cfg_.screen.ifov_y_urad};
+        e.world_rate = Rate2{world_.emitters.vx[i] * cfg_.screen.ifov_x_urad,
+                             world_.emitters.vy[i] * cfg_.screen.ifov_y_urad};
         e.in_fov     = cfg_.camera.contains(e.image_pos);
         e.is_primary = (k == EmitterKind::Target);
         ++t.n;
@@ -152,9 +205,19 @@ void SyntheticSource::fill_truth(Angle2 true_bore, Angle2 commanded_bore,
 bool SyntheticSource::next(Angle2 commanded_boresight, SourceFrame& out) {
     if (max_frames_ > 0 && frame_index_ >= max_frames_) return false;
 
+    // -----------------------------------------------------------------------
     // INV-2 and the honesty of the whole simulation: the frame is rendered at
     // the TRUE boresight, which is the commanded one plus whatever the
-    // disturbances did. The tracker is handed only the commanded value.
+    // disturbances did. The tracker is handed only the commanded value, and the
+    // difference is the pointing error it cannot observe directly.
+    //
+    // Jitter is resampled here rather than in advance_world because spec row 23
+    // specifies it in px PER FRAME; drawing it at the 300 Hz truth rate would
+    // make it ten times more energetic than the specification describes.
+    // -----------------------------------------------------------------------
+    if (!manual_disturbance_) {
+        disturbance_ = disturb_.offset(sim_time_s_, rng_, /*new_frame=*/true);
+    }
     const Angle2 true_bore{commanded_boresight.x + disturbance_.x,
                            commanded_boresight.y + disturbance_.y};
 
