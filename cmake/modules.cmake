@@ -144,6 +144,7 @@ sat_add_module(sat_ai
 sat_add_module(sat_tracking
     SOURCES
         src/tracking/kalman.cpp
+        src/tracking/track.cpp
     PUBLIC_DEPS sat_core sat_perception Eigen3::Eigen
 )
 

@@ -176,6 +176,7 @@ target_compile_definitions(test_perception PRIVATE
 sat_add_test(tracking
     SOURCES tracking/test_measurement.cpp
             tracking/test_kalman.cpp
+            tracking/test_track.cpp
     DEPS    sat_core sat_tracking sat_perception sat_engine sat_scenario
 )
 target_compile_definitions(test_tracking PRIVATE
