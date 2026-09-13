@@ -44,11 +44,10 @@ TEST_CASE("a pixel coordinate names the pixel centre") {
     CHECK(pixel_hi(7) - pixel_lo(7) == doctest::Approx(1.0));
 }
 
-TEST_CASE("square coverage sums to exactly one over the whole footprint") {
+TEST_CASE("square coverage sums to exactly the emitter's area") {
     // The cheapest possible check that the splatter neither invents nor loses
-    // light. If this ever drifts, every flux-derived quantity downstream —
-    // integrated SNR, and through it the centroid uncertainty and the Kalman R —
-    // is wrong by the same factor.
+    // light. Coverage is the fraction of each PIXEL covered, so the sum over
+    // every pixel is the emitter's area in pixels — size^2 for a square.
     for (double frac : {0.0, 0.1, 0.37, 0.5, 0.73, 0.99}) {
         for (double size : {5.0, 10.0, 13.0, 20.0}) {
             const double cx = 50.0 + frac, cy = 40.0 + frac;
@@ -59,9 +58,20 @@ TEST_CASE("square coverage sums to exactly one over the whole footprint") {
                 }
             }
             INFO("frac=" << frac << " size=" << size);
-            CHECK(sum == doctest::Approx(1.0).epsilon(1e-12));
+            CHECK(sum == doctest::Approx(size * size).epsilon(1e-12));
         }
     }
+}
+
+TEST_CASE("a pixel wholly inside an emitter is fully covered") {
+    // This is what makes `intensity` mean "grey levels above background", the
+    // same for every shape and independent of size (spec row 10 lets size vary
+    // 5-20 px, and changing it must not change brightness).
+    CHECK(square_coverage(40, 40, 40.0, 40.0, 11.0) == doctest::Approx(1.0).epsilon(1e-12));
+    CHECK(circle_coverage(40, 40, 40.0, 40.0, 11.0) == doctest::Approx(1.0).epsilon(1e-12));
+    // The Gaussian has no flat top, so its peak pixel is ~1 by construction of
+    // the normalisation rather than exactly 1 at an off-centre position.
+    CHECK(gaussian_coverage(40, 40, 40.0, 40.0, 11.0) == doctest::Approx(1.0).epsilon(1e-12));
 }
 
 TEST_CASE("a square aligned to pixel edges covers whole pixels exactly") {
@@ -74,7 +84,7 @@ TEST_CASE("a square aligned to pixel edges covers whole pixels exactly") {
         for (int i = 9; i <= 12; ++i) {
             INFO("pixel (" << i << ", " << j << ")");
             CHECK(square_coverage(i, j, 10.5, 10.5, size)
-                  == doctest::Approx(1.0 / 16.0).epsilon(1e-12));
+                  == doctest::Approx(1.0).epsilon(1e-12));
         }
     }
     CHECK(square_coverage(8,  10, 10.5, 10.5, size) == doctest::Approx(0.0));
@@ -94,12 +104,13 @@ TEST_CASE("a square centred on a pixel splits its edge pixels evenly") {
     const double right = square_coverage(12, 10, 10.0, 10.0, size);
     CHECK(left == doctest::Approx(right).epsilon(1e-15));
     CHECK(left > 0.0);
-    // Half in x, fully covered in y, normalised by the 16-unit area.
-    CHECK(left == doctest::Approx(0.5 / 16.0).epsilon(1e-12));
+    // Half covered in x, fully in y.
+    CHECK(left == doctest::Approx(0.5).epsilon(1e-12));
 }
 
-TEST_CASE("circle coverage sums to one and is rotationally symmetric") {
+TEST_CASE("circle coverage sums to exactly pi r squared") {
     for (double size : {5.0, 10.0, 20.0}) {
+        const double r = 0.5 * size;
         double sum = 0.0;
         for (int j = 20; j < 60; ++j) {
             for (int i = 20; i < 60; ++i) {
@@ -107,34 +118,34 @@ TEST_CASE("circle coverage sums to one and is rotationally symmetric") {
             }
         }
         INFO("size=" << size);
-        // Boundary pixels are supersampled 4x4 rather than integrated exactly,
-        // so this is approximate by construction. 1% is well inside what the
-        // 8-bit quantisation downstream can even represent.
-        CHECK(sum == doctest::Approx(1.0).epsilon(0.01));
+        // Exact, not approximate: the closed-form intersection area replaced
+        // the 4x4 supersampler, which could only manage ~1%.
+        CHECK(sum == doctest::Approx(kPi * r * r).epsilon(1e-12));
     }
-
-    // Four-fold symmetry about a pixel-centred circle: the residual sampling
-    // error must not favour a direction, or it would bias the centroid.
-    const double c = 40.0, size = 11.0;
-    CHECK(circle_coverage(35, 40, c, c, size) == doctest::Approx(circle_coverage(45, 40, c, c, size)));
-    CHECK(circle_coverage(40, 35, c, c, size) == doctest::Approx(circle_coverage(40, 45, c, c, size)));
 }
 
-TEST_CASE("gaussian coverage sums to one and matches its FWHM") {
+TEST_CASE("gaussian coverage sums to its equivalent area and matches its FWHM") {
+    // With peak-relative normalisation the sum is the Gaussian's "equivalent
+    // area" 2*pi*sigma^2 divided by the peak pixel's own integral.
+    constexpr double kFwhmToSigma = 1.0 / 2.3548200450309493;
+    const double size = 10.0;
+    const double sigma = size * kFwhmToSigma;
+
     double sum = 0.0;
     for (int j = 0; j < 80; ++j) {
         for (int i = 0; i < 80; ++i) {
-            sum += gaussian_coverage(i, j, 40.0, 40.0, 10.0);
+            sum += gaussian_coverage(i, j, 40.0, 40.0, size);
         }
     }
-    CHECK(sum == doctest::Approx(1.0).epsilon(1e-6));
+    const double peak_1d = gauss_1d(-0.5, 0.5, 0.0, sigma);
+    CHECK(sum == doctest::Approx(1.0 / (peak_1d * peak_1d)).epsilon(1e-6));
 
     // `size` is the full width at half maximum, so the value 5 px from centre
-    // must be half the peak value. Comparing single-pixel integrals is valid
-    // here because they share a width.
-    const double peak = gaussian_coverage(40, 40, 40.0, 40.0, 10.0);
-    const double half = gaussian_coverage(45, 40, 40.0, 40.0, 10.0);
+    // must be half the peak value.
+    const double peak = gaussian_coverage(40, 40, 40.0, 40.0, size);
+    const double half = gaussian_coverage(45, 40, 40.0, 40.0, size);
     CHECK(half / peak == doctest::Approx(0.5).epsilon(0.02));
+    CHECK(peak == doctest::Approx(1.0).epsilon(1e-12));
 }
 
 
@@ -228,16 +239,24 @@ TEST_CASE("circle coverage is exactly symmetric about a pixel-centred disk") {
             const double u = circle_coverage(40, 40 - d, 40.0, 40.0, size);
             const double b = circle_coverage(40, 40 + d, 40.0, 40.0, size);
             INFO("size=" << size << " d=" << d);
-            CHECK(std::abs(l - r) < 1e-15);
-            CHECK(std::abs(u - b) < 1e-15);
-            CHECK(std::abs(l - u) < 1e-15);   // and across the axes
+            // The tolerance scales with the disk area because that is what the
+            // inclusion-exclusion actually cancels: four quadrant areas of
+            // order pi*r^2 are added and subtracted to leave a number of order
+            // 1, so the residue is ~area * epsilon. For a 20 px disk that is
+            // ~7e-14, which is exact to within a few ulp of the intermediate
+            // values, not a looser claim about the result.
+            const double tol = 1e-15 * kPi * 0.25 * size * size;
+            CHECK(std::abs(l - r) < tol);
+            CHECK(std::abs(u - b) < tol);
+            CHECK(std::abs(l - u) < tol);   // and across the axes
         }
     }
 }
 
-TEST_CASE("circle coverage sums to exactly one at every sub-pixel offset") {
+TEST_CASE("circle coverage is area-exact at every sub-pixel offset") {
     // The supersampled version this replaced could only manage ~1e-2 here.
     for (double size : {5.0, 11.0, 20.0}) {
+        const double r = 0.5 * size;
         for (double frac : {0.0, 0.13, 0.37, 0.5, 0.86}) {
             double sum = 0.0;
             for (int j = 10; j < 70; ++j) {
@@ -246,7 +265,7 @@ TEST_CASE("circle coverage sums to exactly one at every sub-pixel offset") {
                 }
             }
             INFO("size=" << size << " frac=" << frac);
-            CHECK(sum == doctest::Approx(1.0).epsilon(1e-12));
+            CHECK(sum == doctest::Approx(kPi * r * r).epsilon(1e-12));
         }
     }
 }

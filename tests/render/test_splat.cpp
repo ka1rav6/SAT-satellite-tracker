@@ -78,18 +78,22 @@ TEST_CASE("the recovered centre is exact at every sub-pixel offset, every size")
     MESSAGE("worst sub-pixel error across 240 cases: " << worst << " px");
 }
 
-TEST_CASE("splatting conserves flux") {
-    // intensity means TOTAL flux, not per-pixel brightness. Without the
-    // normalisation in coverage.hpp, a 5 px and a 20 px beacon at the same
-    // configured intensity would differ 16-fold in brightness, which is not
-    // what spec row 10's size range describes.
+TEST_CASE("intensity is peak brightness, independent of size") {
+    // `intensity` means "grey levels above background", the same for any size.
+    // Spec row 10 lets the beacon be 5-20 px, and a user changing that is
+    // describing a different-sized beacon, not a 16x brighter one.
     Canvas c;
     for (uint16_t size : {5, 10, 20}) {
         c.clear();
-        splat_emitter(c.buf, Canvas::W, Canvas::H, Pixel2{64.3, 64.7},
-                      static_cast<double>(size), ShapeKind::Square, 1000.0f);
+        // Centre on a pixel so there is a fully-covered pixel to peak at.
+        splat_emitter(c.buf, Canvas::W, Canvas::H, Pixel2{64.0, 64.0},
+                      static_cast<double>(size), ShapeKind::Square, 200.0f);
+        const float peak = *std::max_element(c.buf.begin(), c.buf.end());
         INFO("size=" << size);
-        CHECK(c.flux() == doctest::Approx(1000.0).epsilon(1e-5));
+        CHECK(peak == doctest::Approx(200.0f).epsilon(1e-5));
+        // Total flux therefore scales with area, which is the physically
+        // sensible reading: a bigger beacon of the same brightness emits more.
+        CHECK(c.flux() == doctest::Approx(200.0 * size * size).epsilon(1e-4));
     }
 }
 
@@ -99,6 +103,7 @@ TEST_CASE("weights accumulate linearly, which is what makes motion blur correct"
     Canvas a, b;
     splat_emitter(a.buf, Canvas::W, Canvas::H, Pixel2{64.0, 64.0}, 10.0,
                   ShapeKind::Square, 100.0f, 1.0);
+    (void)0;
 
     constexpr int kN = 8;
     for (int i = 0; i < kN; ++i) {
@@ -206,12 +211,23 @@ TEST_CASE("the circle's centre-of-mass bias is the S-curve, measured not tolerat
 
 TEST_CASE("an emitter partly off-sensor does not wrap, crash or vanish") {
     Canvas c;
+    // Reference: the same emitter comfortably inside the sensor.
+    splat_emitter(c.buf, Canvas::W, Canvas::H, Pixel2{64.0, 64.0}, 10.0,
+                  ShapeKind::Square, 100.0f);
+    const double whole = c.flux();
+    CHECK(whole == doctest::Approx(100.0 * 100.0).epsilon(1e-5));   // intensity x area
+
     // Straddling the left edge: some flux lands, the rest is legitimately lost.
+    // A 10 px square centred at x = -2 spans [-7, 3]. Pixel i covers
+    // [i-0.5, i+0.5], so on-sensor columns 0, 1 and 2 are fully covered and
+    // column 3 is half covered — 3.5 of the 10 columns survive.
+    c.clear();
     splat_emitter(c.buf, Canvas::W, Canvas::H, Pixel2{-2.0, 64.0}, 10.0,
                   ShapeKind::Square, 100.0f);
     const double partial = c.flux();
     CHECK(partial > 0.0);
-    CHECK(partial < 100.0);
+    CHECK(partial < whole);
+    CHECK(partial == doctest::Approx(whole * 0.35).epsilon(1e-6));
 
     // No wraparound: the right-hand columns must be untouched. A missing clip
     // would show up here as light appearing on the opposite edge.
@@ -265,7 +281,7 @@ TEST_CASE("quantisation preserves the centroid to well under a tenth of a pixel"
     // systematic shift.
     Canvas c;
     const Pixel2 truth{64.37, 64.63};
-    splat_emitter(c.buf, Canvas::W, Canvas::H, truth, 10.0, ShapeKind::Square, 12000.0f);
+    splat_emitter(c.buf, Canvas::W, Canvas::H, truth, 10.0, ShapeKind::Square, 200.0f);
 
     std::vector<uint8_t> q(c.buf.size());
     quantise_u8(c.buf, q);

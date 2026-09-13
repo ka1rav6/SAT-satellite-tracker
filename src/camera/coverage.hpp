@@ -77,10 +77,30 @@ namespace sat {
 // square_coverage — fraction of pixel (i, j) covered by a square emitter.
 //
 // `cx, cy` is the square's continuous centre and `size` its side length, both
-// in the same pixel coordinate system. The result is in [0, 1] and, summed over
-// every pixel, equals exactly 1 (up to floating-point rounding) whenever the
-// square lies entirely inside the image — a property the tests assert, because
-// it is the cheapest possible check that no light is being invented or lost.
+// in the same pixel coordinate system.
+//
+// ---------------------------------------------------------------------------
+// WHAT "COVERAGE" MEANS, AND THEREFORE WHAT `intensity` MEANS
+// ---------------------------------------------------------------------------
+// The result is the fraction of the PIXEL that the emitter covers, in [0, 1] —
+// exactly design §9.2's `overlap_1d(...) * overlap_1d(...)` with no further
+// normalisation. A fully-covered pixel returns 1.
+//
+// That makes a scenario's `target.intensity = 120.0` mean "a beacon 120 grey
+// levels above the background", which is what someone writing that line
+// expects, and it keeps brightness independent of `target.size_px` — important
+// because spec row 10 lets the size vary from 5 to 20 px and a user changing it
+// is describing a different-sized beacon, not a 16x brighter one.
+//
+// (An earlier draft normalised by the emitter's area so that coverage summed to
+// 1 and `intensity` meant total flux. That conserves flux across sizes, which is
+// tidy, but it makes `intensity = 120` render a beacon 1.2 grey levels above
+// background — dimmer than any sensible pedestal, and invisible. Peak-relative
+// is both what §9.2 specifies and what the config file reads as.)
+//
+// Summed over every pixel, the result is therefore the emitter's AREA in pixels,
+// not 1. The tests check that instead — it is the same guarantee that no light
+// is invented or lost, just against the correct constant.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline double square_coverage(int i, int j,
                                             double cx, double cy, double size) noexcept {
@@ -89,12 +109,7 @@ namespace sat {
     const double ey0 = cy - h, ey1 = cy + h;
     const double ox = overlap_1d(pixel_lo(i), pixel_hi(i), ex0, ex1);
     const double oy = overlap_1d(pixel_lo(j), pixel_hi(j), ey0, ey1);
-    // Normalise by the emitter's own area so the coverages sum to 1, making
-    // `intensity` mean "total flux" rather than "flux per pixel at this size".
-    // Without this, a 5 px beacon and a 20 px beacon at the same `intensity`
-    // would differ 16-fold in brightness, which is not what spec row 10's
-    // size range is describing.
-    return (ox * oy) / (size * size);
+    return ox * oy;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,10 +265,12 @@ namespace sat {
 [[nodiscard]] inline double circle_coverage(int i, int j,
                                             double cx, double cy, double size) noexcept {
     const double r = 0.5 * size;
-    const double area = kPi * r * r;
-    if (area <= 0.0) return 0.0;
+    if (r <= 0.0) return 0.0;
+    // Fraction of the PIXEL covered — a pixel wholly inside the disk returns 1,
+    // matching square_coverage's convention so `intensity` means the same thing
+    // whatever shape is configured.
     return disk_rect_area(pixel_lo(i), pixel_hi(i),
-                          pixel_lo(j), pixel_hi(j), cx, cy, r) / area;
+                          pixel_lo(j), pixel_hi(j), cx, cy, r);
 }
 
 // ---------------------------------------------------------------------------
@@ -263,15 +280,22 @@ namespace sat {
 // Gaussian beacon is visually comparable to a 10 px square one. FWHM relates to
 // sigma by FWHM = 2√(2 ln 2) σ ≈ 2.3548 σ.
 //
-// Exact, and already normalised: the 2-D Gaussian integrates to 1 over the
-// plane, so no division by an area is needed.
+// The pixel integral is exact (erf), then divided by the integral a pixel
+// centred exactly on the peak would receive. That scaling is a CONSTANT for a
+// given sigma, so it leaves the centroid untouched while making the peak pixel
+// return ~1 — the same convention as the square and the circle, so `intensity`
+// means "grey levels above background" for every shape.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline double gaussian_coverage(int i, int j,
                                               double cx, double cy, double size) noexcept {
     constexpr double kFwhmToSigma = 1.0 / 2.3548200450309493;
     const double sigma = std::fmax(size * kFwhmToSigma, 1e-6);
+    // Value of one pixel sitting exactly on the peak; never zero for sigma > 0.
+    const double peak_1d = gauss_1d(-0.5, 0.5, 0.0, sigma);
+    const double norm    = 1.0 / std::fmax(peak_1d * peak_1d, 1e-300);
     return gauss_1d(pixel_lo(i), pixel_hi(i), cx, sigma)
-         * gauss_1d(pixel_lo(j), pixel_hi(j), cy, sigma);
+         * gauss_1d(pixel_lo(j), pixel_hi(j), cy, sigma)
+         * norm;
 }
 
 }  // namespace sat
