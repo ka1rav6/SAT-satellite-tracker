@@ -176,8 +176,16 @@ gate-no-rand:
     fi
     echo "INV-3 (rand) ok."
 
+# INV-1: prove the configure-time link guard actually rejects a violation.
+#
+# Design §2 CP 2.6 establishes the rule: after building a safety check,
+# deliberately inject a violation and confirm it goes red. A guard nobody has
+# watched fail is just a reassuring message.
+gate-inv1-selftest:
+    ./tools/verify_inv1_guard.sh
+
 # Run every static invariant gate.
-gates: gate-inv1 gate-no-chrono gate-no-rand
+gates: gate-inv1 gate-no-chrono gate-no-rand gate-inv1-selftest
 
 # Everything CI runs, in the same order. Use this before pushing.
 ci: gates test

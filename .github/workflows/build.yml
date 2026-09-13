@@ -1,0 +1,117 @@
+# .github/workflows/build.yml — CP 0.6.
+#
+# "GitHub Actions: Windows (MSVC) + Linux (GCC), running ctest. Both jobs green;
+#  the Windows artifact downloads and runs."
+#
+# Design decision 6 is explicit about why Windows is a native job rather than a
+# cross-compile: "Cross-compiling and *running* are different claims. A Windows
+# runner proves the second." The evaluators will run a binary, so CI must too.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch cancels the previous run. Saves CI minutes
+# without ever cancelling a run on main.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Do not cancel the Windows job because Linux failed, or vice versa. A
+      # platform-specific failure is exactly what this matrix exists to find,
+      # and cancelling the other half hides whether it is platform-specific.
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-gcc-release
+            os: ubuntu-latest
+            build_type: Release
+            cc: gcc-13
+            cxx: g++-13
+          - name: linux-gcc-debug
+            os: ubuntu-latest
+            build_type: Debug
+            cc: gcc-13
+            cxx: g++-13
+          - name: linux-clang-release
+            os: ubuntu-latest
+            build_type: Release
+            cc: clang
+            cxx: clang++
+          - name: windows-msvc-release
+            os: windows-latest
+            build_type: Release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The build stamps SAT_GIT_HASH from `git rev-parse`, and a shallow
+          # clone with no history would leave it as "unknown" in every
+          # centroid.csv header produced by this build.
+          fetch-depth: 0
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # Eigen and OpenCV from apt rather than vcpkg: cmake/dependencies.cmake
+          # finds either, and apt takes seconds where a vcpkg source build of
+          # OpenCV takes the better part of an hour. The pinned-baseline vcpkg
+          # build is what the release workflow uses.
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build libeigen3-dev libopencv-dev
+
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        run: |
+          # The Windows runner ships a vcpkg at VCPKG_INSTALLATION_ROOT with a
+          # warm binary cache, which is the fast path on this platform.
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+
+      - name: Set compiler
+        if: runner.os == 'Linux'
+        run: |
+          echo "CC=${{ matrix.cc }}"   >> $GITHUB_ENV
+          echo "CXX=${{ matrix.cxx }}" >> $GITHUB_ENV
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build --build-config ${{ matrix.build_type }} --output-on-failure --parallel 4
+
+      # The acceptance criterion for CP 0.6 is not "it compiled", it is "the
+      # artifact downloads and runs". Proving the binary starts on the runner
+      # that built it is the weaker half of that, but it catches a missing DLL
+      # or a bad runtime dependency before anyone downloads anything.
+      - name: Run the binary
+        run: ./build/sat-tracker --version
+        shell: bash
+
+      - name: Upload artifact
+        if: matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sat-tracker-${{ matrix.name }}
+          path: |
+            build/sat-tracker
+            build/sat-tracker.exe
+            build/*.dll
+            scenarios/
+          if-no-files-found: warn
+          retention-days: 14

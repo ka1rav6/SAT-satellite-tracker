@@ -1,0 +1,72 @@
+# .github/workflows/invariants.yml
+#
+# Design §2: "These are enforced by the build system and CI, not by convention."
+# §5.1 asks specifically for a CI check that greps the tracker-side modules for
+# `#include "world/` and fails if found.
+#
+# Every check here has a `just` recipe of the same name, so a red job can be
+# reproduced locally with one command instead of by pushing again.
+
+name: invariants
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: invariants-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  static-gates:
+    name: static invariant gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      # INV-1: the tracker must not be able to see the simulator's ground truth.
+      # The linker already enforces the library edge (cmake/modules.cmake); this
+      # catches a header-only leak that would never reach the linker.
+      - name: 'INV-1: no world access from perception/ai/tracking/search/control/plant'
+        run: just gate-inv1
+
+      # INV-3: no wall-clock read in the simulation path. core/profile.hpp is the
+      # single sanctioned exception — timing never feeds back into the simulation
+      # and is excluded from the fingerprint.
+      - name: 'INV-3: no <chrono> outside core/profile.hpp'
+        run: just gate-no-chrono
+
+      # INV-3: every draw must name a Stream.
+      - name: 'INV-3: no rand() or unseeded generators'
+        run: just gate-no-rand
+
+  link-boundary:
+    name: INV-1 link boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libeigen3-dev
+
+      # Configuring is the check. cmake/modules.cmake walks each tracker-side
+      # target's transitive link closure and fails configure if sat_world or
+      # sat_camera is reachable. That is stronger than a grep: it catches an
+      # edge added through an intermediate target, and it catches the moment the
+      # edge is ADDED rather than the moment someone calls a world symbol
+      # through it.
+      - name: Configure (runs the INV-1 link assertion)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+
+      # A guard that has never been seen to fail is not evidence of anything.
+      # This injects a real violation, confirms configure refuses, and restores.
+      # Same pattern design §2 CP 2.6 requires for the reproducibility job.
+      - name: Self-test the guard by injecting a violation
+        run: ./tools/verify_inv1_guard.sh

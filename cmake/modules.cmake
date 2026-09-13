@@ -161,6 +161,86 @@ sat_add_module(sat_gui
     PUBLIC_DEPS sat_core
 )
 
+# ===========================================================================
+# INV-1, checked by the build system itself.
+#
+# The boundary above is a convention about where lines are typed. This makes it
+# a *configure error*: it walks each tracker-side target's transitive link
+# closure and fails if sat_world is reachable through any path.
+#
+# Why bother, when the linker already enforces it? Because the linker only
+# complains once someone actually calls a world symbol. Adding
+# `target_link_libraries(sat_perception PUBLIC sat_world)` on its own builds
+# perfectly happily, and the invariant is then silently gone — the next person
+# to reach for ground truth finds it available. This catches the moment the
+# edge is added, not the moment it is used, and it catches an edge added
+# through an intermediate target, which reading modules.cmake by eye would not.
+# ===========================================================================
+
+# Collect a target's transitive link dependencies into <out_var>.
+function(sat_collect_link_closure target out_var)
+    set(seen "")
+    set(pending "${target}")
+    while(pending)
+        list(POP_FRONT pending current)
+        if(NOT TARGET ${current})
+            continue()   # generator expression, system library, or a plain -lfoo
+        endif()
+        if(${current} IN_LIST seen)
+            continue()
+        endif()
+        list(APPEND seen ${current})
+
+        # INTERFACE libraries have no LINK_LIBRARIES, only the INTERFACE_ form;
+        # static libraries have both. Read whichever exist.
+        get_target_property(kind ${current} TYPE)
+        set(edges "")
+        if(NOT kind STREQUAL "INTERFACE_LIBRARY")
+            get_target_property(direct ${current} LINK_LIBRARIES)
+            if(direct)
+                list(APPEND edges ${direct})
+            endif()
+        endif()
+        get_target_property(iface ${current} INTERFACE_LINK_LIBRARIES)
+        if(iface)
+            list(APPEND edges ${iface})
+        endif()
+
+        foreach(dep IN LISTS edges)
+            # Skip generator expressions; none of the SAT edges use them, and
+            # evaluating them at configure time is not possible anyway.
+            if(NOT dep MATCHES "^\\$<")
+                list(APPEND pending ${dep})
+            endif()
+        endforeach()
+    endwhile()
+    set(${out_var} "${seen}" PARENT_SCOPE)
+endfunction()
+
+# Fail configure if `forbidden` is reachable from `target`.
+function(sat_assert_no_link target forbidden)
+    sat_collect_link_closure(${target} closure)
+    if(${forbidden} IN_LIST closure)
+        message(FATAL_ERROR
+            "INV-1 VIOLATION: target '${target}' links '${forbidden}'.\n"
+            "  The tracker must not be able to read the simulator's ground truth.\n"
+            "  Transitive closure was: ${closure}\n"
+            "  If a module genuinely needs truth, it belongs in sat_engine or\n"
+            "  sat_metrics, which are on the permitted side of the boundary.\n"
+            "  See docs/SAT-DESIGN.md §2 INV-1 and §5.1.")
+    endif()
+endfunction()
+
+foreach(tracker_side IN ITEMS
+        sat_perception sat_ai sat_tracking sat_search sat_control sat_plant)
+    sat_assert_no_link(${tracker_side} sat_world)
+    # sat_camera and sat_scenario also carry simulation state: the camera knows
+    # emitter positions, and the scenario holds the true initial target location
+    # (spec row 11). Neither belongs on the tracker side either.
+    sat_assert_no_link(${tracker_side} sat_camera)
+endforeach()
+message(STATUS "SAT: INV-1 link boundary verified for 6 tracker-side targets")
+
 # ---------------------------------------------------------------------------
 # Optional dependencies wired in where they belong.
 # ---------------------------------------------------------------------------
