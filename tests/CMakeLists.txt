@@ -90,6 +90,12 @@ sat_add_test(loop
     DEPS    sat_core sat_plant sat_control sat_engine sat_perception
 )
 
+# --- CP 3.3-3.5: the motion algebra and its analytic derivatives ------------
+sat_add_test(motion
+    SOURCES motion/test_motion.cpp
+    DEPS    sat_core sat_world
+)
+
 # --- CP 2.3-2.5: snapshots and the reproducibility fingerprint --------------
 sat_add_test(repro
     SOURCES repro/test_fingerprint.cpp

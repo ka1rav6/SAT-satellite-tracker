@@ -75,6 +75,8 @@ sat_add_module(sat_core
 
 # world — emitters, motion algebra, background, shape masks.
 sat_add_module(sat_world
+    SOURCES
+        src/world/motion_component.cpp
     PUBLIC_DEPS sat_core
 )
 
