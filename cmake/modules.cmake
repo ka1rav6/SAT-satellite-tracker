@@ -65,6 +65,7 @@ endfunction()
 sat_add_module(sat_core
     SOURCES
         src/core/rng.cpp
+        src/core/image.cpp
         src/core/arena.cpp
         src/core/profile.cpp
 )
@@ -77,7 +78,9 @@ sat_add_module(sat_core
 sat_add_module(sat_world
     SOURCES
         src/world/motion_component.cpp
-    PUBLIC_DEPS sat_core
+        src/world/world_builder.cpp
+        src/world/motion_factory.cpp
+    PUBLIC_DEPS sat_core sat_scenario
 )
 
 # scenario — TOML parsing and schema validation (design §7).
@@ -100,7 +103,11 @@ sat_add_module(sat_camera
 # Note it does NOT depend on world: it operates on a rendered buffer and on the
 # boresight, never on emitter positions.
 sat_add_module(sat_degrade
-    PUBLIC_DEPS sat_core
+    SOURCES
+        src/degrade/noise.cpp
+        src/degrade/sensor.cpp
+        src/degrade/disturbance.cpp
+    PUBLIC_DEPS sat_core sat_scenario sat_world
 )
 
 # ===========================================================================

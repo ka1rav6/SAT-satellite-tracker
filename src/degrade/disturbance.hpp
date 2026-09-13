@@ -1,0 +1,94 @@
+// degrade/disturbance.hpp — jitter and platform motion (spec rows 23 and 25).
+//
+// ---------------------------------------------------------------------------
+// THESE PERTURB THE TRUE BORESIGHT, NEVER THE PIXELS
+// ---------------------------------------------------------------------------
+// Design §9.3 is emphatic about this and gives two reasons, both of which
+// matter:
+//
+//   1. It is physically correct. A platform that shakes moves where the camera
+//      is POINTING; it does not smear the image by some separate mechanism.
+//      Modelling it at the boresight means motion blur follows automatically
+//      from the exposure integration (§9.2) rather than having to be faked.
+//   2. "It prevents the tracker from implicitly knowing its own pointing
+//      error." If jitter were applied as a pixel shift, the commanded boresight
+//      would still be the true one, and the system would be solving a much
+//      easier problem than the real one — with no way to tell from the outside.
+//
+// ---------------------------------------------------------------------------
+// WHY THIS IS THE HARD PART OF THE WHOLE PROJECT
+// ---------------------------------------------------------------------------
+// Design §1.3, restated in numbers this file produces:
+//
+//     camera authority at 5 deg/s, 30 Hz    26.7 px/frame
+//     jitter alone (row 23)                 20   px/frame   = 75% of authority
+//     jitter + platform (rows 23 + 25)      40   px/frame   = 150% of authority
+//
+// The disturbance can EXCEED what the motor can do. That is why reactive
+// control cannot meet the 10 px budget and why the system must predict — the
+// conclusion the whole design rests on.
+
+#pragma once
+
+#include "core/frames.hpp"
+#include "core/rng.hpp"
+#include "core/units.hpp"
+#include "scenario/scenario.hpp"
+#include "world/motion_component.hpp"
+
+#include <memory>
+
+namespace sat {
+
+// ---------------------------------------------------------------------------
+// DisturbanceGenerator
+//
+// Produces the boresight offset to add to the commanded pointing before a frame
+// is rendered. Two independent sources:
+//
+//   jitter    high-frequency, zero-mean, uncorrelated frame to frame. Models
+//             vibration. Spec row 23 caps it at +/- 20 px/frame.
+//   platform  low-frequency, correlated, and DRIVEN BY THE SAME MOTION ALGEBRA
+//             as the target (design §7.2). Spec row 25 asks for linear as
+//             mandatory and circular/random/spiral/figure-8 as optional, which
+//             is exactly the menu §7.2 already provides — CP 4.9's criterion is
+//             that all five work "driven by the same code as target motion".
+// ---------------------------------------------------------------------------
+class DisturbanceGenerator {
+public:
+    void build(const Scenario& sc, const ScreenGeometry& scr);
+
+    /// Advance the platform's stochastic components by one truth tick.
+    void advance(double dt, RngSet& rng);
+
+    /// The total boresight offset at time t, in microradians.
+    ///
+    /// `jitter_tick` should change once per CAMERA frame, not once per truth
+    /// tick: spec row 23 specifies jitter in px PER FRAME, so drawing it at the
+    /// truth rate would make it ten times more energetic than specified.
+    [[nodiscard]] Angle2 offset(double t_s, RngSet& rng, bool new_frame);
+
+    /// The platform's analytic velocity, in microradians per second.
+    ///
+    /// This is what CP 10.3's platform-drift cancellation would ideally know.
+    /// The controller does NOT get this — it has to estimate it — but the
+    /// metrics use it to report how much of the residual error is platform
+    /// motion the estimator failed to remove.
+    [[nodiscard]] Rate2 platform_rate(double t_s) const;
+
+    void reset();
+
+    /// Startup diagnostics. Design §9.3 asks for this exact line to be logged:
+    ///     20 px/frame -> 65449 urad/s -> 3.75 deg/s (75% of a 5 deg/s motor)
+    [[nodiscard]] double jitter_urad_s(double camera_hz) const noexcept;
+    [[nodiscard]] double jitter_px_per_frame() const noexcept { return jitter_px_; }
+
+private:
+    double          jitter_px_    = 0.0;
+    double          ifov_x_       = 1.0;
+    double          ifov_y_       = 1.0;
+    CompositeMotion platform_;
+    Angle2          jitter_held_{};   ///< resampled once per camera frame
+};
+
+}  // namespace sat

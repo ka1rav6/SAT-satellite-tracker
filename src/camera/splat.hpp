@@ -16,6 +16,7 @@
 #pragma once
 
 #include "camera/coverage.hpp"
+#include "core/image.hpp"
 #include "core/frames.hpp"
 #include "world/emitters.hpp"
 
@@ -47,31 +48,8 @@ void splat_emitters(std::span<float> dst,
                     const EmitterSoA& emitters, std::span<const uint32_t> visible,
                     Angle2 boresight, double weight = 1.0) noexcept;
 
-/// The intensity-weighted centre of a float image, in image pixels.
-///
-/// This is the simulator's own check on itself, and the direct subject of CP
-/// 1.3's acceptance test. It is NOT the tracker's centroid estimator — that one
-/// lives in perception/, works on a degraded 8-bit image with background
-/// removal and bias correction, and never sees this function.
-[[nodiscard]] Pixel2 intensity_centroid(std::span<const float> img,
-                                        int width, int height) noexcept;
-
-/// Sum of all pixels. Used by tests to assert that a splat conserves flux.
-[[nodiscard]] double total_flux(std::span<const float> img) noexcept;
-
-/// Convert a float render to 8-bit, clipping at 255.
-///
-/// This is design §9.3 step 7 in isolation; the full chain inserts atmosphere,
-/// noise and defects before it. Rounding is round-half-away-from-zero, which is
-/// what a real ADC does and, more importantly, is symmetric — a round-half-even
-/// or a truncation would bias every pixel in one direction and shift the
-/// centroid by a fraction of a pixel.
-void quantise_u8(std::span<const float> src, std::span<uint8_t> dst) noexcept;
-
-/// Write a binary PGM. The CP 1.4 acceptance surface after the §14.0 amendment:
-/// the numeric test is intensity_centroid(), and this exists so a human can also
-/// look at a frame when something is obviously wrong.
-[[nodiscard]] bool write_pgm(const char* path, std::span<const uint8_t> img,
-                             int width, int height) noexcept;
+// intensity_centroid, total_flux, quantise_u8 and write_pgm moved to
+// core/image.hpp: they operate on a plain pixel buffer and the degradation
+// chain needs them too, without depending on the camera module.
 
 }  // namespace sat
