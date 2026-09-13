@@ -122,6 +122,7 @@ sat_add_module(sat_perception
         src/perception/simple_detector.cpp
         src/perception/median.cpp
         src/perception/morphology.cpp
+        src/perception/sat.cpp
     PUBLIC_DEPS sat_core
 )
 
