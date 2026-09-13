@@ -99,6 +99,7 @@ sat_add_test(motion
 # --- CP 5.1-5.8: the perception kernels, against OpenCV oracles (§16) -------
 sat_add_test(kernels
     SOURCES kernels/test_median.cpp
+            kernels/test_morphology.cpp
     DEPS    sat_core sat_perception sat_cv_oracle
 )
 
