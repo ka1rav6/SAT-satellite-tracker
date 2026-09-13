@@ -33,6 +33,8 @@
 
 #include "control/controller.hpp"
 #include "core/profile.hpp"
+#include "core/triple_buffer.hpp"
+#include "engine/snapshot.hpp"
 #include "engine/synthetic_source.hpp"
 #include "perception/simple_detector.hpp"
 #include "plant/gimbal.hpp"
@@ -86,6 +88,11 @@ struct PipelineConfig {
     /// subtracts before computing a centre of mass.
     int   detector_window = 7;
     float detector_floor  = 12.0f;
+
+    /// Publish a SimSnapshot every frame. Costs one frame copy (~300 KB), so
+    /// the headless benchmark path turns it off. Reproducibility verification
+    /// turns it ON, because the fingerprint is computed from the snapshot.
+    bool publish_snapshots = true;
 };
 
 // ---------------------------------------------------------------------------
@@ -103,6 +110,17 @@ public:
     void run(std::vector<FrameRecord>& out);
 
     [[nodiscard]] const FrameRecord& last()     const noexcept { return last_; }
+
+    /// The per-frame fingerprints (CP 2.5). Empty unless publish_snapshots.
+    [[nodiscard]] const std::vector<FrameFingerprint>& fingerprints() const noexcept {
+        return fingerprints_;
+    }
+
+    /// The triple buffer the display thread reads. Exposed so CP 2.3's "slowing
+    /// the display does not slow the simulation" can be demonstrated, and so
+    /// CP 15.0's dashboard has something to attach to without touching any of
+    /// this.
+    [[nodiscard]] TripleBuffer<SimSnapshot>& snapshots() noexcept { return snapshots_; }
     [[nodiscard]] const Gimbal&      gimbal()   const noexcept { return gimbal_; }
     [[nodiscard]] SyntheticSource&   source()         noexcept { return source_; }
     [[nodiscard]] const StageTimers& timers()   const noexcept { return timers_; }
@@ -121,6 +139,9 @@ private:
     Rate2       cmd_rate_{};      ///< the value that closes the loop (INV-2)
     FrameRecord last_{};
     int64_t     frame_ = 0;
+
+    TripleBuffer<SimSnapshot>    snapshots_{};
+    std::vector<FrameFingerprint> fingerprints_;
 };
 
 }  // namespace sat

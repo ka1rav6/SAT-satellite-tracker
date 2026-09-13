@@ -14,6 +14,18 @@ void Pipeline::build(const PipelineConfig& cfg, EmitterSoA emitters) {
     cmd_rate_ = Rate2{};
     frame_    = 0;
     last_     = FrameRecord{};
+
+    // Pre-size all three snapshot slots from a prototype, so that publishing a
+    // frame never allocates (INV-4). This is the one place it is allowed.
+    SimSnapshot proto;
+    proto.reserve_preview(cfg_.synthetic.camera.width, cfg_.synthetic.camera.height);
+    snapshots_.reset(proto);
+
+    fingerprints_.clear();
+    if (cfg_.publish_snapshots) {
+        fingerprints_.reserve(
+            static_cast<size_t>(cfg_.synthetic.duration_s * cfg_.synthetic.camera_hz) + 2);
+    }
 }
 
 bool Pipeline::step() {
@@ -153,6 +165,42 @@ bool Pipeline::step() {
             const Pixel2 bore_screen = cfg_.synthetic.screen.to_pixel(rec.boresight_true);
             rec.tracking_error_px = (bore_screen - t->screen_pos).norm();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // B30: publish the snapshot.
+    //
+    // This is the seam the GUI attaches to at CP 15.0. Building and exercising
+    // it now — rather than when the dashboard is written — is the entire
+    // justification for the §14.0 amendment that deferred the GUI, and it is
+    // also where the reproducibility fingerprint comes from, since the snapshot
+    // is by construction everything about a frame that is externally
+    // observable.
+    // -----------------------------------------------------------------------
+    if (cfg_.publish_snapshots) {
+        SAT_ZONE(timers_, Stage::Snapshot);
+        SimSnapshot& snap = snapshots_.write_slot();
+        snap.frame             = rec.frame;
+        snap.time_s            = rec.time_s;
+        snap.boresight_cmd     = rec.boresight_cmd;
+        snap.boresight_true    = rec.boresight_true;
+        snap.cmd_rate          = cmd_rate_;
+        snap.gimbal_rate       = gimbal_.rate();
+        snap.detected          = rec.detected;
+        snap.detection_img     = rec.detection_img;
+        snap.detection_screen  = rec.detection_screen;
+        snap.detection_snr     = rec.detection_peak;
+        snap.candidate_count   = rec.detected ? 1 : 0;
+        snap.mode              = rec.detected ? TrackMode::Track : TrackMode::Search;
+        snap.truth_valid       = rec.truth_valid;
+        snap.truth_screen      = rec.truth_screen;
+        snap.truth_in_fov      = rec.truth_in_fov;
+        snap.centroid_error_px = rec.centroid_error_px;
+        snap.tracking_error_px = rec.tracking_error_px;
+        snap.set_preview(frame.pixels);
+
+        fingerprints_.push_back(fingerprint(snap));
+        snapshots_.publish();
     }
 
     last_ = rec;

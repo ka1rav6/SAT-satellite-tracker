@@ -150,6 +150,7 @@ sat_add_module(sat_engine
         src/engine/video_probe.cpp
         src/engine/synthetic_source.cpp
         src/engine/pipeline.cpp
+        src/engine/snapshot.cpp
     PUBLIC_DEPS sat_core sat_world sat_camera sat_degrade sat_scenario
                 sat_perception sat_tracking sat_control sat_plant sat_search sat_ai
 )
@@ -292,6 +293,7 @@ endif()
 # ===========================================================================
 add_executable(sat-tracker
     src/app/main.cpp
+    src/app/verify_repro.cpp
 )
 
 target_link_libraries(sat-tracker PRIVATE

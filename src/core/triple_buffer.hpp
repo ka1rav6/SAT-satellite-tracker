@@ -41,6 +41,24 @@ public:
     /// pre-sized storage: pass a T that has already reserved what it needs.
     explicit TripleBuffer(const T& prototype) : slots_{prototype, prototype, prototype} {}
 
+    /// Re-initialise all three slots from a prototype and rewind the indices.
+    ///
+    /// A separate method rather than assignment, because the atomics make this
+    /// type non-copyable and non-movable — which is correct (an atomic's value
+    /// is meaningless to copy) but means a triple buffer cannot be replaced
+    /// wholesale once constructed.
+    ///
+    /// MUST NOT be called while a consumer is reading. It is a setup operation:
+    /// once per run at build time, or between sweep runs inside one process.
+    void reset(const T& prototype) {
+        for (auto& s : slots_) s = prototype;
+        write_idx_ = 0;
+        read_idx_  = 2;
+        ready_.store(1, std::memory_order_relaxed);
+        published_.store(0, std::memory_order_relaxed);
+        consumed_ = 0;
+    }
+
     /// The buffer the producer may write into. Valid until publish().
     [[nodiscard]] T& write_slot() noexcept { return slots_[write_idx_]; }
 

@@ -90,6 +90,12 @@ sat_add_test(loop
     DEPS    sat_core sat_plant sat_control sat_engine sat_perception
 )
 
+# --- CP 2.3-2.5: snapshots and the reproducibility fingerprint --------------
+sat_add_test(repro
+    SOURCES repro/test_fingerprint.cpp
+    DEPS    sat_core sat_engine
+)
+
 # --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------
 # Runs whether or not OpenCV is present: without it the gate test reports a loud
 # SKIP rather than passing silently, so a build that cannot do video says so.
