@@ -85,6 +85,8 @@ sat_add_module(sat_scenario
 
 # camera — exact-coverage splatting and the viewport query (design §9.2).
 sat_add_module(sat_camera
+    SOURCES
+        src/camera/splat.cpp
     PUBLIC_DEPS sat_core sat_world
 )
 

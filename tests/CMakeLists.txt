@@ -75,6 +75,13 @@ sat_add_test(core_memory
     DEPS    sat_core
 )
 
+# --- CP 1.3: exact-coverage splatting (the ground truth the 60% metric needs) -
+sat_add_test(render
+    SOURCES render/test_coverage.cpp
+            render/test_splat.cpp
+    DEPS    sat_core sat_camera sat_world
+)
+
 # --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------
 # Runs whether or not OpenCV is present: without it the gate test reports a loud
 # SKIP rather than passing silently, so a build that cannot do video says so.
