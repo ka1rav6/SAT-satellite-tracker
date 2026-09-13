@@ -8,37 +8,44 @@ void median_3x3(std::span<const uint8_t> src, std::span<uint8_t> dst,
     const size_t n = static_cast<size_t>(width) * static_cast<size_t>(height);
     if (src.size() < n || dst.size() < n) return;
 
-    // A 1x1 or Nx1 image has no 3x3 neighbourhood to speak of; replicate makes
-    // every sample the same pixel, so the median is the pixel itself.
-    if (width < 2 || height < 2) {
-        for (size_t i = 0; i < n; ++i) dst[i] = src[i];
-        return;
-    }
+    // NOTE: there is deliberately no early-out for 1-pixel-wide or
+    // 1-pixel-tall images.
+    //
+    // An earlier version copied them through unchanged, on the reasoning that a
+    // degenerate image has no neighbourhood. That is wrong, and cv::medianBlur
+    // disagreed with us on exactly such a case (a 1x17 column, 10 of 17 pixels
+    // differing). Under REPLICATE, a single-column image still has a real 3x3
+    // window: the column is replicated left and right, so the median is taken
+    // over three ROWS and the filter does genuine vertical smoothing.
+    //
+    // The general clamped path below produces that for free. The only case that
+    // truly degenerates is 1x1, where all nine samples clamp to the same pixel
+    // and the median is that pixel — which is also what the general path gives.
 
     const uint8_t* s = src.data();
     uint8_t*       d = dst.data();
+    const size_t   w = static_cast<size_t>(width);
 
-    // Clamped row/column lookup, which is the REPLICATE border rule.
+    // Clamped lookup — the REPLICATE border rule.
     auto at = [&](int x, int y) -> uint8_t {
         const int cx = x < 0 ? 0 : (x >= width  ? width  - 1 : x);
         const int cy = y < 0 ? 0 : (y >= height ? height - 1 : y);
-        return s[static_cast<size_t>(cy) * static_cast<size_t>(width) + static_cast<size_t>(cx)];
+        return s[static_cast<size_t>(cy) * w + static_cast<size_t>(cx)];
     };
 
     for (int y = 0; y < height; ++y) {
-        const bool interior_row = (y > 0 && y < height - 1);
-        uint8_t* drow = d + static_cast<size_t>(y) * static_cast<size_t>(width);
+        uint8_t* drow = d + static_cast<size_t>(y) * w;
 
-        // Interior rows take a fast path with direct row pointers: no clamping
-        // per sample, which is most of the work in the naive version.
-        if (interior_row) {
-            const uint8_t* r0 = s + static_cast<size_t>(y - 1) * static_cast<size_t>(width);
-            const uint8_t* r1 = s + static_cast<size_t>(y)     * static_cast<size_t>(width);
-            const uint8_t* r2 = s + static_cast<size_t>(y + 1) * static_cast<size_t>(width);
+        // Interior rows get direct row pointers: no per-sample clamping, which
+        // is most of the work in the naive form.
+        if (y > 0 && y < height - 1) {
+            const uint8_t* r0 = s + static_cast<size_t>(y - 1) * w;
+            const uint8_t* r1 = s + static_cast<size_t>(y)     * w;
+            const uint8_t* r2 = s + static_cast<size_t>(y + 1) * w;
 
-            drow[0] = median9(at(-1, y - 1), r0[0], r0[1],
-                              at(-1, y),     r1[0], r1[1],
-                              at(-1, y + 1), r2[0], r2[1]);
+            drow[0] = median9(r0[0], r0[0], r0[1],
+                              r1[0], r1[0], r1[1],
+                              r2[0], r2[0], r2[1]);
 
             for (int x = 1; x < width - 1; ++x) {
                 drow[x] = median9(r0[x - 1], r0[x], r0[x + 1],
@@ -47,9 +54,9 @@ void median_3x3(std::span<const uint8_t> src, std::span<uint8_t> dst,
             }
 
             const int xe = width - 1;
-            drow[xe] = median9(r0[xe - 1], r0[xe], at(width, y - 1),
-                               r1[xe - 1], r1[xe], at(width, y),
-                               r2[xe - 1], r2[xe], at(width, y + 1));
+            drow[xe] = median9(r0[xe - 1], r0[xe], r0[xe],
+                               r1[xe - 1], r1[xe], r1[xe],
+                               r2[xe - 1], r2[xe], r2[xe]);
         } else {
             for (int x = 0; x < width; ++x) {
                 drow[x] = median9(at(x - 1, y - 1), at(x, y - 1), at(x + 1, y - 1),

@@ -120,6 +120,7 @@ sat_add_module(sat_degrade
 sat_add_module(sat_perception
     SOURCES
         src/perception/simple_detector.cpp
+        src/perception/median.cpp
     PUBLIC_DEPS sat_core
 )
 

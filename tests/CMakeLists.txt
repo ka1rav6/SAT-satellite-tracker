@@ -96,6 +96,12 @@ sat_add_test(motion
     DEPS    sat_core sat_world
 )
 
+# --- CP 5.1-5.8: the perception kernels, against OpenCV oracles (§16) -------
+sat_add_test(kernels
+    SOURCES kernels/test_median.cpp
+    DEPS    sat_core sat_perception sat_cv_oracle
+)
+
 # --- CP 3.1-3.2, 3.6: TOML loading and spec-row-citing validation -----------
 sat_add_test(schema
     SOURCES schema/test_schema.cpp
