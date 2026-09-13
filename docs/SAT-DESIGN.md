@@ -1253,6 +1253,35 @@ Tentative ──3 hits in 5 frames──▶ Confirmed ──miss──▶ Coasti
 During Coasting the covariance grows → the gate widens automatically → short dropouts recover with no
 special case.
 
+### AMENDMENT (Stage 6) — what nearest neighbour minimises
+
+The gate above is implemented exactly as written: `d^2 < 9.21`, chi-square with two degrees of
+freedom, and the empirical acceptance rate over 20,000 draws from the filter's own predicted
+distribution measures 98.8%.
+
+The ASSOCIATION rule needed one refinement, recorded here because "nearest neighbour" above does not
+say in what metric. Selecting the smallest `d^2` is wrong once §10.1.4's adaptive `R` is switched on
+(CP 6.5), and wrong in the worst direction: `d^2` divides the displacement by the uncertainty a
+candidate CLAIMS, so a weak, smeared detection reporting a large sigma gets a small `d^2` for free.
+Measured on two candidates at identical offsets from the prediction, one crisp and one smeared:
+`d^2` of 0.14 against 5.64 — a 40x preference for the least trustworthy thing in the frame.
+
+Association therefore minimises the standard NN likelihood score
+
+```
+score = d^2 + ln|S|          ( = -2 ln L, up to a constant )
+```
+
+where the normalisation term charges a candidate for the uncertainty it claims. **Gating still uses
+`d^2` alone**, because 9.21 is a probability statement about one measurement and means nothing on a
+scale that includes `ln|S|`.
+
+One further note, since the intuition is common and does not hold here: with the CWNA `Q` above and
+`R = sigma^2 I`, azimuth and elevation are exactly independent, so the predicted position covariance
+is ISOTROPIC at every step — `P(0,0) == P(1,1)`, `P(0,1) == 0`. The gate is a circle, not an ellipse
+aligned with the velocity. Anisotropy arrives with the coordinate-turn model at CP 10.5, which is why
+the filter is written in full 4x4 form rather than as two decoupled 2x2 filters.
+
 ### Priority / multi-target
 
 ```cpp
