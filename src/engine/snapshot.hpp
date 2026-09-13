@@ -25,6 +25,7 @@
 #pragma once
 
 #include "core/hash.hpp"
+#include "core/mode.hpp"
 #include "core/units.hpp"
 
 #include <cstdint>
@@ -32,15 +33,6 @@
 #include <vector>
 
 namespace sat {
-
-/// Mode FSM state (design §10.4). Defined here rather than in control/ because
-/// the snapshot and the centroid log both need to name it, and neither may
-/// depend on the controller.
-enum class TrackMode : uint8_t {
-    Idle = 0, Search, Detect, Acquire, Track, Reacquire, Handover, Safe
-};
-
-[[nodiscard]] const char* track_mode_name(TrackMode m) noexcept;
 
 // ---------------------------------------------------------------------------
 // SimSnapshot

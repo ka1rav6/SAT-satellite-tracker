@@ -67,6 +67,7 @@ sat_add_module(sat_core
         src/core/rng.cpp
         src/core/image.cpp
         src/core/arena.cpp
+        src/core/mode.cpp
         src/core/profile.cpp
 )
 
@@ -162,6 +163,8 @@ sat_add_module(sat_plant
 
 # control — PID + feedforward, mode FSM, SAT supervisor.
 sat_add_module(sat_control
+    SOURCES
+        src/control/mode_fsm.cpp
     PUBLIC_DEPS sat_core sat_tracking sat_search sat_plant
 )
 
