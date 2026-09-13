@@ -105,6 +105,8 @@ sat_add_module(sat_degrade
 # perception — median, morphology, summed-area tables, matched filter, CFAR,
 # grouping, centroiding. Sees an image and nothing else.
 sat_add_module(sat_perception
+    SOURCES
+        src/perception/simple_detector.cpp
     PUBLIC_DEPS sat_core
 )
 
@@ -146,6 +148,8 @@ sat_add_module(sat_control
 sat_add_module(sat_engine
     SOURCES
         src/engine/video_probe.cpp
+        src/engine/synthetic_source.cpp
+        src/engine/pipeline.cpp
     PUBLIC_DEPS sat_core sat_world sat_camera sat_degrade sat_scenario
                 sat_perception sat_tracking sat_control sat_plant sat_search sat_ai
 )
