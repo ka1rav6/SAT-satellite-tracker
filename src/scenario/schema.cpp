@@ -359,4 +359,81 @@ AtmosphereCoeffs atmosphere_coeffs(Atmosphere a) noexcept {
     return {1.0, 0.0};
 }
 
+// ---------------------------------------------------------------------------
+// max_accel_px_s2 — see schema.hpp for why this lives here rather than in
+// tracking/.
+//
+// Each case is the second derivative of the position law in §7.2, evaluated at
+// its maximum. Anything whose acceleration is genuinely unbounded or
+// impulsive (a bounce) returns 0 and says so: pretending to bound an impulse
+// with a number would be worse than admitting the model does not cover it, and
+// the floor applied by the caller covers the residual.
+// ---------------------------------------------------------------------------
+double max_accel_px_s2(const MotionSpec& m, double duration_s) noexcept {
+    const double w = (m.period_s > 0.0) ? (2.0 * kPi / m.period_s) : 0.0;
+
+    if (m.kind == "constant" || m.kind == "linear") {
+        return 0.0;                                   // x'' = 0 exactly
+    }
+    if (m.kind == "accel") {
+        return std::hypot(m.accel_px_s2[0], m.accel_px_s2[1]);
+    }
+    if (m.kind == "circular") {
+        return w * w * std::fabs(m.radius_px);        // centripetal
+    }
+    if (m.kind == "sinusoid") {
+        const double a = (m.axis == 0) ? m.amplitude_px[0] : m.amplitude_px[1];
+        return w * w * std::fabs(a);
+    }
+    if (m.kind == "lissajous") {
+        // Independent frequencies per axis; the figure-of-eight is freq_ratio 2.
+        const double ax = w * w * std::fabs(m.amplitude_px[0]);
+        const double wy = w * m.freq_ratio;
+        const double ay = wy * wy * std::fabs(m.amplitude_px[1]);
+        return std::hypot(ax, ay);
+    }
+    if (m.kind == "spiral") {
+        // r(t) = r0 + growth*t, theta = w*t. In polar form the acceleration is
+        // (r'' - r w^2) radially and (2 r' w) tangentially; r'' is zero for a
+        // linear growth law, so the radial term is the centripetal one at the
+        // largest radius the run reaches.
+        const double r_max = std::fabs(m.r0_px) + std::fabs(m.growth_px_s) * duration_s;
+        return std::hypot(w * w * r_max, 2.0 * std::fabs(m.growth_px_s) * w);
+    }
+    if (m.kind == "ou_noise") {
+        // An Ornstein-Uhlenbeck velocity process: dv = -v/tau dt + sigma dW.
+        // Its mean-reverting term alone gives an acceleration of order
+        // sigma/tau at the stationary velocity scale. This is a scale, not a
+        // hard bound — the process is Gaussian and has no maximum — which is
+        // exactly the case a Kalman filter's q is designed for.
+        return (m.tau_s > 0.0) ? (m.sigma_px_s / m.tau_s) : 0.0;
+    }
+    if (m.kind == "waypoints") {
+        // Second difference of the supplied points. Waypoints are piecewise
+        // linear, so the true acceleration is impulsive at the corners; the
+        // difference over the two adjacent legs is the honest smoothed figure.
+        double worst = 0.0;
+        for (size_t i = 2; i < m.points.size(); ++i) {
+            const double t0 = m.points[i - 2][0], t1 = m.points[i - 1][0], t2 = m.points[i][0];
+            const double d1 = t1 - t0, d2 = t2 - t1;
+            if (d1 <= 0.0 || d2 <= 0.0) continue;
+            for (int ax = 1; ax <= 2; ++ax) {
+                const double v1 = (m.points[i - 1][ax] - m.points[i - 2][ax]) / d1;
+                const double v2 = (m.points[i][ax]     - m.points[i - 1][ax]) / d2;
+                worst = std::max(worst, std::fabs(v2 - v1) / (0.5 * (d1 + d2)));
+            }
+        }
+        return worst;
+    }
+    // Unknown or impulsive (bounce): not modelled, and saying so is better than
+    // inventing a number.
+    return 0.0;
+}
+
+double max_accel_px_s2(const TargetSpec& t, double duration_s) noexcept {
+    double sum = 0.0;
+    for (const MotionSpec& m : t.motion) sum += max_accel_px_s2(m, duration_s);
+    return sum;
+}
+
 }  // namespace sat

@@ -179,6 +179,7 @@ sat_add_test(tracking
             tracking/test_track.cpp
             tracking/test_mode_fsm.cpp
             tracking/test_search.cpp
+            tracking/test_reacquire.cpp
     DEPS    sat_core sat_tracking sat_control sat_search sat_perception sat_engine sat_scenario
 )
 target_compile_definitions(test_tracking PRIVATE

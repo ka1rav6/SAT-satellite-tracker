@@ -63,9 +63,21 @@ Scenario clean_base() {
     return sc;
 }
 
-Outcome run(const Scenario& sc) {
+// -------------------------------------------------------------------------
+// The ablation runs the STRAW MAN through the real closed loop.
+//
+// That has to be explicit now. Since Stage 6 the engine defaults to
+// ClassicalPerception — §9.4 is blunt that the brightest-pixel detector "must
+// never be the default" — so an ablation that did not say which detector it
+// wanted would quietly start measuring the wrong one, and the whole point of
+// CP 4.11 is to record what the naive detector does. The switch exists for
+// exactly this test.
+// -------------------------------------------------------------------------
+Outcome run(const Scenario& sc,
+            PipelineConfig::Detector det = PipelineConfig::Detector::BrightestPixel) {
     Pipeline p;
     p.build_from_scenario(sc);
+    p.set_detector(det);
     std::vector<FrameRecord> rec;
     p.run(rec);
     REQUIRE(!rec.empty());
@@ -196,6 +208,57 @@ TEST_CASE("CP 4.11: clutter gives the naive detector something to lock onto") {
                        || r.centroid_image_px > 5.0
                        || r.tracking_px > 20.0;
     CHECK(degraded);
+}
+
+TEST_CASE("the classical pipeline survives what destroys the straw man") {
+    // The other half of the ablation, and the half that makes CP 4.11 a RESULT
+    // rather than a complaint. "The naive detector fails" is only an argument
+    // for §9.4 if the thing §9.4 built does not.
+    //
+    // Same two scenarios, same seed, same closed loop — only the detector
+    // changes. These numbers are the "after" column of the Stage 5 row of
+    // §13.3's ablation table.
+    // Shorter than the straw-man arms above. Four runs of the full §9.4
+    // pipeline through the closed loop is the most expensive thing in the test
+    // suite, and 2 s (60 frames) is ample for the statistics asserted below —
+    // the differences being measured are three orders of magnitude, not
+    // marginal. Keeping this suite comfortably inside its timeout matters:
+    // the Debug build runs the same code roughly five times slower.
+    Scenario noise = clean_base();
+    noise.duration_s     = 2.0;
+    noise.salt_pepper    = 0.10;          // spec row 21
+    noise.gaussian_sigma = 20.0;          // spec row 22, at the cap
+    noise.noise_poisson  = true;
+
+    Scenario clutter = clean_base();
+    clutter.duration_s     = 2.0;
+    clutter.static_sources = 120;         // design §9.1, "mandatory"
+    clutter.decoy_beacons  = 1;
+
+    struct Arm { const char* name; Scenario sc; };
+    for (const Arm& a : {Arm{"spec-max noise", noise}, Arm{"120 clutter + decoy", clutter}}) {
+        const Outcome naive     = run(a.sc, PipelineConfig::Detector::BrightestPixel);
+        const Outcome classical = run(a.sc, PipelineConfig::Detector::Classical);
+
+        MESSAGE(std::string(a.name) << ":");
+        MESSAGE("  centroid (image)  straw man " << naive.centroid_image_px
+                << " px -> classical " << classical.centroid_image_px << " px");
+        MESSAGE("  tracking          straw man " << naive.tracking_px
+                << " px -> classical " << classical.tracking_px << " px");
+        MESSAGE("  false alarms      straw man " << (100.0 * naive.false_alarm_frac)
+                << "% -> classical " << (100.0 * classical.false_alarm_frac) << "%");
+        MESSAGE("  beacon in view    straw man " << (100.0 * naive.in_fov_frac)
+                << "% -> classical " << (100.0 * classical.in_fov_frac) << "%");
+
+        // The classical pipeline keeps the beacon and keeps the lock. The
+        // thresholds are spec row 17's 10 px and row 18's 5% target loss, so
+        // this is written against the graded requirement rather than against
+        // whatever the code happens to do today.
+        CHECK(classical.in_fov_frac      > 0.95);
+        CHECK(classical.false_alarm_frac < 0.05);
+        CHECK(classical.tracking_px      < 10.0);
+        CHECK(classical.centroid_image_px < 2.0);
+    }
 }
 
 TEST_CASE("CP 4.12: every scenario in scenarios/ runs to completion") {

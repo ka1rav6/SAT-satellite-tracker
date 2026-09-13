@@ -60,6 +60,24 @@ Scene make_scene(double offset_px = 120.0, double vx_px_s = 20.0, double duratio
     s.cfg.initial_boresight = Angle2{0.0, 0.0};
     s.cfg.gains             = ControlGains::proportional(4.0);
 
+    // -------------------------------------------------------------------
+    // The STRAW-MAN detector, on purpose.
+    //
+    // These are CP 1.6-1.8: they are about the CONTROL LOOP — does the
+    // commanded rate actually move the mount, and does disabling it stop the
+    // following — and they were written against the brightest-pixel detector
+    // because that is all Stage 1 had. Nothing here depends on detection
+    // quality: the scene is one bright beacon on a clean background.
+    //
+    // Since Stage 6 the engine defaults to ClassicalPerception, and running
+    // the full §9.4 pipeline on every frame of these scenarios took the suite
+    // from under a second to past its two-minute timeout — for tests that do
+    // not measure perception at all. The closed loop IS exercised against the
+    // real pipeline, in tests/tracking/test_reacquire.cpp, where that is the
+    // thing being measured.
+    // -------------------------------------------------------------------
+    s.cfg.detector = PipelineConfig::Detector::BrightestPixel;
+
     // The beacon: spec rows 7, 9, 10 — a 10x10 square beacon, placed off-centre
     // so there is a real error for the loop to remove.
     const double cx = s.cfg.synthetic.screen.cx;

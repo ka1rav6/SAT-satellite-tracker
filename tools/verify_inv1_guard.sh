@@ -32,14 +32,28 @@ echo "INV-1 self-test: injecting 'sat_search -> sat_world' into the module graph
 # sat_search is chosen because sat_control links it. A guard that only checked
 # direct edges would catch sat_search and miss sat_control; asserting that BOTH
 # are reported is what proves the closure walk is transitive.
+# The injection finds the sat_search block and appends sat_world to its
+# PUBLIC_DEPS line, rather than matching the whole declaration literally. The
+# literal version broke the first time sat_search gained a source file
+# (CP 6.7's search/pattern.cpp) — which is a bad failure mode for a self-test:
+# a guard's own check going red for an unrelated reason trains people to ignore
+# it. It still asserts that the target and its PUBLIC_DEPS line exist, so a real
+# structural change is still reported rather than silently skipped.
 python3 - "${modules}" <<'PY'
-import sys
+import re, sys
 path = sys.argv[1]
 src = open(path).read()
-needle = "sat_add_module(sat_search\n    PUBLIC_DEPS sat_core\n)"
-assert needle in src, "module graph layout changed; update this self-test"
-open(path, "w").write(src.replace(needle,
-    "sat_add_module(sat_search\n    PUBLIC_DEPS sat_core sat_world\n)"))
+
+start = src.find("sat_add_module(sat_search")
+assert start >= 0, "sat_search target not found; update this self-test"
+end = src.find("\n)", start)
+assert end > start, "sat_search declaration is not closed; update this self-test"
+
+block = src[start:end]
+patched, n = re.subn(r"(?m)^(\s*PUBLIC_DEPS .*)$", r"\1 sat_world", block, count=1)
+assert n == 1, "sat_search has no PUBLIC_DEPS line; update this self-test"
+
+open(path, "w").write(src[:start] + patched + src[end:])
 PY
 
 output="${scratch}/configure.log"

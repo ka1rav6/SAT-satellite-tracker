@@ -158,6 +158,31 @@ build-headless:
     echo "headless build OK (--gui reports a clear message rather than failing to build)"
 
 # ---------------------------------------------------------------------------
+# Stage 6 — tracking (design §10.2, §10.4, §10.5)
+# ---------------------------------------------------------------------------
+
+# The whole Stage 6 suite: measurements, Kalman, gate, lifecycle, adaptive R,
+# the mode FSM, the search pattern, and the CP 6.7 end-to-end reacquisition.
+# Verbose, because the numbers ARE the checkpoints — reacquisition time, lock
+# retention, and the velocity estimate against the scenario's analytic one.
+test-tracking: build
+    "{{build_dir}}/test_tracking" --success --no-skipped-summary 2>&1 \
+        | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true
+
+# CP 6.7 ★ — hide the beacon for 2 s, reveal it, and count the frames to
+# reacquire. The checkpoint allows 15; specification row 19 allows 30 (1 s).
+cp67: build
+    "{{build_dir}}/test_tracking" -tc="*6.7*,Stage 6*" --success \
+        | grep -E "MESSAGE|TEST CASE|ERROR|test cases"
+
+# CP 4.11 / Stage 5 ablation — the straw-man detector against the real §9.4
+# pipeline, through the same closed loop, on the same seeds. This prints the
+# before/after columns of design §13.3's ablation table.
+ablation: build
+    "{{build_dir}}/test_degrade" -tc="*CP 4.11*,*classical pipeline survives*" \
+        --success | grep -E "MESSAGE|TEST CASE|ERROR" || true
+
+# ---------------------------------------------------------------------------
 # Video (design §8 — Benchmark Performance-2, 30% of marks)
 # ---------------------------------------------------------------------------
 

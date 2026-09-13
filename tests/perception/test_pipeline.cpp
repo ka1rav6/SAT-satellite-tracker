@@ -135,6 +135,11 @@ TEST_CASE("CP 5.7: candidates drop from thousands to under 25 under full damage"
 
     Pipeline engine;
     engine.build_from_scenario(sc);
+    // The engine is wanted here only as a frame source: these tests run their
+    // own ClassicalPerception on the snapshot so they can vary its parameters.
+    // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
+    // per frame and double the suite's runtime for nothing.
+    engine.set_detector(PipelineConfig::Detector::BrightestPixel);
     REQUIRE(engine.step());
 
     // acquire() BEFORE read_slot(): acquiring swaps the slot, so taking the
@@ -198,6 +203,11 @@ TEST_CASE("★ CP 5.9: the beacon is among the top candidates in >95% of frames"
 
     Pipeline engine;
     engine.build_from_scenario(sc);
+    // The engine is wanted here only as a frame source: these tests run their
+    // own ClassicalPerception on the snapshot so they can vary its parameters.
+    // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
+    // per frame and double the suite's runtime for nothing.
+    engine.set_detector(PipelineConfig::Detector::BrightestPixel);
     // Open loop: this measures PERCEPTION, and a control loop chasing clutter
     // would move the beacon out of frame and confound the measurement.
     engine.set_control_enabled(false);
@@ -269,6 +279,11 @@ TEST_CASE("the pipeline survives every atmosphere with one set of parameters") {
 
         Pipeline engine;
         engine.build_from_scenario(sc);
+    // The engine is wanted here only as a frame source: these tests run their
+    // own ClassicalPerception on the snapshot so they can vary its parameters.
+    // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
+    // per frame and double the suite's runtime for nothing.
+    engine.set_detector(PipelineConfig::Detector::BrightestPixel);
         engine.set_control_enabled(false);
 
         p.target_size_px = sc.targets[0].size_px;
@@ -306,6 +321,11 @@ TEST_CASE("INV-4: processing a frame allocates nothing after startup") {
 
     Pipeline engine;
     engine.build_from_scenario(sc);
+    // The engine is wanted here only as a frame source: these tests run their
+    // own ClassicalPerception on the snapshot so they can vary its parameters.
+    // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
+    // per frame and double the suite's runtime for nothing.
+    engine.set_detector(PipelineConfig::Detector::BrightestPixel);
     engine.set_control_enabled(false);
 
     PerceptionParams p;
@@ -344,6 +364,11 @@ TEST_CASE("the detection pipeline is reproducible") {
     auto run_once = [&] {
         Pipeline engine;
         engine.build_from_scenario(sc);
+    // The engine is wanted here only as a frame source: these tests run their
+    // own ClassicalPerception on the snapshot so they can vary its parameters.
+    // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
+    // per frame and double the suite's runtime for nothing.
+    engine.set_detector(PipelineConfig::Detector::BrightestPixel);
         engine.set_control_enabled(false);
         PerceptionParams p;
         p.target_size_px = sc.targets[0].size_px;

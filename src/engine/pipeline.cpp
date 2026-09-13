@@ -2,9 +2,83 @@
 
 #include "engine/pipeline.hpp"
 
+#include "scenario/schema.hpp"
+
+#include <algorithm>
 #include <cmath>
 
 namespace sat {
+
+// ---------------------------------------------------------------------------
+// build_stage6 — allocate and reset perception, tracking, the mode FSM and the
+// search pattern.
+//
+// Everything here happens ONCE, at startup (design §6.1). That is the whole
+// point: the arena is reserved, every per-frame buffer is carved out of it, and
+// the candidate and measurement vectors are reserved to their maximum size, so
+// that a frame never allocates (INV-4). If this function is not called, or is
+// called with a mismatched frame size, perception_ready_ stays false and the
+// pipeline falls back to the straw-man detector rather than reading past the
+// end of a buffer.
+// ---------------------------------------------------------------------------
+void Pipeline::build_stage6() {
+    const CameraGeometry& cam = cfg_.synthetic.camera;
+
+    arena_.reserve(cfg_.perception_arena_bytes);
+    perception_ready_ = ws_.allocate(
+        arena_, cam.width, cam.height,
+        structuring_element_size(cfg_.perception.target_size_px));
+    perception_.configure(cfg_.perception);
+
+    dets_.clear();
+    meas_.clear();
+    dets_.reserve(static_cast<size_t>(std::max(1, cfg_.perception.max_candidates)));
+    meas_.reserve(static_cast<size_t>(std::max(1, cfg_.perception.max_candidates)));
+
+    // -----------------------------------------------------------------------
+    // The filter's process noise.
+    //
+    // A CORRECTION. The first version of this derived q from the MOUNT's
+    // acceleration limit, reasoning that the angular measurement's
+    // acceleration is bounded by the target's plus the camera's. That is
+    // wrong, and wrong by nearly two orders of magnitude: measurement.hpp adds
+    // the boresight back, so the measurement is in the world angular frame and
+    // the camera's motion is already removed. Only the TARGET's acceleration
+    // enters.
+    //
+    // The symptom was unmistakable once the whole loop ran. A mount limit of
+    // ~3.5e5 urad/s^2 gives q = a^2*dt = 4e9 urad^2/s^3, which inflates the
+    // position uncertainty to about 80 px after eight coasted frames. The
+    // chi-square gate scales with that, so it grew to ~240 px across — and the
+    // CFAR stage legitimately reports several noise candidates per frame, at
+    // arbitrary positions. The track was then kept alive indefinitely by noise
+    // and dragged 370 px off the target while still reporting a lock. Every
+    // component was behaving exactly as specified; the number connecting them
+    // was nonsense.
+    //
+    // The right bound is computable, which is the point of §7.2's analytic
+    // motion algebra: build_from_scenario reads the target's motion stack and
+    // calls max_accel_px_s2. See pipeline.hpp for the floor and the default.
+    // -----------------------------------------------------------------------
+    const double dt = 1.0 / std::max(1.0, static_cast<double>(cfg_.synthetic.camera_hz));
+    const double a_max = std::max(cfg_.max_target_accel_urad_s2,
+                                  cfg_.min_target_accel_urad_s2);
+    if (cfg_.tracking.kf.accel_psd_urad2_s3 <= 0.0) {
+        cfg_.tracking.kf = KalmanParams::from_max_accel(a_max, dt);
+    }
+    tracker_.reset(cfg_.tracking);
+
+    cfg_.mode.ifov_urad = cam.ifov_urad();
+    fsm_.reset(cfg_.mode);
+
+    if (cfg_.search.step.x <= 0.0 || cfg_.search.step.y <= 0.0) {
+        const SearchStrategy keep = cfg_.search.strategy;
+        cfg_.search = SearchParams::from_camera(cam, cfg_.synthetic.screen,
+                                                cfg_.search.overlap);
+        cfg_.search.strategy = keep;
+    }
+    search_.reset(cfg_.search, cfg_.initial_boresight);
+}
 
 void Pipeline::build(const PipelineConfig& cfg, EmitterSoA emitters) {
     cfg_ = cfg;
@@ -26,6 +100,8 @@ void Pipeline::build(const PipelineConfig& cfg, EmitterSoA emitters) {
         fingerprints_.reserve(
             static_cast<size_t>(cfg_.synthetic.duration_s * cfg_.synthetic.camera_hz) + 2);
     }
+
+    build_stage6();
 }
 
 void Pipeline::build_from_scenario(const Scenario& sc) {
@@ -51,6 +127,16 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
 
     cfg.initial_boresight = sc.initial_boresight();   // spec row 6
 
+    // §7.2's closed forms turned into the filter's q. The largest acceleration
+    // over every target, because the tracker does not know which one it will
+    // end up on and must be able to follow any of them.
+    double a_px = 0.0;
+    for (const TargetSpec& t : sc.targets) {
+        a_px = std::max(a_px, max_accel_px_s2(t, sc.duration_s));
+    }
+    cfg.max_target_accel_urad_s2 = a_px * cfg.synthetic.camera.ifov_urad();
+    cfg.min_target_accel_urad_s2 = 50.0 * cfg.synthetic.camera.ifov_urad();
+
     cfg_ = cfg;
     source_.build_from_scenario(sc);
     gimbal_.reset(cfg_.pan, cfg_.tilt, cfg_.initial_boresight);
@@ -63,6 +149,8 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     proto.reserve_preview(cfg_.synthetic.camera.width, cfg_.synthetic.camera.height);
     snapshots_.reset(proto);
     fingerprints_.clear();
+
+    build_stage6();
 }
 
 bool Pipeline::step() {
@@ -133,12 +221,38 @@ bool Pipeline::step() {
     // INV-1 enforced at the call site, on top of the link-level enforcement in
     // cmake/modules.cmake.
     // -----------------------------------------------------------------------
-    SimpleDetection det;
     {
         SAT_ZONE(timers_, Stage::Centroid);
-        det = detect_brightest_subpixel(frame.pixels, frame.width, frame.height,
-                                        cfg_.detector_window, cfg_.detector_floor);
+        if (cfg_.detector == PipelineConfig::Detector::Classical && perception_ready_) {
+            perception_.process(frame.pixels, frame.width, frame.height, ws_, dets_);
+        } else {
+            // The CP 4.11 ablation arm. §9.4 is explicit that this "must never
+            // be the default", and it is not — but it has to be runnable
+            // through the whole engine, because the result being demonstrated
+            // is that it locks onto the wrong thing in clutter, and that is a
+            // statement about the closed loop, not about one frame.
+            dets_.clear();
+            const SimpleDetection sd = detect_brightest_subpixel(
+                frame.pixels, frame.width, frame.height,
+                cfg_.detector_window, cfg_.detector_floor);
+            if (sd.found) {
+                Detection d;
+                d.centroid_image     = sd.centre;
+                d.peak               = sd.peak;
+                d.integrated         = sd.integrated;
+                // The straw man has no background estimate, so it cannot report
+                // an SNR. Reporting a fabricated one would flow straight into
+                // the filter's adaptive R (CP 6.5) and make the ablation
+                // compare two different filters rather than two detectors, so
+                // it declares a fixed, mediocre confidence instead.
+                d.snr                = 6.0f;
+                d.size_est_px        = static_cast<uint16_t>(cfg_.perception.target_size_px);
+                d.centroid_sigma_est = centroid_sigma(d.snr, d.size_est_px);
+                dets_.push_back(d);
+            }
+        }
     }
+    rec.candidate_count = static_cast<int>(dets_.size());
 
     // -----------------------------------------------------------------------
     // B16: image pixels -> world angle, via the COMMANDED boresight.
@@ -148,17 +262,104 @@ bool Pipeline::step() {
     // look perfect for the wrong reason — the single easiest way to accidentally
     // cheat in this project.
     // -----------------------------------------------------------------------
-    Angle2 aim = commanded;
-    if (det.found) {
-        rec.detected        = true;
-        rec.detection_img   = det.centre;
-        rec.detection_peak  = det.peak;
-
-        const Angle2 offset = cfg_.synthetic.camera.unproject(det.centre);
-        const Angle2 world  = commanded + offset;
-        rec.detection_screen = cfg_.synthetic.screen.to_pixel(world);
-        aim = world;
+    //
+    // The pointing-uncertainty floor on R: the encoder LSB is what the system
+    // knows it does not know about its own boresight. Jitter and platform drift
+    // are larger, but the tracker cannot observe them and must not be handed
+    // their magnitude — that would be reading a simulator parameter, which is
+    // the same class of mistake as reading the truth (INV-1). The filter
+    // discovers them as innovation, which is exactly what a filter is for.
+    const double pointing_sigma = std::max(cfg_.pan.encoder_lsb_urad,
+                                           cfg_.tilt.encoder_lsb_urad);
+    meas_.clear();
+    for (size_t i = 0; i < dets_.size(); ++i) {
+        meas_.push_back(to_measurement(dets_[i], cfg_.synthetic.camera, commanded,
+                                       pointing_sigma, static_cast<int>(i)));
     }
+
+    // Report the strongest candidate as "the detection" for the metrics and the
+    // log. Which candidate the TRACKER chose is recorded separately below; the
+    // two differ exactly when the gate rejected the brightest thing in frame,
+    // which is the behaviour CP 6.3 exists to produce.
+    if (!dets_.empty()) {
+        rec.detected          = true;
+        rec.detection_img     = dets_[0].centroid_image;
+        rec.detection_peak    = dets_[0].peak;
+        rec.detection_snr     = dets_[0].snr;
+        rec.centroid_sigma_px = dets_[0].centroid_sigma_est;
+        rec.detection_screen  = cfg_.synthetic.screen.to_pixel(
+            commanded + cfg_.synthetic.camera.unproject(dets_[0].centroid_image));
+    }
+
+    // -----------------------------------------------------------------------
+    // B17-B21: gate, associate, filter, lifecycle.
+    // -----------------------------------------------------------------------
+    const double frame_dt = 1.0 / std::max(1.0, static_cast<double>(cfg_.synthetic.camera_hz));
+    int associated = -1;
+    {
+        SAT_ZONE(timers_, Stage::Tracking);
+        associated = tracker_.step(frame_dt, std::span<Measurement>(meas_), frame_);
+    }
+    if (associated >= 0) {
+        // The tracker's choice, not the brightest one. This is what the log and
+        // the GUI should show as "the target".
+        const Detection& d = dets_[static_cast<size_t>(meas_[static_cast<size_t>(associated)].source_index)];
+        rec.detection_img     = d.centroid_image;
+        rec.detection_peak    = d.peak;
+        rec.detection_snr     = d.snr;
+        rec.centroid_sigma_px = d.centroid_sigma_est;
+        rec.detection_screen  = cfg_.synthetic.screen.to_pixel(
+            commanded + cfg_.synthetic.camera.unproject(d.centroid_image));
+    }
+
+    const Track& trk = tracker_.track();
+    rec.track_state         = trk.state();
+    rec.has_lock            = trk.drivable();
+    rec.estimate            = trk.position();
+    rec.estimate_rate       = trk.rate();
+    rec.estimate_sigma_urad = trk.filter().position_sigma_urad();
+
+    // -----------------------------------------------------------------------
+    // B24: mode FSM.
+    // -----------------------------------------------------------------------
+    ModeFsmInputs fsm_in;
+    fsm_in.running         = true;
+    fsm_in.have_track      = tracker_.has_track();
+    fsm_in.track_state     = trk.state();
+    fsm_in.candidate_count = rec.candidate_count;
+    fsm_in.rms_error_px    = 1e9;      // CP 10.7 feeds the real figure
+    rec.mode = fsm_.step(fsm_in, frame_, frame.timestamp_s);
+
+    // -----------------------------------------------------------------------
+    // B25: the aim point. THE ONE PLACE THE MODE ACTUALLY DOES SOMETHING.
+    //
+    // In Track/Reacquire the aim is the filter's prediction one frame ahead,
+    // not its current estimate. Aiming at where the target IS guarantees a lag
+    // of exactly one frame's motion — 8 px at 240 px/s — before the controller
+    // has even started. Aiming at where it WILL BE removes that for free, and
+    // it costs one multiply, because the velocity is already estimated.
+    //
+    // In Search the pattern owns the aim. Entering Search restarts it from the
+    // last known position rather than from the screen centre: the prediction is
+    // the best prior available and CP 6.7 is the measurement of what that is
+    // worth.
+    // -----------------------------------------------------------------------
+    Angle2 aim;
+    if (fsm_.tracking_active() && trk.drivable()) {
+        aim = trk.predict_position(frame_dt);
+        if (fsm_.changed_this_frame()) search_.recentre(aim);
+    } else {
+        if (fsm_.changed_this_frame() && rec.mode == TrackMode::Search) {
+            // Coming out of a lost track: search outward from where it was
+            // last believed to be, which is where it is most likely to
+            // reappear. On a cold start this is the initial boresight, which is
+            // the screen centre — the same thing, correctly.
+            search_.recentre(tracker_.has_track() ? trk.position() : search_.centre());
+            search_.restart();
+        }
+        aim = search_.step(frame_dt, commanded);
+    }
+    rec.aim = aim;
 
     // -----------------------------------------------------------------------
     // B22-B27: control.
@@ -171,17 +372,26 @@ bool Pipeline::step() {
         const bool el_sat = std::fabs(gimbal_.el().rate())
                           >= gimbal_.el().params().max_rate_urad_s * 0.999;
 
-        if (det.found) {
-            cmd_rate_ = control_.compute(aim, measured,
-                                         Rate2{}, Rate2{},   // FF arrives at CP 10.1
-                                         source_.clock().control_dt(),
-                                         az_sat, el_sat);
-        } else {
-            // INV-9's spirit: with no detection there is nothing to aim at, and
-            // inventing a command would be worse than holding. Real coasting on
-            // a filter prediction arrives at CP 6.4.
-            cmd_rate_ = Rate2{};
-        }
+        // The velocity feedforward input is now real: the Kalman filter
+        // estimates the target's angular rate directly (CP 6.2). The GAIN is
+        // still whatever the scenario set — ControlGains::proportional leaves
+        // k_ff at zero — so this changes nothing until CP 10.1 turns it on,
+        // which is the point: the plumbing and the tuning are separate
+        // commits, and the on/off comparison CP 10.1 asks for is then a
+        // one-line change rather than a rewrite.
+        const Rate2 ff = trk.drivable() ? trk.rate() : Rate2{};
+
+        // A note on what replaced the old behaviour. Until Stage 6 this read
+        // `if (det.found) ... else cmd_rate_ = Rate2{}` — hold still whenever a
+        // single frame missed. That was correct for a system with no memory,
+        // and INV-9 still forbids inventing a CENTROID. But a filter prediction
+        // is not an invented measurement: it is an estimate with a stated
+        // covariance, and refusing to use it is what made a one-frame dropout
+        // stop the mount dead. Search is now the only state that holds, and it
+        // holds by aiming at a search pattern rather than by zeroing the rate.
+        cmd_rate_ = control_.compute(aim, measured, ff, Rate2{},
+                                     source_.clock().control_dt(),
+                                     az_sat, el_sat);
     }
 
     // -----------------------------------------------------------------------
@@ -257,9 +467,11 @@ bool Pipeline::step() {
         snap.detected          = rec.detected;
         snap.detection_img     = rec.detection_img;
         snap.detection_screen  = rec.detection_screen;
-        snap.detection_snr     = rec.detection_peak;
-        snap.candidate_count   = rec.detected ? 1 : 0;
-        snap.mode              = rec.detected ? TrackMode::Track : TrackMode::Search;
+        snap.detection_snr     = rec.detection_snr;
+        snap.centroid_sigma_px = rec.centroid_sigma_px;
+        snap.candidate_count   = rec.candidate_count;
+        snap.mode              = rec.mode;
+        snap.track_state       = static_cast<int>(rec.track_state);
         snap.truth_valid       = rec.truth_valid;
         snap.truth_screen      = rec.truth_screen;
         snap.truth_in_fov      = rec.truth_in_fov;

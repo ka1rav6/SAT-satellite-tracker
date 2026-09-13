@@ -694,6 +694,95 @@ void Dashboard::draw_metrics() {
     ImGui::End();
 }
 
+// ---------------------------------------------------------------------------
+// draw_tracking_panel — Stage 6 made visible.
+//
+// Three things, and the third is the one that is hard to get any other way.
+//
+//   The mode and the track state, side by side. They are different machines
+//   (control/mode_fsm.hpp explains why) and seeing them disagree — Reacquire
+//   with a Coasting track, say — is how their interaction becomes obvious.
+//
+//   The filter's own numbers: the velocity estimate that feeds §10.4's
+//   feedforward, the position sigma that IS the gate's radius, and the
+//   normalised innovation squared, which should sit near 2 on a consistent
+//   filter and is the only health check available with no ground truth.
+//
+//   The transition log, newest first. CP 6.6's acceptance criterion is a
+//   trace, and a trace with reasons attached turns "it lost lock somewhere
+//   around there" into a line naming the frame and the rule that fired.
+// ---------------------------------------------------------------------------
+void Dashboard::draw_tracking_panel() {
+    if (dock_.left_bottom) ImGui::SetNextWindowDockID(dock_.left_bottom, dock_cond());
+    ImGui::Begin("Tracking");
+
+    const Track&  trk  = pipeline_.tracker().track();
+    const ModeFsm& fsm = pipeline_.fsm();
+    const double  ifov = scenario_.camera_geometry().ifov_urad();
+
+    const bool locked = trk.drivable();
+    ImGui::TextUnformatted("mode");
+    ImGui::SameLine(140.0f);
+    ImGui::TextColored(locked ? ImVec4{0.4f, 0.9f, 0.4f, 1.0f}
+                              : ImVec4{1.0f, 0.75f, 0.3f, 1.0f},
+                       "%s", track_mode_name(fsm.mode()));
+    ImGui::SameLine();
+    ImGui::TextColored(kMutedCol, "  track: %s", track_state_name(trk.state()));
+
+    ImGui::TextColored(kMutedCol, "%d frames in mode", fsm.frames_in_mode());
+    ImGui::Spacing();
+
+    if (ImGui::BeginTable("filter", 2,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        auto row = [](const char* k, const char* fmt, auto... v) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextColored(kMutedCol, "%s", k);
+            ImGui::TableNextColumn(); ImGui::Text(fmt, v...);
+        };
+        row("candidates",  "%d", pipeline_.last().candidate_count);
+        row("detection SNR", "%.1f", static_cast<double>(pipeline_.last().detection_snr));
+        row("velocity",    "%.1f, %.1f px/s",
+            trk.rate().x / ifov, trk.rate().y / ifov);
+        // The gate's radius, in the units a person can check against the camera
+        // view. sqrt(chi2) sigmas is what "d^2 < 9.21" means geometrically.
+        row("position sigma", "%.2f px", trk.filter().position_sigma_urad() / ifov);
+        row("gate radius", "%.2f px",
+            std::sqrt(kGateChi2_2dof_99)
+                * std::sqrt(trk.filter().position_sigma_urad()
+                            * trk.filter().position_sigma_urad()
+                          + trk.last_sigma_urad() * trk.last_sigma_urad()) / ifov);
+        row("NIS (want ~2)", "%.2f", trk.filter().last_nis());
+        row("hits / age",  "%d / %d", trk.hits(), trk.age_frames());
+        row("misses",      "%d", trk.consecutive_misses());
+        ImGui::EndTable();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::TextColored(kMutedCol, "Mode transitions (CP 6.6) — newest first");
+    if (ImGui::BeginTable("transitions", 3,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY
+                        | ImGuiTableFlags_SizingStretchProp,
+                          ImVec2(0, 160))) {
+        ImGui::TableSetupColumn("frame");
+        ImGui::TableSetupColumn("transition");
+        ImGui::TableSetupColumn("why");
+        ImGui::TableHeadersRow();
+        const auto& log = fsm.log();
+        for (size_t i = 0; i < log.size(); ++i) {
+            const ModeTransition& t = log.at_back(i);   // newest first
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("%lld", static_cast<long long>(t.frame));
+            ImGui::TableNextColumn();
+            ImGui::Text("%s -> %s", track_mode_name(t.from), track_mode_name(t.to));
+            ImGui::TableNextColumn(); ImGui::TextColored(kMutedCol, "%s", t.reason);
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
+}
+
 void Dashboard::draw_scenario_panel() {
     if (dock_.left_bottom) ImGui::SetNextWindowDockID(dock_.left_bottom, dock_cond());
     ImGui::Begin("Scenario");
@@ -890,6 +979,7 @@ int Dashboard::run(const Scenario& initial) {
         draw_screen_overview();
         draw_error_plots();
         draw_metrics();
+        draw_tracking_panel();
         draw_scenario_panel();
 
         ImGui::Render();

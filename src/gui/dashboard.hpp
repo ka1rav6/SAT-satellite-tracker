@@ -118,6 +118,7 @@ private:
     void draw_screen_overview();
     void draw_error_plots();
     void draw_metrics();
+    void draw_tracking_panel();
     void draw_scenario_panel();
 
     GLFWwindow* window_ = nullptr;

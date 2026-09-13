@@ -127,4 +127,28 @@ void validate_scenario(const Scenario& sc, Validator& v);
 [[nodiscard]] Result<Scenario> parse_scenario(std::string_view toml_text,
                                               std::string_view name = "<memory>");
 
+// ---------------------------------------------------------------------------
+// max_accel_px_s2 — the largest acceleration a motion stack can produce.
+//
+// Added for CP 6.2's process noise. tracking/kalman.hpp's q has to come from a
+// bound on how wrong the constant-velocity model can be, and §7.2 specifies
+// every motion component analytically, so that bound is COMPUTABLE rather than
+// guessed — which is the whole reason the motion algebra is closed-form.
+//
+// Lives in sat_scenario, not in sat_tracking, and that is not incidental: the
+// tracker may not link the scenario (it holds the true initial target
+// location, spec row 11), so the engine computes this at startup and hands the
+// tracker a number. INV-1's configure-time check would fail the build if it
+// were the other way round.
+//
+// Components compose additively (§7.2), so their accelerations add. The bound
+// is therefore a sum of per-component maxima: loose, because the maxima need
+// not coincide in time, and loose in the safe direction — an over-estimate of
+// q makes the filter more willing to believe a manoeuvre, which costs noise
+// rejection; an under-estimate makes it refuse to follow one, which loses the
+// track outright.
+// ---------------------------------------------------------------------------
+[[nodiscard]] double max_accel_px_s2(const MotionSpec& m, double duration_s) noexcept;
+[[nodiscard]] double max_accel_px_s2(const TargetSpec& t, double duration_s) noexcept;
+
 }  // namespace sat
