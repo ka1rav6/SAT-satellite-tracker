@@ -2,6 +2,8 @@
 
 #include "app/headless.hpp"
 
+#include "app/timestamp.hpp"
+
 #include "engine/pipeline.hpp"
 #include "metrics/centroid_log.hpp"
 #include "metrics/collector.hpp"

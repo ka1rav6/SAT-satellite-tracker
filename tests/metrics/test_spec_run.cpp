@@ -30,17 +30,28 @@
 #include "scenario/schema.hpp"
 
 #include <cmath>
+#include <cstdio>
+#include <map>
 #include <string>
 
 using namespace sat;
 
 namespace {
 
+/// Length of every run below.
+///
+/// 4 s is 120 frames, which is ample for all of it: acquisition happens in two
+/// frames, and an RMS or a retention ratio over 120 samples is not short of
+/// data. It is deliberately not longer, because each frame here is a full §9.4
+/// pipeline pass at ~87 ms and this file is the most expensive in the suite —
+/// at 10 s it ran five pipelines and timed out under parallel load.
+constexpr double kRunSeconds = 4.0;
+
 Scenario spec_scenario(bool clutter) {
     auto r = load_scenario(std::string(SAT_SCENARIO_DIR) + "/baseline.toml");
     REQUIRE_MESSAGE(r.has_value(), r.error());
     Scenario sc = *r;
-    sc.duration_s = 10.0;
+    sc.duration_s = kRunSeconds;
 
     // Row 11: pin it in view. Everything else is left exactly as the
     // specification's defaults have it — in particular jitter stays at row 23's
@@ -54,7 +65,7 @@ Scenario spec_scenario(bool clutter) {
     return sc;
 }
 
-RunMetrics run(const Scenario& sc) {
+RunMetrics run_uncached(const Scenario& sc) {
     Pipeline p;
     p.build_from_scenario(sc);
     p.set_publish_snapshots(false);
@@ -66,13 +77,39 @@ RunMetrics run(const Scenario& sc) {
     return m.finish(p.timers(), 1.0, p.gimbal().saturation_frac());
 }
 
+// ---------------------------------------------------------------------------
+// run — memoised by configuration.
+//
+// The three test cases below need three distinct configurations between them,
+// but they share them: the clean, jittered run appears in all three. Running it
+// once per case meant five full pipelines and a suite that timed out under
+// parallel load.
+//
+// Caching across test cases is normally a bad idea, because it makes one case's
+// result depend on another having run. It is safe HERE for a specific reason:
+// INV-3 guarantees these runs are bit-exact functions of their configuration,
+// so a cached result is indistinguishable from a fresh one. If that ever stops
+// being true, the reproducibility gate (CP 2.6) goes red first and says so much
+// more clearly than a flaky number here would.
+// ---------------------------------------------------------------------------
+const RunMetrics& run(const Scenario& sc) {
+    static std::map<std::string, RunMetrics> cache;
+    char key[128];
+    std::snprintf(key, sizeof key, "%d|%.1f|%.2f|%llu",
+                  sc.static_sources, sc.jitter_px_per_frame, sc.duration_s,
+                  static_cast<unsigned long long>(sc.seed));
+    auto it = cache.find(key);
+    if (it == cache.end()) it = cache.emplace(key, run_uncached(sc)).first;
+    return it->second;
+}
+
 }  // namespace
 
 TEST_CASE("the loop holds lock at the specification's own jitter (row 23)") {
     const Scenario sc = spec_scenario(/*clutter=*/false);
     REQUIRE(sc.jitter_px_per_frame == doctest::Approx(20.0));   // row 23, unmodified
 
-    const RunMetrics m = run(sc);
+    const RunMetrics& m = run(sc);
     MESSAGE("in-FOV " << m.frames_in_fov << " frames, confirmed " << m.frames_confirmed
             << ", retention " << (100.0 * m.lock_retention_rate) << "%");
     MESSAGE("acquisition (in view) " << m.acquisition_in_fov_s << " s");
@@ -128,10 +165,10 @@ TEST_CASE("tracking error at spec-row-23 jitter sits on its derived floor") {
     const double kJitterFloorPx = std::sqrt(2.0 * 400.0 / 3.0);
 
     Scenario sc = spec_scenario(/*clutter=*/false);
-    const RunMetrics with = run(sc);
+    const RunMetrics& with = run(sc);
 
     sc.jitter_px_per_frame = 0.0;
-    const RunMetrics without = run(sc);
+    const RunMetrics& without = run(sc);
 
     MESSAGE("tracking RMS: " << with.tracking_rms_px << " px with row-23 jitter, "
             << without.tracking_rms_px << " px without; derived jitter floor "
@@ -158,8 +195,8 @@ TEST_CASE("clutter costs tracking accuracy, and the cost is measured not hidden"
     // The point of this test is not to assert that it works. It is to pin the
     // CURRENT number so that Stage 11 and 12 have a baseline to beat, and so
     // that a regression between here and there is visible.
-    const RunMetrics clean   = run(spec_scenario(/*clutter=*/false));
-    const RunMetrics cluttered = run(spec_scenario(/*clutter=*/true));
+    const RunMetrics& clean     = run(spec_scenario(/*clutter=*/false));
+    const RunMetrics& cluttered = run(spec_scenario(/*clutter=*/true));
 
     MESSAGE("tracking RMS: " << clean.tracking_rms_px << " px clean, "
             << cluttered.tracking_rms_px << " px with 120 clutter + 1 decoy");

@@ -105,12 +105,4 @@ private:
     int64_t    rows_ = 0;
 };
 
-/// ISO-8601 UTC, for the header. Reads the wall clock, which is why it lives
-/// here and not in core/time.hpp: INV-3 forbids the SIMULATION from touching a
-/// wall clock, and a checker greps the simulation modules for exactly that. A
-/// provenance timestamp in a log header is not simulation state — it never
-/// feeds back into a single computed value — but it belongs on the metrics
-/// side of that line, where it can be seen not to.
-[[nodiscard]] std::string utc_timestamp_now();
-
 }  // namespace sat

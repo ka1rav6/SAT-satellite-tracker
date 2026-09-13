@@ -352,6 +352,7 @@ endif()
 add_executable(sat-tracker
     src/app/main.cpp
     src/app/headless.cpp
+    src/app/timestamp.cpp
     src/app/verify_repro.cpp
 )
 
