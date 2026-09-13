@@ -82,6 +82,14 @@ sat_add_test(render
     DEPS    sat_core sat_camera sat_world
 )
 
+# --- CP 1.6-1.8: plant, controller, and the closed-loop gate ----------------
+sat_add_test(loop
+    SOURCES loop/test_gimbal.cpp
+            loop/test_controller.cpp
+            loop/test_closed_loop.cpp
+    DEPS    sat_core sat_plant sat_control sat_engine sat_perception
+)
+
 # --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------
 # Runs whether or not OpenCV is present: without it the gate test reports a loud
 # SKIP rather than passing silently, so a build that cannot do video says so.
