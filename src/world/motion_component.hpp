@@ -105,6 +105,17 @@ public:
 //
 // Each is a handful of lines, and each carries its derivative next to its
 // position so the two cannot drift apart during a later edit.
+//
+// ---------------------------------------------------------------------------
+// A NOTE ON LAYOUT
+// ---------------------------------------------------------------------------
+// Design §5 sketches a `world/components/` directory with one file per
+// component. They are all here instead, and deliberately: each is 10-20 lines,
+// so nine files would carry more boilerplate than content, and they share the
+// MotionState/IMotionComponent vocabulary closely enough that reading them
+// together is how you check the set is complete and consistent. Keeping each
+// component's derivative on the line below its position is the whole point of
+// the layout, and splitting them across files would lose that.
 // ===========================================================================
 
 /// `constant` — a fixed offset. Position p0, velocity zero.
