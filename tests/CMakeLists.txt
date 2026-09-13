@@ -59,6 +59,13 @@ sat_add_test(frames
     DEPS    sat_core
 )
 
+# --- CP 0.3: clock and RNG streams -----------------------------------------
+sat_add_test(core_time_rng
+    SOURCES core/test_time.cpp
+            core/test_rng.cpp
+    DEPS    sat_core
+)
+
 # ===========================================================================
 # End-to-end checks that run the real binary. These catch link and startup
 # breakage that a unit test linking a static library cannot.
