@@ -136,8 +136,15 @@ sat_add_module(sat_ai
 )
 
 # tracking — Kalman, IMM, association, lifecycle.
+#
+# Depends on sat_perception because a Measurement is built from a Detection
+# (tracking/measurement.hpp). That edge runs from tracking TO perception and
+# never the other way: perception must stay a pure image -> candidates function
+# so that it can be unit-tested and benchmarked with no tracker in existence.
 sat_add_module(sat_tracking
-    PUBLIC_DEPS sat_core Eigen3::Eigen
+    SOURCES
+        src/tracking/kalman.cpp
+    PUBLIC_DEPS sat_core sat_perception Eigen3::Eigen
 )
 
 # search — probability grid and acquisition strategies.

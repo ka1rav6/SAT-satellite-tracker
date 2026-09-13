@@ -172,6 +172,16 @@ target_compile_definitions(test_perception PRIVATE
     SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 
+# --- CP 6.1-6.3: angular measurements, the Kalman filter and the gate ------
+sat_add_test(tracking
+    SOURCES tracking/test_measurement.cpp
+            tracking/test_kalman.cpp
+    DEPS    sat_core sat_tracking sat_perception sat_engine sat_scenario
+)
+target_compile_definitions(test_tracking PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+)
+
 # --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------
 # Runs whether or not OpenCV is present: without it the gate test reports a loud
 # SKIP rather than passing silently, so a build that cannot do video says so.
