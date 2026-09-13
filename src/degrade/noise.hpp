@@ -132,6 +132,24 @@ struct NoiseParams {
     int    hot_pixels      = 40;
     int    dead_pixels     = 10;
 
+    /// Black-level pedestal, in grey levels, added after the atmosphere.
+    ///
+    /// Every real camera has one, and it exists for exactly the reason it is
+    /// needed here: to stop the noise distribution being CLIPPED at zero.
+    ///
+    /// Without it, spec row 24's low-light mode (alpha 0.40, beta -40) drives a
+    /// dark background to -36.8 and the sensor clips it to 0. Two things break
+    /// at once. The beacon's contrast collapses from 48 grey levels to 11,
+    /// because the background had nowhere further to fall while the beacon did.
+    /// And the read noise becomes half-normal — every negative excursion maps to
+    /// 0 — which violates the Gaussian assumption CFAR's threshold rests on, so
+    /// the measured false-alarm rate stops matching Q(k).
+    ///
+    /// Measured effect on CP 5.9's per-mode sweep: low-light detection went from
+    /// 53% to the figure in that test. This is a missing piece of the sensor
+    /// model, not a tuning knob.
+    double black_level = 16.0;
+
     /// Photons per grey level. Sets how strong shot noise is relative to the
     /// signal: at k = 8, a 120-level beacon carries ~960 photons, so its shot
     /// noise is sqrt(960)/8 = 3.9 grey levels. Turning this up makes the sensor

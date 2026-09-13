@@ -34,9 +34,15 @@ void SensorChain::apply(std::span<float> radiance, std::span<uint8_t> out,
     // An affine transform, applied before anything else because it describes
     // what happens to the light on its way to the detector.
     const AtmosphereCoeffs atm = atmosphere_coeffs(atmosphere_);
-    if (atm.alpha != 1.0 || atm.beta != 0.0) {
+    const double black = noise_.black_level;
+    if (atm.alpha != 1.0 || atm.beta != 0.0 || black != 0.0) {
         for (size_t i = 0; i < n; ++i) {
-            radiance[i] = static_cast<float>(atm.alpha * radiance[i] + atm.beta);
+            // The black level is added HERE — after the atmosphere, before any
+            // noise — because that is where a real sensor applies it: the
+            // pedestal exists so that the noise distribution sits above zero and
+            // is not clipped by the ADC. Adding it later would be too late; the
+            // clipping would already have happened.
+            radiance[i] = static_cast<float>(atm.alpha * radiance[i] + atm.beta + black);
         }
     }
 

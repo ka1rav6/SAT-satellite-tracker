@@ -82,4 +82,21 @@ struct MatchedPeak {
 void matched_filter(const SummedArea& sa, int width, int height,
                     std::span<float> response, std::span<uint8_t> scale) noexcept;
 
+/// Response at ONE fixed scale, over the whole image.
+///
+/// Used for the detection threshold, while matched_filter()'s max-over-scales
+/// supplies the size estimate. The distinction matters statistically: a maximum
+/// over six correlated scales is an ORDER STATISTIC, so its background has a
+/// higher mean and a noticeably higher variance than any single scale's. CFAR
+/// then raises its threshold to match and the target is missed — measured at 23
+/// frames in 120 on CP 5.9's worst case, against 0 for a single scale.
+///
+/// A single scale is a plain linear filter whose background stays as Gaussian
+/// as the input, which is the assumption CFAR's Pfa = Q(k) rests on.
+void matched_filter_at_scale(const SummedArea& sa, int width, int height, int k,
+                             std::span<float> response) noexcept;
+
+/// The scale from kMatchedScales closest to a given target size.
+[[nodiscard]] int nearest_scale(int target_size_px) noexcept;
+
 }  // namespace sat

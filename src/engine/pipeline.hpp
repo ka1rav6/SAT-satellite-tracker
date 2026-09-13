@@ -122,10 +122,22 @@ struct PipelineConfig {
     /// that runs on every commit instead of a manual ritual.
     bool control_enabled = true;
 
-    /// Detector analysis window half-width, and the background level it
-    /// subtracts before computing a centre of mass.
+    /// Straw-man detector parameters: analysis window half-width, and the
+    /// level it subtracts before computing a centre of mass.
+    ///
+    /// The floor MUST sit above the rendered background, which is the scene
+    /// pedestal plus the sensor's black level (degrade/noise.hpp). It was 12
+    /// when the background was 8; adding a black-level pedestal of 16 put the
+    /// background at ~24 and the floor stopped excluding it, so background
+    /// pixels started pulling the centre of mass and the measured centroiding
+    /// error rose from 0.7 px to 1.55 px.
+    ///
+    /// That fragility is exactly why this detector is a straw man: a fixed
+    /// floor cannot survive a change in scene level, which is the same argument
+    /// §9.4.5 makes for CFAR over a fixed threshold. ClassicalPerception
+    /// estimates the background per frame and has no such parameter.
     int   detector_window = 7;
-    float detector_floor  = 12.0f;
+    float detector_floor  = 40.0f;
 
     /// Publish a SimSnapshot every frame. Costs one frame copy (~300 KB), so
     /// the headless benchmark path turns it off. Reproducibility verification

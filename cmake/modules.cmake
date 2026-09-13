@@ -125,6 +125,8 @@ sat_add_module(sat_perception
         src/perception/sat.cpp
         src/perception/matched.cpp
         src/perception/cfar.cpp
+        src/perception/grouping.cpp
+        src/perception/pipeline.cpp
     PUBLIC_DEPS sat_core
 )
 

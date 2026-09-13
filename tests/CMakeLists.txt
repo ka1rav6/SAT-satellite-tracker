@@ -34,6 +34,17 @@ target_include_directories(sat_test_main PUBLIC
 # 5000 fuzzed scenarios), so an infinite loop must show up as a red test rather
 # than a stuck CI job.
 # ---------------------------------------------------------------------------
+# Sanitized builds run roughly five times slower, so the timeout scales with
+# them. The timeout is not arbitrary padding — CP 14.1 treats a hang as a
+# first-class failure alongside a crash, so it has to stay tight enough to catch
+# one while not firing on a build that is merely instrumented.
+if(CMAKE_CXX_FLAGS MATCHES "sanitize")
+    set(SAT_TEST_TIMEOUT 600)
+    message(STATUS "SAT: sanitizers detected — test timeout raised to ${SAT_TEST_TIMEOUT}s")
+else()
+    set(SAT_TEST_TIMEOUT 120)
+endif()
+
 function(sat_add_test suite)
     cmake_parse_arguments(ARG "" "" "SOURCES;DEPS" ${ARGN})
 
@@ -43,7 +54,7 @@ function(sat_add_test suite)
 
     add_test(NAME ${suite} COMMAND ${target})
     set_tests_properties(${suite} PROPERTIES
-        TIMEOUT 120
+        TIMEOUT ${SAT_TEST_TIMEOUT}
         LABELS "unit"
     )
 endfunction()
@@ -103,7 +114,8 @@ sat_add_test(kernels
             kernels/test_sat.cpp
             kernels/test_matched.cpp
             kernels/test_cfar.cpp
-    DEPS    sat_core sat_perception sat_scenario sat_cv_oracle
+            kernels/test_grouping.cpp
+    DEPS    sat_core sat_perception sat_scenario sat_camera sat_cv_oracle
 )
 
 # --- CP 3.1-3.2, 3.6: TOML loading and spec-row-citing validation -----------
@@ -130,6 +142,15 @@ target_compile_definitions(test_degrade PRIVATE
 sat_add_test(repro
     SOURCES repro/test_fingerprint.cpp
     DEPS    sat_core sat_engine
+)
+
+# --- CP 5.7, 5.9: the whole detection pipeline against the real simulator ---
+sat_add_test(perception
+    SOURCES perception/test_pipeline.cpp
+    DEPS    sat_core sat_perception sat_engine sat_scenario
+)
+target_compile_definitions(test_perception PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 
 # --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------

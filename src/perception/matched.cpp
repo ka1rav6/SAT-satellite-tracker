@@ -55,4 +55,26 @@ void matched_filter(const SummedArea& sa, int width, int height,
     }
 }
 
+void matched_filter_at_scale(const SummedArea& sa, int width, int height, int k,
+                             std::span<float> response) noexcept {
+    const size_t n = static_cast<size_t>(width) * static_cast<size_t>(height);
+    if (width <= 0 || height <= 0 || response.size() < n) return;
+    for (int y = 0; y < height; ++y) {
+        const size_t row = static_cast<size_t>(y) * static_cast<size_t>(width);
+        for (int x = 0; x < width; ++x) {
+            response[row + static_cast<size_t>(x)] = matched_response(sa, x, y, k);
+        }
+    }
+}
+
+int nearest_scale(int target_size_px) noexcept {
+    int best = kMatchedScales[0];
+    int best_d = std::abs(kMatchedScales[0] - target_size_px);
+    for (const int k : kMatchedScales) {
+        const int d = std::abs(k - target_size_px);
+        if (d < best_d) { best_d = d; best = k; }
+    }
+    return best;
+}
+
 }  // namespace sat
