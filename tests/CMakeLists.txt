@@ -66,6 +66,15 @@ sat_add_test(core_time_rng
     DEPS    sat_core
 )
 
+# --- CP 0.4: arena, ring buffer, triple buffer, hashing --------------------
+sat_add_test(core_memory
+    SOURCES core/test_arena.cpp
+            core/test_ring.cpp
+            core/test_triple_buffer.cpp
+            core/test_hash.cpp
+    DEPS    sat_core
+)
+
 # ===========================================================================
 # End-to-end checks that run the real binary. These catch link and startup
 # breakage that a unit test linking a static library cannot.
