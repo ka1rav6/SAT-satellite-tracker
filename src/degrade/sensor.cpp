@@ -78,7 +78,7 @@ void SensorChain::apply(std::span<float> radiance, std::span<uint8_t> out,
     // stuck pixel stays stuck; that is what makes it a defect rather than noise,
     // and it is what a tracker must learn to ignore in the same places frame
     // after frame.
-    fixed_.apply_defects(out);
+    if (defects_enabled_) fixed_.apply_defects(out);
 }
 
 }  // namespace sat

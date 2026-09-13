@@ -168,9 +168,13 @@ public:
     [[nodiscard]] SyntheticSource&   source()         noexcept { return source_; }
     [[nodiscard]] const StageTimers& timers()   const noexcept { return timers_; }
 
-    /// Flip the loop open or closed mid-run. Used by the CP 1.8 test and, later,
-    /// by the live demo (CP 15.2).
+    /// Flip the loop open or closed mid-run. Used by the CP 1.8 test and by the
+    /// live demo (§14.1, 5:00-6:30), where turning it off and watching the error
+    /// trace blow up is the most convincing moment in the presentation.
     void set_control_enabled(bool on) noexcept { cfg_.control_enabled = on; }
+    [[nodiscard]] bool control_enabled() const noexcept { return cfg_.control_enabled; }
+
+    [[nodiscard]] const PipelineConfig& config() const noexcept { return cfg_; }
 
 private:
     PipelineConfig  cfg_{};

@@ -179,9 +179,24 @@ sat_add_module(sat_metrics
 # with the triple-buffered snapshot seam already in place, so the dashboard
 # attaches later without touching the simulation. See the roadmap note in
 # docs/SAT-DESIGN.md §14.
-sat_add_module(sat_gui
-    PUBLIC_DEPS sat_core
-)
+if(SAT_HAVE_GLFW)
+    sat_add_module(sat_gui
+        SOURCES
+            src/gui/gl_texture.cpp
+            src/gui/dashboard.cpp
+        PUBLIC_DEPS sat_core sat_engine sat_scenario sat_imgui
+    )
+    target_compile_definitions(sat_gui
+        PUBLIC  SAT_HAVE_GUI=1
+        PRIVATE SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+    )
+else()
+    # Declared but empty, so the application links the same way either
+    # way and `--gui` reports a clear message instead of failing to build.
+    sat_add_module(sat_gui
+        PUBLIC_DEPS sat_core
+    )
+endif()
 
 # ===========================================================================
 # INV-1, checked by the build system itself.
@@ -320,4 +335,11 @@ target_link_libraries(sat-tracker PRIVATE
 target_include_directories(sat-tracker PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/src"
+)
+
+# The default scenario --gui opens with. An installed build overrides this to
+# the installed share/ path; for a developer build, pointing at the source tree
+# is what makes `just gui` work with no arguments.
+target_compile_definitions(sat-tracker PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )

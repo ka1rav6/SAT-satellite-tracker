@@ -122,6 +122,38 @@ run *ARGS: build
     "{{build_dir}}/sat-tracker" {{ARGS}}
 
 # ---------------------------------------------------------------------------
+# Dashboard (design §12 — graded under Functional Verification, 20%)
+# ---------------------------------------------------------------------------
+
+# Open the live dashboard. `just gui scenarios/fog_figure8.toml` picks a file.
+gui file="": build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "{{file}}" ]]; then
+        "{{build_dir}}/sat-tracker" --gui --scenario "{{file}}"
+    else
+        "{{build_dir}}/sat-tracker" --gui
+    fi
+
+# Open the dashboard with the layout diagnostic on stderr.
+gui-debug: build
+    SAT_GUI_DEBUG=1 "{{build_dir}}/sat-tracker" --gui
+
+# Confirm the project still builds with the dashboard compiled out.
+#
+# INV-7 generalised to optional dependencies: a machine with no GLFW must still
+# build, still run every synthetic scenario, and still pass the whole suite.
+build-headless:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cmake -S . -B "{{build_dir}}-nogui" -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=ON -DSAT_WITH_GUI=OFF
+    cmake --build "{{build_dir}}-nogui" --parallel {{jobs}}
+    ctest --test-dir "{{build_dir}}-nogui" --output-on-failure --parallel {{jobs}}
+    "{{build_dir}}-nogui/sat-tracker" --gui || true
+    echo "headless build OK (--gui reports a clear message rather than failing to build)"
+
+# ---------------------------------------------------------------------------
 # Video (design §8 — Benchmark Performance-2, 30% of marks)
 # ---------------------------------------------------------------------------
 
@@ -270,7 +302,7 @@ ci-full: gates-full test
 
 # Wipe the build trees (including fetched dependencies under build/_deps).
 clean:
-    rm -rf "{{build_dir}}" "{{build_dir}}-debug" vcpkg_installed
+    rm -rf "{{build_dir}}" "{{build_dir}}-debug" "{{build_dir}}-nogui" vcpkg_installed
 
 # Wipe compiled output but keep fetched dependencies, so the next build is fast.
 clean-build:

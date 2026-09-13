@@ -40,7 +40,7 @@ set(FETCHCONTENT_QUIET OFF)
 # ---------------------------------------------------------------------------
 set(SAT_WITH_OPENCV  "AUTO" CACHE STRING "OpenCV: video decode (§8) and test oracles (§16). AUTO/ON/OFF")
 set(SAT_WITH_ONNX    "OFF"  CACHE STRING "ONNX Runtime: ML inference (§11). AUTO/ON/OFF")
-set(SAT_WITH_GUI     "OFF"  CACHE STRING "GLFW + Dear ImGui + ImPlot dashboard (§12). AUTO/ON/OFF")
+set(SAT_WITH_GUI     "AUTO" CACHE STRING "GLFW + Dear ImGui + ImPlot dashboard (§12). AUTO/ON/OFF")
 set(SAT_WITH_TRACY   "OFF"  CACHE STRING "Tracy profiler instrumentation (dev builds only). AUTO/ON/OFF")
 
 # ---------------------------------------------------------------------------
@@ -188,13 +188,69 @@ sat_optional_package(OpenCV SAT_WITH_OPENCV SAT_HAVE_OPENCV VERSION 4.0)
 sat_optional_package(onnxruntime SAT_WITH_ONNX SAT_HAVE_ONNX)
 
 # --- GUI stack (§12) -------------------------------------------------------
-# Deferred: the engine is built headless-first, with the triple-buffered
-# snapshot seam (§6.2 B30) already in place so the dashboard can be attached
-# later without touching the simulation.
+#
+# GLFW is found (system or vcpkg); Dear ImGui and ImPlot are fetched, because
+# neither ships a CMake build and both are meant to be compiled into the
+# application rather than linked as libraries. That is their documented usage,
+# not a shortcut: ImGui in particular expects its config header to be
+# substitutable per project.
+#
+# OpenGL is required only for a texture upload and a quad. Design §12: "OpenGL
+# use is minimal: one GL_R8 texture upload per frame, one quad, ImGui for the
+# rest." Everything needed for that is OpenGL 1.1, which every platform exports
+# directly — so there is no glad, no GLEW, and no loader to go wrong. ImGui's
+# own backend carries an embedded loader for the modern calls it makes.
 if(NOT SAT_WITH_GUI STREQUAL "OFF")
     sat_optional_package(glfw3 SAT_WITH_GUI SAT_HAVE_GLFW)
+    find_package(OpenGL QUIET)
+    if(NOT OPENGL_FOUND)
+        message(STATUS "SAT: OpenGL not found — the dashboard is disabled")
+        set(SAT_HAVE_GLFW FALSE)
+    endif()
 else()
     set(SAT_HAVE_GLFW FALSE)
+endif()
+
+if(SAT_HAVE_GLFW)
+    # Dear ImGui, docking branch — design §4 names "Dear ImGui (docking)", and
+    # the docking build is what allows §12's many panels to be rearranged into a
+    # layout that suits a demo rather than a fixed grid.
+    FetchContent_Declare(imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG        v1.91.8-docking
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(imgui)
+
+    FetchContent_Declare(implot
+        GIT_REPOSITORY https://github.com/epezent/implot.git
+        GIT_TAG        v0.16
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(implot)
+
+    # Neither ships a build, so compile them here as one static library.
+    add_library(sat_imgui STATIC
+        "${imgui_SOURCE_DIR}/imgui.cpp"
+        "${imgui_SOURCE_DIR}/imgui_draw.cpp"
+        "${imgui_SOURCE_DIR}/imgui_tables.cpp"
+        "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
+        "${imgui_SOURCE_DIR}/imgui_demo.cpp"
+        "${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp"
+        "${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp"
+        "${implot_SOURCE_DIR}/implot.cpp"
+        "${implot_SOURCE_DIR}/implot_items.cpp"
+    )
+    target_include_directories(sat_imgui SYSTEM PUBLIC
+        "${imgui_SOURCE_DIR}"
+        "${imgui_SOURCE_DIR}/backends"
+        "${implot_SOURCE_DIR}"
+    )
+    target_link_libraries(sat_imgui PUBLIC glfw OpenGL::GL)
+    # Third-party code: our -Wall -Wextra -Wpedantic would drown the build in
+    # warnings we are not going to fix upstream.
+    if(NOT MSVC)
+        target_compile_options(sat_imgui PRIVATE -w)
+    endif()
+    message(STATUS "SAT: dashboard enabled (Dear ImGui docking + ImPlot)")
 endif()
 
 # Publish results to the parent (root CMakeLists) scope.

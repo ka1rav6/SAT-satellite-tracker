@@ -50,6 +50,18 @@ public:
     /// damage up and down on stage, and the ablation table needs a clean arm.
     void set_enabled(bool on) noexcept { enabled_ = on; }
 
+    /// Gate the hot/dead pixel map without rebuilding it.
+    ///
+    /// Separate from the noise sliders because defects are a different kind of
+    /// damage and they defeat a peak detector on their own: forty pixels stuck
+    /// at 255 beat a 120-level beacon outright, with no noise present at all.
+    /// That makes them an independent argument for §9.4.1's median filter —
+    /// hot pixels are isolated single pixels, which is exactly what a median
+    /// removes — and it means a "clean" configuration has to be able to switch
+    /// them off separately.
+    void set_defects_enabled(bool on) noexcept { defects_enabled_ = on; }
+    [[nodiscard]] bool defects_enabled() const noexcept { return defects_enabled_; }
+
     [[nodiscard]] const NoiseParams& noise() const noexcept { return noise_; }
     [[nodiscard]] NoiseParams&       noise()       noexcept { return noise_; }
     [[nodiscard]] const FixedPattern& fixed_pattern() const noexcept { return fixed_; }
@@ -61,6 +73,7 @@ private:
     // made every hand-built test scene arrive at the detector under 20-sigma
     // read noise and 10% salt-and-pepper.
     bool         enabled_    = false;
+    bool         defects_enabled_ = true;
     Atmosphere   atmosphere_ = Atmosphere::Clear;
     NoiseParams  noise_{};
     FixedPattern fixed_{};

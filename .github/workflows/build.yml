@@ -47,6 +47,15 @@ jobs:
             build_type: Release
             cc: clang
             cxx: clang++
+          # INV-7 generalised to optional dependencies: a machine without GLFW
+          # must still build and still pass the whole suite. The dashboard is
+          # graded, but nothing else may depend on it.
+          - name: linux-no-gui
+            os: ubuntu-latest
+            build_type: Release
+            cc: gcc-13
+            cxx: g++-13
+            extra_cmake: -DSAT_WITH_GUI=OFF
           - name: windows-msvc-release
             os: windows-latest
             build_type: Release
@@ -68,7 +77,8 @@ jobs:
           # OpenCV takes the better part of an hour. The pinned-baseline vcpkg
           # build is what the release workflow uses.
           sudo apt-get install -y --no-install-recommends \
-            ninja-build libeigen3-dev libopencv-dev
+            ninja-build libeigen3-dev libopencv-dev \
+            libglfw3-dev libgl1-mesa-dev
 
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
@@ -88,6 +98,7 @@ jobs:
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DBUILD_TESTING=ON
+          ${{ matrix.extra_cmake }}
 
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel

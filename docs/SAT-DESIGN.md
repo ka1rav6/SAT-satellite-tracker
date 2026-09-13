@@ -1664,6 +1664,49 @@ sat-tracker --bench
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
 
+## 14.0a AMENDMENT — the dashboard was pulled forward to Stage 4
+
+**Status:** adopted, superseding part of §14.0 below. **Applies from:** Stage 4.
+
+§14.0 deferred the GUI to CP 15.0 on the argument that headless-first is faster
+and the snapshot seam makes attaching it cheap later. The second half of that
+argument held; the first turned out to be incomplete.
+
+The reason for pulling it forward is that **a headless project cannot be
+inspected by the person it is being built for.** Four stages of engine, damage
+chain and metrics had accumulated with no way for anyone to look at a frame,
+watch the loop settle, or dial the noise up and see what happens. Numbers in a
+test log are evidence for someone who already knows what to look for; a window
+is evidence for everyone else.
+
+Building it also paid for itself immediately, because a window shows things a
+test does not ask about. Within minutes of the first run it surfaced a defect
+the headless suite had no reason to catch: **40 hot pixels stuck at 255 defeat
+the brightest-pixel detector on their own**, with no noise present at all. That
+is an independent argument for §9.4.1's median filter — hot pixels are isolated
+single pixels, exactly what a median removes — and it had gone unnoticed because
+every headless test either disabled the damage chain or was measuring something
+salt-and-pepper already dominated.
+
+**What was built** (a basic CP 15.0, not the complete §12):
+camera view with truth/detection/boresight overlays, screen overview with the
+true and reported paths and the FOV rectangle, the two graded error traces
+plotted separately per INV-6, a live compliance table, per-stage latency
+percentiles, the full specification parameter table, and live controls for the
+damage chain, the clutter count and the closed loop.
+
+**What §14.0's substitutes bought, and what stands:** every numeric acceptance
+test written in place of a visual one stays. They test more than a person
+watching would, they run on every commit, and CP 1.8's open-loop comparison in
+particular is a stronger claim than "the camera visibly follows". The GUI is an
+inspection surface, not an acceptance surface.
+
+**Still outstanding for CP 15.1:** the IMM mode-probability panel, the SAT
+strategy timeline, the mode-FSM graph and live algorithm switching, none of
+which have anything to attach to until Stages 6, 10 and 12 exist.
+
+---
+
 ## 14.0 AMENDMENT — the GUI is deferred to Stage 15
 
 **Status:** adopted. **Applies from:** Stage 0. **Supersedes:** CP 0.5, and the GUI half of
@@ -1719,7 +1762,7 @@ are built against the seam in parallel with Stage 13/14 work.
 | 0.2 | `units.hpp`, `frames.hpp` — `Urad`, `Angle2`, `Pixel2`, `CameraGeometry`, `project`/`unproject` | Test: `project(unproject(p)) == p` to 1e-9 for 1000 points across the FOV; `ifov_urad()` returns 109.08 at defaults |
 | 0.3 | `time.hpp` (`Clock`), `rng.hpp` (`Pcg32`, `Stream`, `RngSet`) | `Clock` rejects `truth_hz % camera_hz != 0`; two identically-seeded `RngSet`s produce identical sequences on every stream |
 | 0.4 | `arena.hpp`, `ring.hpp` | Arena survives 10k alloc/release cycles without growing; `Ring` passes wraparound tests |
-| ~~0.5~~ | ~~GLFW + glad + ImGui + ImPlot shell~~ | **Deferred to CP 15.0 — see §14.0.** |
+| ~~0.5~~ | GLFW + ImGui + ImPlot shell | **Built at Stage 4 instead — see §14.0a.** Deferred by §14.0, then pulled forward. |
 | 0.6 | GitHub Actions: Windows (MSVC) + Linux (GCC), running `ctest` | Both jobs green; the Windows artifact downloads and runs |
 | **0.7** | **★ GATE — 20 throwaway lines: `cv::VideoCapture` opens a committed test MP4, prints resolution/fps/frames. vcpkg `opencv4[videoio,ffmpeg]`. Run in CI.** | **Windows CI prints `1920x1080 @ 30.00 fps, 900 frames`. If this fails, STOP and solve it — 30% of marks depend on it.** |
 
