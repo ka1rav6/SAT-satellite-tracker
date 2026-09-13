@@ -1,0 +1,80 @@
+# .github/workflows/windows-video.yml — CP 0.7 ★ GATE, on Windows, for real.
+#
+# Design decision 6: "Cross-compiling and *running* are different claims. A
+# Windows runner proves the second." And design §14 makes MP4 decode a hard gate
+# because Benchmark Performance-2 — 30% of the total marks — consists entirely
+# of running evaluator-supplied MP4 files.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS IS A SEPARATE WORKFLOW
+# ---------------------------------------------------------------------------
+# The per-push Windows job cannot run this gate: the runner has no OpenCV, and
+# building opencv4[videoio,ffmpeg] through vcpkg takes longer than the whole
+# rest of CI put together. Putting it on every push would mean either a
+# 45-minute wait on every commit or, worse, quietly dropping the gate and
+# letting a green tick stand for something that was never checked.
+#
+# So it runs weekly and on demand, and build.yml emits a visible warning
+# annotation on any platform where the gate was not exercised. The gap is
+# recorded rather than hidden.
+
+name: windows-video
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Sundays at 03:00 UTC. Weekly is enough: this validates the TOOLCHAIN
+    # (does vcpkg's OpenCV decode H.264 on Windows), which changes when vcpkg
+    # or the runner image changes, not when our code does.
+    - cron: '0 3 * * 0'
+
+jobs:
+  gate:
+    name: CP 0.7 gate on Windows with vcpkg OpenCV
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      # vcpkg's own binary cache, keyed on the manifest. A cache hit turns a
+      # 45-minute source build into a 2-minute restore.
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Configure with vcpkg
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_MANIFEST_DIR="$PWD" \
+            -DVCPKG_MANIFEST_FEATURES=video \
+            -DSAT_WITH_OPENCV=ON \
+            -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      # The gate itself. No tolerance here: this workflow exists precisely to
+      # fail when Windows cannot decode video.
+      - name: 'CP 0.7 GATE: cv::VideoCapture opens a committed MP4'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build/sat-tracker --has-video
+          ./build/sat-tracker --probe-video tests/video/clips/gate_320x240_30fps.mp4
+
+      # CP 8.8's awkward clips, which is where a platform-specific decoder
+      # difference would actually show up: odd resolutions, VFR, a truncated
+      # stream, a corrupt payload.
+      - name: 'CP 8.8: every awkward clip opens or fails cleanly'
+        run: ctest --test-dir build --build-config Release -R video --output-on-failure
+
+      - name: Full test suite
+        run: ctest --test-dir build --build-config Release --output-on-failure --parallel 4

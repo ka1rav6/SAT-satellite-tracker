@@ -3,9 +3,42 @@
   "name": "sat-tracker",
   "version-string": "0.1.0",
   "description": "Self-Adaptive beacon Tracking for mobile FSOC coarse alignment (SIH PS 26169)",
-  "homepage": "https://github.com/kairav-pai/sih2026",
+  "homepage": "https://github.com/ka1rav6/SAT-satellite-tracker",
   "license": "MIT",
   "supports": "windows | linux",
-  "dependencies": [],
-  "builtin-baseline": "a1cae005c39be7b18ba319fced856b68d7276271"
+  "dependencies": [
+    {
+      "name": "eigen3"
+    },
+    {
+      "name": "doctest"
+    },
+    {
+      "name": "tomlplusplus"
+    },
+    {
+      "name": "nlohmann-json"
+    }
+  ],
+  "builtin-baseline": "a1cae005c39be7b18ba319fced856b68d7276271",
+  "features": {
+    "video": {
+      "description": "MP4 ingest and kernel test oracles (design §8, §16)",
+      "dependencies": [
+        {
+          "name": "opencv4",
+          "default-features": false,
+          "features": [
+            "ffmpeg"
+          ]
+        }
+      ]
+    },
+    "gui": {
+      "description": "The live dashboard (design §12)",
+      "dependencies": [
+        "glfw3"
+      ]
+    }
+  }
 }

@@ -132,6 +132,12 @@ sat_add_test(video
 target_compile_definitions(test_video PRIVATE
     SAT_TEST_CLIP_DIR="${CMAKE_CURRENT_SOURCE_DIR}/video/clips"
 )
+# CP 8.8 probes each awkward clip in a SEPARATE PROCESS (see test_probe.cpp),
+# so it needs the path to the shipped binary.
+target_compile_definitions(test_video PRIVATE
+    SAT_TRACKER_BINARY="$<TARGET_FILE:sat-tracker>"
+)
+add_dependencies(test_video sat-tracker)
 
 # ===========================================================================
 # End-to-end checks that run the real binary. These catch link and startup

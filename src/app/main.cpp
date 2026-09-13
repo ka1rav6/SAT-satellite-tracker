@@ -179,6 +179,7 @@ void print_usage() {
     std::printf("  --version            print the version and build hash, then exit\n");
     std::printf("  --gui [--scenario F] open the live dashboard (design §12)\n");
     std::printf("  --probe-video FILE   open FILE and report resolution/fps/frames (CP 0.7)\n");
+    std::printf("  --has-video          exit 0 if this build can decode video, 1 if not\n");
     std::printf("  --verify-reproducibility [--seeds N] [--duration S]\n");
     std::printf("                       run every built-in scenario twice and compare\n");
     std::printf("                       frame fingerprints (CP 2.6, INV-3)\n");
@@ -200,6 +201,18 @@ int main(int argc, char* argv[]) {
         }
         if (std::strcmp(argv[i], "--verify-reproducibility") == 0) {
             return verify_reproducibility_command(argc, argv, i);
+        }
+        if (std::strcmp(argv[i], "--has-video") == 0) {
+            // Exit 0 when this build can decode video, 1 when it cannot.
+            //
+            // A dedicated flag rather than parsing --probe-video's output,
+            // because CI needs to DECIDE whether the CP 0.7 gate is applicable
+            // on a given platform, and a step that has to distinguish "the
+            // codec is missing" from "the file is corrupt" by exit code is a
+            // step that will eventually be written wrong.
+            const bool ok = sat::video_support_compiled_in();
+            std::printf("video support: %s\n", ok ? "yes" : "no");
+            return ok ? 0 : 1;
         }
         if (std::strcmp(argv[i], "--probe-video") == 0) {
             if (i + 1 >= argc) {

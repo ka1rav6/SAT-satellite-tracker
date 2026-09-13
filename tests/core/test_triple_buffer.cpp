@@ -105,26 +105,51 @@ TEST_CASE("a fast producer and a slow consumer never tear or block") {
     int  seen = 0;
     bool torn = false;
     bool went_backwards = false;
-    while (!stop.load(std::memory_order_relaxed) || tb.acquire()) {
+
+    // ONE acquire per iteration.
+    //
+    // An earlier version called acquire() in the loop CONDITION and again in
+    // the body. The condition's call consumed a snapshot that the body's call
+    // then could not see, so a consumer that was never scheduled during
+    // production would finish with seen == 0 and fail. That is precisely what
+    // happened in CI: intermittent, Release-only, never in Debug — because an
+    // optimised producer can run all 200000 iterations before a consumer on a
+    // loaded two-core runner gets scheduled at all.
+    //
+    // The loop now reads `stop` BEFORE acquiring, so the final iteration still
+    // drains whatever was published last.
+    for (;;) {
+        const bool finished = stop.load(std::memory_order_relaxed);
         if (tb.acquire()) {
             const Snap& s = tb.read_slot();
             if (!s.consistent())  torn = true;
             if (s.value < last)   went_backwards = true;
             last = s.value;
             ++seen;
+        } else if (finished) {
+            break;
         }
-        // Simulate a slow display: burn a little time between acquisitions.
+        // Simulate a slow display: give up the rest of our slice.
         std::this_thread::yield();
     }
     producer.join();
 
     CHECK_FALSE(torn);
     CHECK_FALSE(went_backwards);
-    CHECK(seen > 0);
-    // The consumer must have dropped frames -- that is the intended behaviour,
-    // and if it did not, the test was not actually exercising the contention.
+
+    // At least one snapshot must arrive. This is now guaranteed rather than
+    // hoped for: the producer publishes 200000 times, and the drain above runs
+    // until acquire() reports nothing new, so even a consumer that never ran
+    // during production picks up the last one.
     INFO("produced " << produced.load() << ", consumer saw " << seen);
+    CHECK(seen > 0);
     CHECK(seen <= produced.load());
+
+    // Dropping frames is the intended behaviour, but it is NOT asserted here:
+    // whether the consumer drops anything depends on the scheduler, and a test
+    // that requires a particular interleaving is a test that fails on someone
+    // else's machine. The property that matters -- newest-wins, never torn,
+    // never backwards -- is asserted above and holds regardless of timing.
 }
 
 TEST_CASE("constructing from a prototype pre-sizes all three slots") {

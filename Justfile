@@ -30,7 +30,7 @@ help:
     @just --list --unsorted
 
 # ---------------------------------------------------------------------------
-# Setup
+# Setupdddddsssssssssssssssss
 # ---------------------------------------------------------------------------
 
 # Clone and bootstrap vcpkg at the pinned baseline if it is not already present.
@@ -195,56 +195,17 @@ probe-video file: build
 # Invariant gates — these mirror the CI jobs (design §2, §16)
 # ---------------------------------------------------------------------------
 
-# INV-1: perception/ai/tracking/search/control/plant must never see the world.
+# All three static source invariants (INV-1 and INV-3), in one checker.
 #
-# The linker already enforces this via cmake/modules.cmake. This grep catches a
-# header-only leak that would never reach the linker.
-gate-inv1:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "INV-1: checking that no tracker-side module includes the world…"
-    if grep -rn --include='*.hpp' --include='*.cpp' \
-         -e '#include "world/' -e '#include "camera/' -e '#include "scenario/' \
-         src/perception src/ai src/tracking src/search src/control src/plant 2>/dev/null; then
-        echo "INV-1 VIOLATION: a tracker-side module includes simulation state." >&2
-        exit 1
-    fi
-    echo "INV-1 ok."
-
-# INV-3: no wall-clock reads anywhere in the simulation path.
-#
-# core/profile.hpp is the single sanctioned exception (timing never feeds back
-# into the simulation and is excluded from the fingerprint). src/app may read a
-# clock for wall-time reporting.
-gate-no-chrono:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "INV-3: checking that <chrono> appears only where it is allowed…"
-    hits=$(grep -rln --include='*.hpp' --include='*.cpp' '<chrono>' src \
-           | grep -v '^src/core/profile' | grep -v '^src/app/' || true)
-    if [[ -n "$hits" ]]; then
-        echo "INV-3 VIOLATION: wall-clock access outside core/profile.hpp:" >&2
-        echo "$hits" >&2
-        exit 1
-    fi
-    echo "INV-3 (chrono) ok."
-
-# INV-3: no rand() and no unseeded generators.
-gate-no-rand:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "INV-3: checking that nothing uses rand() or an unseeded generator…"
-    # The trailing filter drops comment lines: core/rng.hpp quotes the rule
-    # itself in its header comment, and the gate must not trip on prose.
-    hits=$(grep -rn --include='*.hpp' --include='*.cpp' \
-             -e '\brand()' -e '\bsrand(' -e 'random_device' src 2>/dev/null \
-           | grep -vE ':[0-9]+:\s*(//|\*|/\*)' || true)
-    if [[ -n "$hits" ]]; then
-        echo "INV-3 VIOLATION: unseeded randomness in the simulation path:" >&2
-        echo "$hits" >&2
-        exit 1
-    fi
-    echo "INV-3 (rand) ok."
+# A shell grep is not sufficient here, and the reason is worth knowing: this
+# project's own diagnostics talk ABOUT the forbidden constructs.
+# verify_repro.cpp PRINTS the string "an unseeded generator or rand()" to tell a
+# user what to look for, and core/rng.hpp quotes INV-3 in its header comment. A
+# grep matched both and failed CI inside the very code that exists to detect
+# violations. The checker strips comments and string literals first, and
+# self-tests that stripping before it trusts any result.
+gate-source:
+    ./tools/check_source_invariants.py
 
 # INV-1: prove the configure-time link guard actually rejects a violation.
 #
@@ -285,7 +246,7 @@ gate-repro-opt: build build-debug
     fi
 
 # Run every static invariant gate.
-gates: gate-inv1 gate-no-chrono gate-no-rand gate-inv1-selftest
+gates: gate-source gate-inv1-selftest
 
 # Every gate including the slower reproducibility ones. This is what CI runs.
 gates-full: gates gate-repro gate-repro-opt gate-repro-selftest

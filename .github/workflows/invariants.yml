@@ -26,24 +26,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install just
-        uses: extractions/setup-just@v2
-
-      # INV-1: the tracker must not be able to see the simulator's ground truth.
-      # The linker already enforces the library edge (cmake/modules.cmake); this
-      # catches a header-only leak that would never reach the linker.
-      - name: 'INV-1: no world access from perception/ai/tracking/search/control/plant'
-        run: just gate-inv1
-
-      # INV-3: no wall-clock read in the simulation path. core/profile.hpp is the
-      # single sanctioned exception — timing never feeds back into the simulation
-      # and is excluded from the fingerprint.
-      - name: 'INV-3: no <chrono> outside core/profile.hpp'
-        run: just gate-no-chrono
-
-      # INV-3: every draw must name a Stream.
-      - name: 'INV-3: no rand() or unseeded generators'
-        run: just gate-no-rand
+      # One checker for all three source invariants. It strips comments and
+      # string literals before searching, and self-tests that stripping first —
+      # a plain grep matched this project's own diagnostic strings and failed
+      # inside the code that exists to detect violations.
+      - name: 'INV-1 and INV-3: static source checks'
+        run: ./tools/check_source_invariants.py
 
   link-boundary:
     name: INV-1 link boundary

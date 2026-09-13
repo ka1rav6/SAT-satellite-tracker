@@ -31,6 +31,29 @@ include(FetchContent)
 set(FETCHCONTENT_QUIET OFF)
 
 # ---------------------------------------------------------------------------
+# CMake 4 compatibility for the fetched dependencies.
+#
+# CMake 4.0 removed support for `cmake_minimum_required(VERSION <3.5)`, and
+# several of the libraries below still declare one:
+#
+#     doctest v2.4.11        cmake_minimum_required(VERSION 3.0)
+#     nlohmann/json v3.11.3  cmake_minimum_required(VERSION 3.1)
+#
+# So on any runner with CMake 4.x, configuring fails inside the DEPENDENCY, with
+# an error that has nothing to do with this project. That is exactly what broke
+# the windows-msvc-release job while every Linux job passed — GitHub's
+# windows-latest image ships CMake 4.x and ubuntu-latest still ships 3.31.
+#
+# CMAKE_POLICY_VERSION_MINIMUM is CMake 4.0's documented escape hatch: it floors
+# the effective minimum for projects that ask for less. It is set only around
+# the fetches and restored afterwards, so it never relaxes policy for OUR code —
+# this project targets 3.20 and should keep being held to it.
+#
+# Unknown to CMake < 4.0, where it is simply ignored, so this is safe on both.
+set(SAT_SAVED_POLICY_MIN "${CMAKE_POLICY_VERSION_MINIMUM}")
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
+# ---------------------------------------------------------------------------
 # Feature switches.
 #
 # AUTO means "use it if it is available". Setting one to OFF forces the
@@ -171,6 +194,11 @@ if(NOT TARGET Eigen3::Eigen)
     target_include_directories(Eigen3_headers SYSTEM INTERFACE "${eigen3_SOURCE_DIR}")
     add_library(Eigen3::Eigen ALIAS Eigen3_headers)
 endif()
+
+# Restore the policy floor: from here on, our own code is held to the minimum
+# the root CMakeLists declares.
+set(CMAKE_POLICY_VERSION_MINIMUM "${SAT_SAVED_POLICY_MIN}")
+unset(SAT_SAVED_POLICY_MIN)
 
 # ===========================================================================
 # Optional, heavy: found or the feature is switched off.

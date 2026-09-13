@@ -25,7 +25,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Put every binary in one place so the Justfile and CI do not have to guess.
+#
+# The per-config variables are not redundant. Multi-config generators (MSVC,
+# Xcode) append the configuration name to CMAKE_RUNTIME_OUTPUT_DIRECTORY, so the
+# binary lands in build/Release/sat-tracker.exe and every `./build/sat-tracker`
+# in CI and in the Justfile misses it. Setting the per-config variables
+# explicitly makes the path identical on every generator.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+foreach(cfg IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${cfg} "${CMAKE_BINARY_DIR}")
+endforeach()
 
 # --- INV-3: bit-exact reproducibility -------------------------------------------
 #
