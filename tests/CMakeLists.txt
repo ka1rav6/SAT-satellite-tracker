@@ -52,7 +52,12 @@ endfunction()
 # Suites. One per subsystem, in roughly the order the checkpoints build them.
 # ===========================================================================
 
-# Suites are registered here as each checkpoint lands.
+# --- CP 0.2: units and coordinate frames -----------------------------------
+sat_add_test(frames
+    SOURCES frames/test_units.cpp
+            frames/test_frames.cpp
+    DEPS    sat_core
+)
 
 # ===========================================================================
 # End-to-end checks that run the real binary. These catch link and startup
