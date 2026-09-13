@@ -1,0 +1,8 @@
+# Specification row 13 permits 5 to 10 deg/s. This asks for 14.
+# EXPECT: gimbal.max_pan_dps ... specification row 13
+[sim]
+duration_s = 10
+[target]
+size_px = 10
+[gimbal]
+max_pan_dps = 14.0

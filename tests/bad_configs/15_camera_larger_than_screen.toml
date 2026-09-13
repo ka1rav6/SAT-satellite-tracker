@@ -1,0 +1,12 @@
+# The camera views a WINDOW of the screen (specification rows 1 and 3). A
+# viewport larger than the canvas makes the field-of-view fraction meaningless
+# and every search strategy degenerate.
+# EXPECT: camera.resolution ... does not fit inside world.canvas_px
+[sim]
+duration_s = 10
+[world]
+canvas_px = [2000, 2000]
+[camera]
+resolution = [4000, 3000]
+[target]
+size_px = 10

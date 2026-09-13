@@ -1,0 +1,10 @@
+# 300 Hz truth does not divide evenly by a 45 Hz camera, so frames would fall
+# between truth ticks and the world would have to be interpolated at frame time.
+# EXPECT: sim.truth_hz ... exact multiple ... INV-3
+[sim]
+truth_hz   = 300
+camera_hz  = 45
+control_hz = 30
+duration_s = 10
+[target]
+size_px = 10

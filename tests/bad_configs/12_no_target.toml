@@ -1,0 +1,6 @@
+# Specification row 8 makes one target mandatory. This file defines none.
+# EXPECT: at least one target ... specification row 8
+[sim]
+duration_s = 10
+[world]
+canvas_px = [2000, 2000]

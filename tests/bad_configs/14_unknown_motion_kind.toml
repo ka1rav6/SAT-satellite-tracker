@@ -1,0 +1,10 @@
+# A typo in a motion kind would otherwise produce a stationary target and a
+# confusing benchmark rather than an error.
+# EXPECT: motion[0].kind ... specification row 12
+[sim]
+duration_s = 10
+[target]
+size_px = 10
+[[target.motion]]
+kind          = "linnear"
+velocity_px_s = [10.0, 0.0]

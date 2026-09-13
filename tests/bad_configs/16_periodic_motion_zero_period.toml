@@ -1,0 +1,10 @@
+# A period of zero would divide by zero when computing the angular frequency.
+# EXPECT: motion[0].period_s ... must be positive ... specification row 12
+[sim]
+duration_s = 10
+[target]
+size_px = 10
+[[target.motion]]
+kind      = "circular"
+radius_px = 300.0
+period_s  = 0.0

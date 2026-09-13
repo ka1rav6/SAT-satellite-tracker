@@ -82,8 +82,12 @@ sat_add_module(sat_world
 
 # scenario — TOML parsing and schema validation (design §7).
 sat_add_module(sat_scenario
-    PUBLIC_DEPS sat_core
+    SOURCES
+        src/scenario/schema.cpp
+        src/scenario/toml_loader.cpp
+    PUBLIC_DEPS sat_core sat_world
 )
+target_link_libraries(sat_scenario PRIVATE tomlplusplus::tomlplusplus)
 
 # camera — exact-coverage splatting and the viewport query (design §9.2).
 sat_add_module(sat_camera

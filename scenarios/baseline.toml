@@ -1,0 +1,90 @@
+# baseline.toml — the reference scenario.
+#
+# Every value here is the specification's default (design §3.2), so this file
+# doubles as documentation: each key is annotated with the specification row it
+# implements, which is what CP 3.6 asks for.
+#
+# This is also the "known-good scenario preloaded as a fallback" that CP 15.3
+# requires for the live demo.
+
+[meta]
+name        = "baseline"
+description = "Specification defaults: 10 px square beacon on a straight line, clear air"
+
+[input]
+mode = "synthetic"                  # design §8.3
+
+[sim]
+truth_hz   = 300                    # 10 sub-ticks per camera frame (design §6.2)
+camera_hz  = 30                     # row 5, minimum 30
+control_hz = 30                     # row 15, minimum 20
+duration_s = 60
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]       # row 1, minimum 2000 x 2000
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"             # row 2
+resolution     = [640, 480]         # row 3
+fov_deg        = [4.0, 3.0]         # row 4
+exposure_ms    = 5.0
+blur_substeps  = 8                  # design §9.2
+initial_pos_px = [999.5, 999.5]     # row 6, the centre of the screen
+
+[target]
+kind       = "target"               # row 7, a beacon spot
+intensity  = 120.0
+size_px    = 10                     # row 10, permitted 5-20
+initial_px = "random"               # row 11
+shape.type = "square"               # row 9
+
+[[target.motion]]                   # row 12, straight line
+kind          = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[gimbal]
+max_pan_dps      = 5.0              # row 13, permitted 5-10
+max_tilt_dps     = 5.0              # row 14, permitted 5-10
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true               # row 21
+gaussian_sigma = 20.0               # row 22, maximum 20 grey levels
+salt_pepper    = 0.10               # row 21, ~10%
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"                      # row 24
+
+[disturbance]
+jitter_px_per_frame = 20.0          # row 23, maximum +/- 20
+
+[[disturbance.platform]]            # row 25, linear is mandatory
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]
+
+[clutter]
+static_sources = 120                # design §9.1, "mandatory for credibility"
+decoy_beacons  = 1
+
+[ai]
+enabled          = true
+fallback_on_fail = true             # INV-7
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0             # row 16
+tracking_error_px = 10.0            # row 17
+target_loss_frac  = 0.05            # row 18
+reacquisition_s   = 1.0             # row 19
+min_fps           = 20.0            # row 20

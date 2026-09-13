@@ -96,6 +96,16 @@ sat_add_test(motion
     DEPS    sat_core sat_world
 )
 
+# --- CP 3.1-3.2, 3.6: TOML loading and spec-row-citing validation -----------
+sat_add_test(schema
+    SOURCES schema/test_schema.cpp
+    DEPS    sat_core sat_scenario
+)
+target_compile_definitions(test_schema PRIVATE
+    SAT_TEST_BAD_CONFIG_DIR="${CMAKE_CURRENT_SOURCE_DIR}/bad_configs"
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+)
+
 # --- CP 2.3-2.5: snapshots and the reproducibility fingerprint --------------
 sat_add_test(repro
     SOURCES repro/test_fingerprint.cpp

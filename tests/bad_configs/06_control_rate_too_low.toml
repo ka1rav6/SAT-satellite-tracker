@@ -1,0 +1,8 @@
+# Specification row 15 requires at least 20 Hz. This asks for 10.
+# EXPECT: sim.control_hz ... specification row 15
+[sim]
+camera_hz  = 30
+control_hz = 10
+duration_s = 10
+[target]
+size_px = 10

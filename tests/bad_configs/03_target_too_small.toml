@@ -1,0 +1,6 @@
+# Specification row 10 permits a 5 to 20 px target. This asks for 3.
+# EXPECT: target.size_px ... specification row 10
+[sim]
+duration_s = 10
+[target]
+size_px = 3

@@ -1,0 +1,9 @@
+# noise.salt_pepper is a FRACTION of pixels, so it cannot exceed 1. This asks
+# for 10, which is presumably a percentage written as a count.
+# EXPECT: noise.salt_pepper ... specification row 21
+[sim]
+duration_s = 10
+[target]
+size_px = 10
+[noise]
+salt_pepper = 10.0

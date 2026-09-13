@@ -1,0 +1,79 @@
+# fog_figure8.toml — the hard case.
+#
+# Figure-of-eight motion (spec row 12, mandatory) under fog (row 24) with the
+# maximum permitted noise (rows 21-22) and jitter (row 23).
+#
+# This scenario exists because it is where the design predicts trouble:
+#   * the figure-8 crossing reverses acceleration, which design §10.2 says makes
+#     single-model filters overshoot every lap — the IMM's reason for existing;
+#   * fog drops contrast to 0.35 and lifts the floor by 60 grey levels (§9.3),
+#     which is what CFAR's adaptive threshold is for;
+#   * §13.3's example compliance matrix shows exactly this combination as
+#     MARGINAL, and an honest MARGINAL is stronger than a suspicious all-green.
+
+[meta]
+name        = "fog_figure8"
+description = "Figure-8 beacon under fog with maximum noise"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 120
+seed       = 7
+
+[world]
+canvas_px = [2000, 2000]
+
+[camera]
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+blur_substeps  = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+intensity  = 120.0
+size_px    = 10
+initial_px = "random"
+shape.type = "square"
+
+[[target.motion]]                   # centre the figure-8 on the canvas
+kind      = "constant"
+offset_px = [999.5, 999.5]
+
+[[target.motion]]                   # row 12: figure of eight is freq_ratio 2
+kind         = "lissajous"
+amplitude_px = [700.0, 350.0]
+freq_ratio   = 2.0
+period_s     = 24.0
+
+[gimbal]
+max_pan_dps  = 5.0
+max_tilt_dps = 5.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 20.0               # row 22, at the maximum
+salt_pepper    = 0.10               # row 21
+hot_pixels     = 40
+
+[atmosphere]
+mode = "fog"                        # row 24: alpha 0.35, beta +60
+
+[disturbance]
+jitter_px_per_frame = 20.0          # row 23, at the maximum
+
+[[disturbance.platform]]
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]
+
+[clutter]
+static_sources = 120
+decoy_beacons  = 1
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

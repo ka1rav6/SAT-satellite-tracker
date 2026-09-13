@@ -1,0 +1,9 @@
+# Specification row 24 lists clear, haze, fog, rain and low light. "blizzard" is
+# not among them.
+# EXPECT: atmosphere.mode ... specification row 24
+[sim]
+duration_s = 10
+[target]
+size_px = 10
+[atmosphere]
+mode = "blizzard"

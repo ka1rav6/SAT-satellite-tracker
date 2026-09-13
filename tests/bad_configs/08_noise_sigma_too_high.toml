@@ -1,0 +1,9 @@
+# Specification row 22 caps read noise at a standard deviation of 20 grey
+# levels. This asks for 90.
+# EXPECT: noise.gaussian_sigma ... specification row 22
+[sim]
+duration_s = 10
+[target]
+size_px = 10
+[noise]
+gaussian_sigma = 90.0

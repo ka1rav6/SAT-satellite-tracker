@@ -1,0 +1,9 @@
+# Specification row 1 requires a minimum screen of 2000 x 2000. This asks for
+# 800 x 600.
+# EXPECT: world.canvas_px ... specification row 1
+[sim]
+duration_s = 10
+[world]
+canvas_px = [800, 600]
+[target]
+size_px = 10

@@ -1,0 +1,8 @@
+# Design §8.3: a video mode needs something to decode.
+# EXPECT: input.video_file ... design §8.3
+[input]
+mode = "video_screen"
+[sim]
+duration_s = 10
+[target]
+size_px = 10

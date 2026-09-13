@@ -1,0 +1,9 @@
+# Specification row 23 caps camera jitter at +/- 20 px per frame. This asks for
+# 50.
+# EXPECT: disturbance.jitter_px_per_frame ... specification row 23
+[sim]
+duration_s = 10
+[target]
+size_px = 10
+[disturbance]
+jitter_px_per_frame = 50.0

@@ -1,0 +1,51 @@
+# video_direct.toml — MP4 ingest, reading the video AS the camera feed.
+#
+# Design §8.3, second reading: "The video is the camera feed itself; no cropping."
+# Pointing is DISABLED — supports_pointing() returns false, and INV-2's closed-loop
+# requirement carves out an explicit exception for this mode.
+# 640x480 viewport and pans." Pointing is ACTIVE.
+#
+# INV-8: the noise and atmosphere sections are deliberately absent. The
+# degradation is already in the supplied footage, and adding more would corrupt
+# the benchmark. Scenario::damage_enabled() enforces this regardless of what the
+# file says, so a config copied from a synthetic scenario still behaves.
+
+[meta]
+name        = "video_direct"
+description = "Track a beacon in an MP4 that IS the camera feed; pointing disabled"
+
+[input]
+mode       = "video_direct"
+video_file = "tests/video/clips/direct_640x480_30fps.mp4"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 60
+seed       = 1
+
+[world]
+canvas_px = [2000, 2000]
+
+[camera]
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+initial_pos_px = [999.5, 999.5]
+
+[target]
+intensity  = 120.0
+size_px    = 10
+initial_px = "random"
+shape.type = "square"
+
+[gimbal]
+max_pan_dps  = 5.0
+max_tilt_dps = 5.0
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

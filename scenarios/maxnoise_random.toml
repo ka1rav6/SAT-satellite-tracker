@@ -1,0 +1,72 @@
+# maxnoise_random.toml — worst-case perception.
+#
+# Spec row 12's mandatory RANDOM motion, at the maximum noise the specification
+# permits, in low light. This is the CP 5.9 worst-case checkpoint's scenario:
+# "fog + max noise + 120 clutter + decoy: the real beacon is among the top
+# candidates in >95% of frames".
+
+[meta]
+name        = "maxnoise_random"
+description = "Ornstein-Uhlenbeck random walk at maximum noise in low light"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 120
+seed       = 13
+
+[world]
+canvas_px = [2000, 2000]
+
+[camera]
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+initial_pos_px = [999.5, 999.5]
+
+[target]
+intensity  = 120.0
+size_px    = 8
+initial_px = "random"
+shape.type = "square"
+
+[[target.motion]]
+kind      = "constant"
+offset_px = [999.5, 999.5]
+
+[[target.motion]]                   # row 12: random
+kind       = "ou_noise"
+sigma_px_s = 70.0
+tau_s      = 3.0
+
+[gimbal]
+max_pan_dps  = 5.0
+max_tilt_dps = 5.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 20.0
+salt_pepper    = 0.10
+hot_pixels     = 200
+
+[atmosphere]
+mode = "lowlight"                   # row 24: alpha 0.40, beta -40
+
+[disturbance]
+jitter_px_per_frame = 20.0
+
+[[disturbance.platform]]            # row 25: circular is optional
+kind      = "circular"
+radius_px = 40.0
+period_s  = 11.0
+
+[clutter]
+static_sources = 300
+decoy_beacons  = 2
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

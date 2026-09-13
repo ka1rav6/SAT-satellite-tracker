@@ -1,0 +1,8 @@
+# Specification row 14 permits 5 to 10 deg/s. This asks for 2.
+# EXPECT: gimbal.max_tilt_dps ... specification row 14
+[sim]
+duration_s = 10
+[target]
+size_px = 10
+[gimbal]
+max_tilt_dps = 2.0

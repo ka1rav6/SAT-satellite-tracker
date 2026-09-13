@@ -1,0 +1,6 @@
+# Not valid TOML at all. A syntax error must be reported in the same
+# file:line: message shape as a semantic one, so nobody has to learn two
+# error formats.
+# EXPECT: a parse error naming the line
+[sim]
+duration_s = = 10
