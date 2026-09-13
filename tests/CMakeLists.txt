@@ -102,7 +102,8 @@ sat_add_test(kernels
             kernels/test_morphology.cpp
             kernels/test_sat.cpp
             kernels/test_matched.cpp
-    DEPS    sat_core sat_perception sat_cv_oracle
+            kernels/test_cfar.cpp
+    DEPS    sat_core sat_perception sat_scenario sat_cv_oracle
 )
 
 # --- CP 3.1-3.2, 3.6: TOML loading and spec-row-citing validation -----------

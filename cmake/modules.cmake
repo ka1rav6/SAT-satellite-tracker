@@ -124,6 +124,7 @@ sat_add_module(sat_perception
         src/perception/morphology.cpp
         src/perception/sat.cpp
         src/perception/matched.cpp
+        src/perception/cfar.cpp
     PUBLIC_DEPS sat_core
 )
 
