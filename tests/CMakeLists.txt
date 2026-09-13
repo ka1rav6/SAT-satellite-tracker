@@ -42,24 +42,29 @@ target_include_directories(sat_test_main PUBLIC
 # tight relative to the configuration actually being run, and the same code is
 # an order of magnitude slower in some of them:
 #
-#   Release            the perception suite runs the full pipeline over ~320
-#                      frames in ~25 s.
-#   Debug (-O0)        ~5x slower. A 120 s timeout fired here and nowhere else,
-#                      which made it look like a Debug-specific bug when it was
-#                      only Debug being Debug.
-#   Sanitizers         ~10x slower again.
+#   Release            the slowest suite is ~56 s.
+#   Debug (-O0)        MEASURED at 8x, not the 5x first assumed here: the same
+#                      suites run 56 -> 353 s, 45 -> 362 s, 31 -> 251 s. The
+#                      earlier 5x was a guess, and a 600 s cap left the tracking
+#                      suite using 60% of its budget on a developer laptop —
+#                      which on a slower CI runner is the same red job this
+#                      scaling was introduced to prevent.
+#   Sanitizers         ~10x slower again, on top of Debug's own cost.
 #
+# The Debug and sanitizer figures are therefore derived from the Release cap
+# times the measured ratio, with a margin, rather than typed as round numbers.
 # Scaling by configuration keeps the check meaningful in each without making it
 # vacuous in any.
 # ---------------------------------------------------------------------------
+set(SAT_TIMEOUT_BASE 120)                 # optimised build, the reference
 if(CMAKE_CXX_FLAGS MATCHES "sanitize")
-    set(SAT_TEST_TIMEOUT 900)
-    set(SAT_TIMEOUT_WHY "sanitizers")
+    math(EXPR SAT_TEST_TIMEOUT "${SAT_TIMEOUT_BASE} * 16")   # 1920 s
+    set(SAT_TIMEOUT_WHY "sanitizers, ~16x Release")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(SAT_TEST_TIMEOUT 600)
-    set(SAT_TIMEOUT_WHY "Debug build, unoptimised")
+    math(EXPR SAT_TEST_TIMEOUT "${SAT_TIMEOUT_BASE} * 10")   # 1200 s
+    set(SAT_TIMEOUT_WHY "Debug build, measured ~8x Release")
 else()
-    set(SAT_TEST_TIMEOUT 120)
+    set(SAT_TEST_TIMEOUT ${SAT_TIMEOUT_BASE})
     set(SAT_TIMEOUT_WHY "optimised build")
 endif()
 message(STATUS "SAT: test timeout ${SAT_TEST_TIMEOUT}s (${SAT_TIMEOUT_WHY})")

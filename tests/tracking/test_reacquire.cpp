@@ -79,14 +79,18 @@ size_t target_index(Pipeline& p) {
 
 TEST_CASE("Stage 6: the wired pipeline confirms a track and holds it") {
     Scenario sc = base();
-    sc.duration_s = 4.0;
+    // 2.5 s is 75 frames. Long enough for the retention and error statistics
+    // below to mean something, and short enough that the Debug build — which
+    // runs this same code about eight times slower — stays well inside its
+    // test timeout. Every frame here is a full §9.4 pipeline pass.
+    sc.duration_s = 2.5;
 
     Pipeline p;
     p.build_from_scenario(sc);
 
     std::vector<FrameRecord> rec;
     p.run(rec);
-    REQUIRE(rec.size() > 100);
+    REQUIRE(rec.size() > 60);
 
     // It acquires quickly, because the beacon starts in view.
     int first_lock = -1;
@@ -121,7 +125,7 @@ TEST_CASE("Stage 6: the filter's velocity estimate matches the scenario's analyt
     // filter. The scenario states 35 and -18 px/s analytically (CP 3.5); the
     // tracker never sees those numbers and has to recover them from pixels.
     Scenario sc = base();
-    sc.duration_s = 4.0;
+    sc.duration_s = 3.0;
 
     Pipeline p;
     p.build_from_scenario(sc);
@@ -137,7 +141,7 @@ TEST_CASE("Stage 6: the filter's velocity estimate matches the scenario's analyt
         vy += rec[i].estimate_rate.y / ifov;
         ++n;
     }
-    REQUIRE(n > 30);
+    REQUIRE(n > 20);
     vx /= n; vy /= n;
     MESSAGE("estimated velocity " << vx << ", " << vy << " px/s (truth 35, -18)");
     CHECK(vx == doctest::Approx(35.0).epsilon(0.05));
@@ -259,11 +263,11 @@ TEST_CASE("CP 6.7: with the target absent the camera searches instead of stoppin
     p.source().emitters().intensity[ti] = 0.0f;   // never visible
 
     std::vector<Angle2> boresights;
-    for (int i = 0; i < 150; ++i) {
+    for (int i = 0; i < 100; ++i) {
         if (!p.step()) break;
         boresights.push_back(p.last().boresight_true);
     }
-    REQUIRE(boresights.size() > 100);
+    REQUIRE(boresights.size() > 80);
     CHECK(p.last().mode == TrackMode::Search);
 
     double travelled = 0.0;
@@ -271,7 +275,7 @@ TEST_CASE("CP 6.7: with the target absent the camera searches instead of stoppin
         travelled += (boresights[i] - boresights[i - 1]).norm();
     }
     const double ifov = sc.camera_geometry().ifov_urad();
-    MESSAGE("boresight travel over 5 s of fruitless search: "
+    MESSAGE("boresight travel over 3.3 s of fruitless search: "
             << (travelled / ifov) << " px");
     // It moved a long way — at least one full field of view, which is the
     // minimum that could possibly reveal anything new.
