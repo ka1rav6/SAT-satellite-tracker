@@ -249,6 +249,28 @@ gate-repro-opt: build build-debug
         exit 1
     fi
 
+# Build and run the whole suite under AddressSanitizer and
+# UndefinedBehaviorSanitizer.
+#
+# This is the highest-value bug check in the project and it earned that on its
+# first run: it found a heap-buffer-overflow in the median filter's interior
+# fast path, which read one element off each end of a row on a 1-pixel-wide
+# image. Those reads land in adjacent heap memory and look perfectly harmless —
+# every other test passed, on every platform, before and after. Nothing short of
+# a sanitizer would have shown it.
+#
+# -fno-sanitize-recover=all makes the first finding fatal, so a violation
+# cannot scroll past in a passing-looking log.
+sanitize:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cmake -S . -B "{{build_dir}}-asan" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DBUILD_TESTING=ON -DSAT_WITH_GUI=OFF \
+        -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all" \
+        -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+    cmake --build "{{build_dir}}-asan" --parallel {{jobs}}
+    ctest --test-dir "{{build_dir}}-asan" --output-on-failure --parallel {{jobs}}
+
 # Run every static invariant gate.
 gates: gate-source gate-inv1-selftest
 
@@ -259,7 +281,7 @@ gates-full: gates gate-repro gate-repro-opt gate-repro-selftest
 ci: gates test
 
 # The full pre-push check, including cross-optimisation reproducibility.
-ci-full: gates-full test
+ci-full: gates-full test sanitize
 
 # ---------------------------------------------------------------------------
 # Housekeeping
@@ -267,7 +289,7 @@ ci-full: gates-full test
 
 # Wipe the build trees (including fetched dependencies under build/_deps).
 clean:
-    rm -rf "{{build_dir}}" "{{build_dir}}-debug" "{{build_dir}}-nogui" vcpkg_installed
+    rm -rf "{{build_dir}}" "{{build_dir}}-debug" "{{build_dir}}-nogui" "{{build_dir}}-asan" vcpkg_installed
 
 # Wipe compiled output but keep fetched dependencies, so the next build is fast.
 clean-build:

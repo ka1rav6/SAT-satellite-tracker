@@ -38,7 +38,18 @@ void median_3x3(std::span<const uint8_t> src, std::span<uint8_t> dst,
 
         // Interior rows get direct row pointers: no per-sample clamping, which
         // is most of the work in the naive form.
-        if (y > 0 && y < height - 1) {
+        //
+        // `width >= 3` is required as well as the row condition, and it is not
+        // belt-and-braces. The fast path indexes r0[x-1] and r0[x+1] directly;
+        // at width 1 those are r0[-1] and r0[1], both off the end of the row.
+        // AddressSanitizer caught exactly that as a heap-buffer-overflow once
+        // the degenerate-size early-out was removed to match cv::medianBlur —
+        // the reads land in adjacent heap memory and look harmless, so nothing
+        // short of a sanitizer would have shown it.
+        //
+        // Narrow images fall through to the clamped path, which handles them
+        // correctly and is not performance-relevant at that size anyway.
+        if (y > 0 && y < height - 1 && width >= 3) {
             const uint8_t* r0 = s + static_cast<size_t>(y - 1) * w;
             const uint8_t* r1 = s + static_cast<size_t>(y)     * w;
             const uint8_t* r2 = s + static_cast<size_t>(y + 1) * w;
