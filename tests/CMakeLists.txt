@@ -101,6 +101,7 @@ sat_add_test(kernels
     SOURCES kernels/test_median.cpp
             kernels/test_morphology.cpp
             kernels/test_sat.cpp
+            kernels/test_matched.cpp
     DEPS    sat_core sat_perception sat_cv_oracle
 )
 
