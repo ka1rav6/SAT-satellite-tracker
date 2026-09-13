@@ -115,9 +115,13 @@ test-debug: build-debug
 test-list: build
     ctest --test-dir "{{build_dir}}" -N
 
-# Run the sat-tracker binary. Extra arguments are passed through:
+# Run sat-tracker. With no arguments this opens the live dashboard, which is
+# what design §13.4's command table specifies. Arguments pass straight through:
+#
+#   just run                     the dashboard, default scenario
+#   just run --help              every other mode
 #   just run --version
-#   just run --help
+#   just run --probe-video F     CP 0.7's video gate on one file
 run *ARGS: build
     "{{build_dir}}/sat-tracker" {{ARGS}}
 

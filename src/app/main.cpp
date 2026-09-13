@@ -230,7 +230,32 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
+    // -----------------------------------------------------------------------
+    // No arguments: open the dashboard.
+    //
+    // Design §13.4's command table begins
+    //
+    //     sat-tracker                       GUI, default scenario
+    //
+    // so this is the specified behaviour, not a convenience. An earlier version
+    // printed the banner and exited, which meant `just run` did not run the
+    // thing the project is for.
+    //
+    // The banner is still printed first, because the derived constants in it
+    // (§1.4) are worth seeing on every launch and the GUI takes a moment to
+    // appear. On a build with no dashboard, the banner IS the output and the
+    // message says how to get one.
+    // -----------------------------------------------------------------------
     std::printf("%s %s+%s\n\n", SAT_PRODUCT_NAME, SAT_VERSION, SAT_GIT_HASH);
     print_derived_constants();
+
+#if SAT_HAVE_GUI
+    std::printf("\nopening the dashboard — `sat-tracker --help` for other modes\n");
+    int unused = 0;
+    return gui_command(argc, argv, unused);
+#else
+    std::printf("\nThis build has no dashboard (GLFW or OpenGL was missing at\n"
+                "configure time). Try `sat-tracker --help` for the headless modes.\n");
     return 0;
+#endif
 }
