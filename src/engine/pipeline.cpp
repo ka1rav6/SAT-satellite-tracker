@@ -287,6 +287,8 @@ bool Pipeline::step() {
         rec.detection_peak    = dets_[0].peak;
         rec.detection_snr     = dets_[0].snr;
         rec.centroid_sigma_px = dets_[0].centroid_sigma_est;
+        rec.detection_area_px = dets_[0].area_px;
+        rec.detection_size_est_px = dets_[0].size_est_px;
         rec.detection_screen  = cfg_.synthetic.screen.to_pixel(
             commanded + cfg_.synthetic.camera.unproject(dets_[0].centroid_image));
     }
@@ -308,6 +310,8 @@ bool Pipeline::step() {
         rec.detection_peak    = d.peak;
         rec.detection_snr     = d.snr;
         rec.centroid_sigma_px = d.centroid_sigma_est;
+        rec.detection_area_px = d.area_px;
+        rec.detection_size_est_px = d.size_est_px;
         rec.detection_screen  = cfg_.synthetic.screen.to_pixel(
             commanded + cfg_.synthetic.camera.unproject(d.centroid_image));
     }

@@ -191,6 +191,20 @@ target_compile_definitions(test_tracking PRIVATE
     SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 
+# --- CP 7.1-7.2: the metric definitions and the graded centroid log --------
+sat_add_test(metrics
+    SOURCES metrics/test_series.cpp
+            metrics/test_collector.cpp
+            metrics/test_centroid_log.cpp
+    DEPS    sat_core sat_metrics sat_engine sat_scenario
+)
+target_compile_definitions(test_metrics PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+    # Artifacts land in the build tree, not /tmp, so a failing format test
+    # leaves the CSV somewhere a person will actually go and look at it.
+    SAT_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+)
+
 # --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------
 # Runs whether or not OpenCV is present: without it the gate test reports a loud
 # SKIP rather than passing silently, so a build that cannot do video says so.

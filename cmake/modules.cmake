@@ -191,8 +191,16 @@ sat_add_module(sat_engine
 # metrics — centroiding/tracking error, compliance matrix, logs, reports.
 # Depends on world because computing an error requires the true position; this
 # is exactly the boundary INV-1 draws, and metrics is on the permitted side.
+#
+# It also links sat_engine, because a metric is computed from a FrameRecord and
+# that is the engine's type. The edge runs metrics -> engine and never back: the
+# engine must be runnable with no metrics at all, which is what makes CP 7.3's
+# headless benchmark measure the simulation rather than the measuring.
 sat_add_module(sat_metrics
-    PUBLIC_DEPS sat_core sat_world
+    SOURCES
+        src/metrics/collector.cpp
+        src/metrics/centroid_log.cpp
+    PUBLIC_DEPS sat_core sat_world sat_engine
 )
 
 # gui — the dashboard (design §12). Deferred: the engine is built headless-first

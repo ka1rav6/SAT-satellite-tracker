@@ -122,9 +122,14 @@ struct FrameRecord {
     /// filter's prediction; in Search it is the search pattern's look point.
     Angle2     aim{};
 
-    /// Detection quality, carried through for the log and the GUI.
-    float   detection_snr   = 0.0f;
-    float   centroid_sigma_px = 0.0f;
+    /// Detection quality and shape, carried through for §13.2's centroid.csv
+    /// and for the GUI. These are columns of the GRADED artifact, which is why
+    /// they are recorded per frame rather than recomputed later: after the run
+    /// the blob they describe no longer exists.
+    float    detection_snr     = 0.0f;
+    float    centroid_sigma_px = 0.0f;
+    uint16_t detection_area_px = 0;
+    uint16_t detection_size_est_px = 0;
 };
 
 /// Stage 1 pipeline configuration. Stage 3 folds this into the Scenario struct.
