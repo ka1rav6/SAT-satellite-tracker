@@ -277,11 +277,21 @@ gates: gate-source gate-inv1-selftest
 # Every gate including the slower reproducibility ones. This is what CI runs.
 gates-full: gates gate-repro gate-repro-opt gate-repro-selftest
 
-# Everything CI runs, in the same order. Use this before pushing.
-ci: gates test
+# Everything CI runs on Linux, in the same order. Use this before pushing.
+#
+# This deliberately builds Release, Debug AND the no-GUI configuration, because
+# `just ci` is only worth running if a green result means CI will be green too.
+# An earlier version ran the Release tests alone and reported success while the
+# linux-gcc-debug job was failing — Debug is roughly five times slower and was
+# the only configuration hitting the test timeout. A pre-push check that cannot
+# see a whole class of failure is worse than no check, because it is trusted.
+#
+# Takes around five minutes. `just ci-full` adds the sanitizer and
+# cross-optimisation reproducibility runs on top.
+ci: gates test test-debug build-headless
 
 # The full pre-push check, including cross-optimisation reproducibility.
-ci-full: gates-full test sanitize
+ci-full: gates-full test test-debug build-headless sanitize
 
 # ---------------------------------------------------------------------------
 # Housekeeping

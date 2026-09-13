@@ -34,16 +34,35 @@ target_include_directories(sat_test_main PUBLIC
 # 5000 fuzzed scenarios), so an infinite loop must show up as a red test rather
 # than a stuck CI job.
 # ---------------------------------------------------------------------------
-# Sanitized builds run roughly five times slower, so the timeout scales with
-# them. The timeout is not arbitrary padding — CP 14.1 treats a hang as a
-# first-class failure alongside a crash, so it has to stay tight enough to catch
-# one while not firing on a build that is merely instrumented.
+# ---------------------------------------------------------------------------
+# Test timeout, scaled by how slow the build configuration is.
+#
+# The timeout is not padding: CP 14.1 treats a hang as a first-class failure
+# alongside a crash, so it must stay tight enough to catch one. But it has to be
+# tight relative to the configuration actually being run, and the same code is
+# an order of magnitude slower in some of them:
+#
+#   Release            the perception suite runs the full pipeline over ~320
+#                      frames in ~25 s.
+#   Debug (-O0)        ~5x slower. A 120 s timeout fired here and nowhere else,
+#                      which made it look like a Debug-specific bug when it was
+#                      only Debug being Debug.
+#   Sanitizers         ~10x slower again.
+#
+# Scaling by configuration keeps the check meaningful in each without making it
+# vacuous in any.
+# ---------------------------------------------------------------------------
 if(CMAKE_CXX_FLAGS MATCHES "sanitize")
+    set(SAT_TEST_TIMEOUT 900)
+    set(SAT_TIMEOUT_WHY "sanitizers")
+elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(SAT_TEST_TIMEOUT 600)
-    message(STATUS "SAT: sanitizers detected — test timeout raised to ${SAT_TEST_TIMEOUT}s")
+    set(SAT_TIMEOUT_WHY "Debug build, unoptimised")
 else()
     set(SAT_TEST_TIMEOUT 120)
+    set(SAT_TIMEOUT_WHY "optimised build")
 endif()
+message(STATUS "SAT: test timeout ${SAT_TEST_TIMEOUT}s (${SAT_TIMEOUT_WHY})")
 
 function(sat_add_test suite)
     cmake_parse_arguments(ARG "" "" "SOURCES;DEPS" ${ARGN})
