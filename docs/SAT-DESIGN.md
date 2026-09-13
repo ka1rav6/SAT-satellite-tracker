@@ -1664,6 +1664,53 @@ sat-tracker --bench
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
 
+## 14.0 AMENDMENT — the GUI is deferred to Stage 15
+
+**Status:** adopted. **Applies from:** Stage 0. **Supersedes:** CP 0.5, and the GUI half of
+CP 1.4, 1.8, 2.3, 2.4, 4.10, 6.6.
+
+The roadmap as originally written grows the dashboard alongside the engine, using it as the
+acceptance surface for several early checkpoints ("a white square is visible and moves", "the error
+visibly settles"). That ordering was chosen so progress is watchable. The project is instead being
+built **headless-first**, for three reasons:
+
+1. **The acceptance criteria get weaker, not stronger, when they are visual.** "A white square is
+   visible" is checked by a human once; `centre_of_mass(rendered) == 100.37 ± 0.001` is checked by
+   CI on every commit forever. Every visual criterion below has a numeric substitute that tests
+   strictly more.
+2. **80% of the marks are the software running** (§3.1). The GUI is 20%, it is graded on being
+   *watchable* rather than on being *early*, and it cannot be built well until there is something
+   worth showing.
+3. **The seam already exists.** `TripleBuffer` and `SimSnapshot` (§6.2 B30/B31) are built at their
+   original checkpoint. The dashboard attaches to that seam later without touching the simulation,
+   so deferring it costs no rework — which is exactly the argument §17 decision 1 makes for
+   `IFrameSource`.
+
+**This does not reduce GUI scope.** Every panel in §12 is still delivered, at Stage 15, and CP 15.1
+through 15.3 are unchanged. What changes is only *when*, and what stands in as the acceptance test
+meanwhile.
+
+| Original CP | Original acceptance | Headless substitute (now authoritative) |
+|---|---|---|
+| 0.5 GLFW/ImGui/ImPlot shell | A window opens showing a live sine wave | **Moved to CP 15.0.** Stage 0 instead ends at the CI and OpenCV gates. |
+| 1.4 Upload `GL_R8`, draw in a panel | A white square is visible and moves | Render to a `uint8` buffer; dump PGM via `--dump-frames`; assert the rendered intensity centroid equals the commanded sub-pixel position to 1e-3 |
+| 1.8 ★ GATE "camera visibly pulls the square toward centre" | Watched live | Assert boresight-to-target error decreases monotonically over 60 frames and settles below 2 px; the comment-out check becomes a test with feedforward disabled |
+| 2.3 Display on its own thread | Slowing display to 5 FPS does not slow the sim | Already covered by the `TripleBuffer` concurrency test (producer flat out, consumer dawdling, no tearing, drops asserted) |
+| 2.4 ImPlot tracking-error trace | The error visibly settles after acquisition | The same series written to `centroid.csv`; assert settling time and steady-state RMS numerically |
+| 4.10 Step response on the plot | Delay, ramp and ceiling visible | Assert the step response's delay, slew rate and ceiling against `GimbalParams` directly |
+| 6.6 Mode FSM drawn live | Highlighted state matches the screen | Assert the FSM transition sequence against the expected trace for a scripted scenario |
+
+**New CP 15.0** (inserted before 15.1): GLFW + glad + Dear ImGui + ImPlot shell, one `GL_R8` texture
+upload per frame reading from the existing triple buffer. Accept when a window opens on Windows and
+Linux and renders the live camera view at ≥ 60 FPS with the simulation unthrottled.
+
+**Risk accepted:** the GUI is on the critical path for a graded deliverable and is now later in the
+schedule. Mitigation: §14.2's cut list already protects Stages 0–9 and CP 15.3, and the snapshot
+seam means Stage 15 is assembly rather than integration. If the schedule compresses, CP 15.0–15.2
+are built against the seam in parallel with Stage 13/14 work.
+
+---
+
 ## STAGE 0 — Foundations · 3 days
 
 | CP | Build | Accept when |
@@ -1672,7 +1719,7 @@ acceptance test passes. Four ★ GATEs stop all other work if they fail.
 | 0.2 | `units.hpp`, `frames.hpp` — `Urad`, `Angle2`, `Pixel2`, `CameraGeometry`, `project`/`unproject` | Test: `project(unproject(p)) == p` to 1e-9 for 1000 points across the FOV; `ifov_urad()` returns 109.08 at defaults |
 | 0.3 | `time.hpp` (`Clock`), `rng.hpp` (`Pcg32`, `Stream`, `RngSet`) | `Clock` rejects `truth_hz % camera_hz != 0`; two identically-seeded `RngSet`s produce identical sequences on every stream |
 | 0.4 | `arena.hpp`, `ring.hpp` | Arena survives 10k alloc/release cycles without growing; `Ring` passes wraparound tests |
-| 0.5 | GLFW + glad + ImGui + ImPlot shell | A window opens on Windows and Linux showing a live sine wave in ImPlot |
+| ~~0.5~~ | ~~GLFW + glad + ImGui + ImPlot shell~~ | **Deferred to CP 15.0 — see §14.0.** |
 | 0.6 | GitHub Actions: Windows (MSVC) + Linux (GCC), running `ctest` | Both jobs green; the Windows artifact downloads and runs |
 | **0.7** | **★ GATE — 20 throwaway lines: `cv::VideoCapture` opens a committed test MP4, prints resolution/fps/frames. vcpkg `opencv4[videoio,ffmpeg]`. Run in CI.** | **Windows CI prints `1920x1080 @ 30.00 fps, 900 frames`. If this fails, STOP and solve it — 30% of marks depend on it.** |
 
@@ -1685,7 +1732,7 @@ Goal: a camera that chases a square because your own code told it to. Ugly is fi
 | 1.1 | `engine/frame_source.hpp` — `SourceFrame`, `FrameTruth`, `IFrameSource`. `SyntheticSource` as an empty stub | Header compiles; the stub exists. *(Defining this now costs an hour; at Stage 8 it costs a rewrite.)* |
 | 1.2 | `EmitterSoA` with one hardcoded entry | Position can be queried |
 | 1.3 | `overlap_1d`, square splat into a float buffer at continuous sub-pixel position | Test: place a 10×10 square at x=100.37; intensity-weighted centre of rendered pixels = 100.37 ± 0.001 |
-| 1.4 | Quantise to `uint8`, upload `GL_R8` texture, draw in an ImGui panel | A white square is visible and moves when the position is changed by hand |
+| 1.4 | Quantise to `uint8`; dump PGM frames via `--dump-frames` | *(amended, §14.0)* The rendered intensity centroid equals the commanded sub-pixel position to 1e-3; a PGM dump is eyeball-checkable but not the acceptance test |
 | 1.5 | Brightest-pixel detector | Returns the square's approximate location, drawn as an overlay |
 | 1.6 | `GimbalAxis` with position, rate, **hard rate clamp only** | Commanding a huge rate produces movement at exactly `max_rate_urad_s` |
 | 1.7 | P controller: `cmd = kp * (detection − boresight)` | Produces a nonzero command when off-centre |
@@ -1698,7 +1745,7 @@ Goal: a camera that chases a square because your own code told it to. Ugly is fi
 | 2.1 | 300 Hz truth loop with 10 sub-ticks per 30 Hz frame | World advances 10× per frame; `seconds()` derived from integer tick, never accumulated |
 | 2.2 | `FrameTruth` emitted alongside every frame | Truth is produced, consumed by nothing yet, and lives where perception cannot include it |
 | 2.3 | `SimSnapshot`, `TripleBuffer`, display on its own thread | Artificially slowing the display to 5 FPS does not slow the simulation |
-| 2.4 | ImPlot tracking-error trace | The error visibly settles after acquisition |
+| 2.4 | Tracking-error series into `centroid.csv` | *(amended, §14.0)* Settling time and steady-state RMS asserted numerically |
 | 2.5 | `snapshot_hash()` — FNV-1a over frame, boresight, detection, mode | Same scenario + seed twice in one session gives identical hash sequences |
 | **2.6** | **★ GATE — `--verify-reproducibility`; CI job running 5 scenarios × 3 seeds at `-O0` and `-O2`, comparing hashes** | **CI green. Then deliberately inject a `std::chrono` call into the sim path and confirm the job goes red. Fix any failure before proceeding.** |
 
@@ -1755,7 +1802,7 @@ Scalar first, with a test, before the next kernel.
 | 6.3 | Mahalanobis gate (9.21) + nearest neighbour | With a decoy 60 px away, the tracker stays on the real beacon |
 | 6.4 | Lifecycle FSM with M-of-N and coasting | Blanking detection for 8 frames does NOT delete the track; the camera keeps moving sensibly on prediction |
 | 6.5 | Adaptive `R` from detection SNR | In fog the filter visibly relies more on prediction; error lower than with fixed `R` |
-| 6.6 | Mode FSM, drawn live in the GUI | The highlighted state matches what is happening on screen |
+| 6.6 | Mode FSM + transition log | *(amended, §14.0)* The transition sequence matches the expected trace for a scripted scenario |
 | 6.7 | Spiral search + predicted-region reacquisition | Hiding the beacon 2 s then revealing it → reacquisition in under 15 frames |
 
 ## STAGE 7 — Metrics, logs, batch · 1 week ★ THE PIVOT
@@ -1855,6 +1902,7 @@ After this stage, every change is measurable. Before it, you are guessing.
 
 | CP | Build | Accept when |
 |---|---|---|
+| 15.0 | *(new, §14.0)* GLFW + glad + ImGui + ImPlot shell, one `GL_R8` upload per frame from the existing triple buffer | A window opens on Windows and Linux and renders the live camera view at ≥ 60 FPS with the simulation unthrottled |
 | 15.1 | Every §12 panel complete | Someone who has never seen the project can watch 30 seconds and describe what it is doing |
 | 15.2 | Live algorithm switching dropdowns | You can turn feedforward off live and watch the error trace blow up |
 | 15.3 | ★ Minute-by-minute demo script + known-good fallback scenario preloaded | Run end-to-end **three times**, including once where someone hands you an unseen scenario file and an unseen MP4. Nothing broke. |

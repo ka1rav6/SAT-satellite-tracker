@@ -27,9 +27,15 @@ These rules apply without fail, in every change, no exceptions:
 
 ## 3. Design doc & roadmap
 
-- Always follow the **design doc** and the **roadmap* (`docs/design.md`, `docs/roadmap.mp`).
+- Always follow the **design doc** and the **roadmap**:
+  - `docs/SAT-DESIGN.md` — master design spec. The roadmap is §14 of that same
+    file; there is no separate roadmap document.
+  - `docs/SAT-ML.md` — the ML / OpenCV companion spec.
 - **Ask before making a new design choice** that is not already covered by the
   design doc. Do not silently deviate.
+- If a design decision turns out to be wrong when you reach it, **say so and
+  explain why** in an amendment block in the design doc (see §14.0 for the
+  format), rather than deviating quietly or editing history.
 
 ---
 
