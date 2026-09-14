@@ -14,6 +14,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace sat {
 
@@ -64,6 +66,29 @@ struct HeadlessOptions {
 
     /// Print CP 14.4's per-stage p50/p95/p99 against §15's budget.
     bool stage_timings = false;
+
+    // -----------------------------------------------------------------------
+    // CP 10.1: `--set dotted.key=value`, applied to the scenario TOML before
+    // it is parsed.
+    //
+    // The sweep at CP 7.5 already had this machinery (scenario/overlay.hpp) and
+    // a single run did not, which meant an ablation of ONE key — exactly what
+    // CP 10.1 asks for with velocity feedforward — had to be done by writing a
+    // near-duplicate scenario file. Duplicated scenario files drift: the
+    // interesting risk is not that the copy is wrong today but that the base
+    // changes and the copy silently keeps measuring the old configuration.
+    //
+    // Going through apply_overrides rather than setting struct fields is the
+    // same argument overlay.hpp makes at length: there is one schema, and an
+    // override must be validated by it. `--set control.kp=400` has to produce
+    // §7.5's error, not a run.
+    // -----------------------------------------------------------------------
+    std::vector<std::pair<std::string, std::string>> overrides;
+
+    /// Write the CP 10.x control trace (metrics/trace_log.hpp) as trace.csv.
+    /// Off by default: it contains truth, so it is a diagnostic and not a
+    /// deliverable, and nothing that is graded should have to be filtered.
+    bool write_trace = false;
 };
 
 /// Run it. Returns a process exit code: 0 on success, non-zero on a scenario

@@ -110,6 +110,7 @@ public:
     //   platform_rate_est  estimated platform drift to cancel, urad/s
     //   dt                 seconds
     //   saturated          whether the plant is currently at its rate limit
+    //   integral_enabled   whether an integral term is meaningful right now
     //
     // Returns a commanded rate in urad/s. The caller clamps it to the axis
     // limit; the plant clamps it again regardless, because a controller must
@@ -117,7 +118,8 @@ public:
     // -----------------------------------------------------------------------
     [[nodiscard]] double compute(double error, double measurement,
                                  double target_rate_est, double platform_rate_est,
-                                 double dt, bool saturated) noexcept {
+                                 double dt, bool saturated,
+                                 bool integral_enabled = true) noexcept {
         // --- derivative, on the measurement ---------------------------------
         double d = 0.0;
         if (have_prev_ && dt > 0.0) {
@@ -132,7 +134,27 @@ public:
         // Freezing the integrator while saturated is the anti-windup. Without
         // it, a long saturated slew accumulates a demand that takes just as long
         // to unwind, and the loop overshoots every time it catches up.
-        if (!saturated) {
+        //
+        // integral_enabled is the SECOND freeze condition, and CP 10.1 is where
+        // it had to be added. Conditional integration on saturation assumes the
+        // only way to accumulate a demand you cannot honour is to hit the rate
+        // limit. That is not true here: while the mode FSM is in Search the
+        // setpoint is a SCANNING PATTERN, which steps from tile to tile and
+        // reverses. The error against it is large, persistent and sign-flipping
+        // by design, the plant never saturates, and the integrator happily
+        // winds up against a setpoint that has no steady state to converge to.
+        //
+        // The measured symptom was not a pointing error — it was a FALSE TRACK.
+        // With ki at 0.5 and the target blanked, a 102-frame fruitless search
+        // confirmed a track on 2 frames; with ki at 0 it confirmed none. The
+        // wound-up integrator was swinging the mount hard enough between tiles
+        // that the motion smear rendered a streak the detector was right to
+        // call a candidate. An integral term that manufactures targets is a
+        // clear sign it is being asked to do something it is not for.
+        //
+        // Integral action exists to remove a STEADY-STATE bias against a
+        // steady setpoint. Search has neither, so it gets no integrator.
+        if (!saturated && integral_enabled) {
             integ_ += error * dt;
             integ_ = clamp_abs(integ_, g_.i_limit);
         }
@@ -171,12 +193,15 @@ public:
     /// both world-frame angles in microradians.
     [[nodiscard]] Rate2 compute(Angle2 aim, Angle2 measured,
                                 Rate2 target_rate_est, Rate2 platform_rate_est,
-                                double dt, bool az_saturated, bool el_saturated) noexcept {
+                                double dt, bool az_saturated, bool el_saturated,
+                                bool integral_enabled = true) noexcept {
         return {
             az_.compute(aim.x - measured.x, measured.x,
-                        target_rate_est.x, platform_rate_est.x, dt, az_saturated),
+                        target_rate_est.x, platform_rate_est.x, dt, az_saturated,
+                        integral_enabled),
             el_.compute(aim.y - measured.y, measured.y,
-                        target_rate_est.y, platform_rate_est.y, dt, el_saturated)
+                        target_rate_est.y, platform_rate_est.y, dt, el_saturated,
+                        integral_enabled)
         };
     }
 

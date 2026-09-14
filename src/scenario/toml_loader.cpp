@@ -427,6 +427,13 @@ Result<Scenario> parse_scenario(std::string_view toml_text, std::string_view nam
     get_string(root, "logging.metrics_json", sc.metrics_json, v);
     get_string(root, "logging.report_html",  sc.report_html,  v);
 
+    // --- [control] — design §10.4 ------------------------------------------
+    get_double(root, "control.kp",      sc.control.kp,      v);
+    get_double(root, "control.ki",      sc.control.ki,      v);
+    get_double(root, "control.kd",      sc.control.kd,      v);
+    get_double(root, "control.k_ff",    sc.control.k_ff,    v);
+    get_double(root, "control.i_limit", sc.control.i_limit, v);
+
     // --- [requirements] — rows 16-20 ---------------------------------------
     get_double(root, "requirements.acquisition_s",     sc.acquisition_s,     v);
     get_double(root, "requirements.tracking_error_px", sc.tracking_error_px, v);

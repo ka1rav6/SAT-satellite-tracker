@@ -1,0 +1,139 @@
+# scenarios/control/fast_linear.toml — CP 10.1's velocity feedforward ablation.
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS FILE IS FOR, AND WHY IT IS NOT scenarios/compliance.toml
+# ---------------------------------------------------------------------------
+# CP 10.1's acceptance criterion is: "On a 200 px/s target, tracking error
+# drops from ~11 px to under 4 px". That is a measurement of ONE thing — the
+# steady-state lag of a feedback loop following a constant velocity — and it is
+# only visible if nothing larger is sitting on top of it.
+#
+# Three things in the specification's own defaults are larger:
+#
+#   row 23's jitter          +/- 20 px per frame on the TRUE boresight, which
+#                            the encoder never sees. Uniform[-A,A] has variance
+#                            A^2/3, so over two axes it puts an irreducible
+#                            sqrt(2*400/3) = 16.33 px floor under every
+#                            tracking-error figure. An 11 px lag hiding under a
+#                            16 px floor moves the RMS from 19.7 to 16.8 —
+#                            real, but not a measurement of the lag.
+#
+#   120 clutter sources      the association problem, not the control problem.
+#                            Measured separately, and honestly, by the
+#                            "clutter costs tracking accuracy" case in
+#                            tests/metrics/test_spec_run.cpp: 17.7 px clean
+#                            against 174 px cluttered. Stage 12 is where that
+#                            number is supposed to improve; Stage 10 cannot
+#                            touch it.
+#
+#   row 12's 24.6 px/s       a lag of v/kp = 3 px at kp = 8. Feedforward
+#                            removing 3 px of a 17 px total is not a result
+#                            anybody can read off a plot.
+#
+# So this scenario removes all three and runs the target at the speed the
+# checkpoint names. It is an INSTRUMENT, not a compliance claim, and no row of
+# the compliance matrix is measured on it.
+#
+# ---------------------------------------------------------------------------
+# THE GEOMETRY
+# ---------------------------------------------------------------------------
+# 2000 px of screen spans 12.5 deg, so 160 px/deg, and the 4 x 3 deg camera
+# sees 640 x 480 screen px — one image pixel per screen pixel. 200 px/s is
+# therefore 1.25 deg/s, a quarter of the mount's 5 deg/s authority: the loop is
+# lagging, not saturating, which is the regime the checkpoint is about.
+#
+# The target runs the diagonal at (141.42, 141.42) px/s = 200 px/s exactly, and
+# the run is sized so it NEVER reaches an edge: 300 + 141.42 * 11 = 1856 px on
+# a 2000 px canvas. A bounce would inject an acceleration transient into the
+# middle of a constant-velocity measurement.
+#
+# The camera starts on the target rather than at spec row 6's screen centre,
+# because a 700 px acquisition slew at the start of an 11 s run would dominate
+# the RMS with something that is not lag either.
+
+[meta]
+name        = "fast_linear"
+description = "CP 10.1: a 200 px/s target with nothing else in the frame"
+
+[input]
+mode = "synthetic"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 11
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+exposure_ms    = 5.0
+blur_substeps  = 8
+initial_pos_px = [300.0, 300.0]     # on the target, not at screen centre
+
+[target]
+kind       = "target"
+intensity  = 120.0
+size_px    = 10
+initial_px = [300.0, 300.0]
+shape.type = "square"
+
+[[target.motion]]
+kind          = "linear"
+velocity_px_s = [141.421356, 141.421356]   # |v| = 200.000 px/s
+
+[gimbal]                            # unchanged from the specification
+max_pan_dps      = 5.0
+max_tilt_dps     = 5.0
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+# Noise is kept — a noiseless image would make the centroid exact and the
+# measurement would flatter the loop. What is removed is only what is LARGER
+# than the effect under test.
+[noise]
+poisson        = true
+gaussian_sigma = 20.0
+salt_pepper    = 0.10
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0           # see the note above: a 16.33 px floor
+
+[clutter]
+static_sources = 0
+decoy_beacons  = 0
+
+[control]                           # design §10.4 — CP 10.1 varies k_ff
+kp   = 8.0
+ki   = 0.5
+kd   = 0.15
+k_ff = 1.0
+
+[ai]
+enabled          = true
+fallback_on_fail = true
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

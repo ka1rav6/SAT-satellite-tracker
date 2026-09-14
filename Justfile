@@ -183,6 +183,36 @@ ablation: build
         --success | grep -E "MESSAGE|TEST CASE|ERROR" || true
 
 # ---------------------------------------------------------------------------
+# Stage 10 — control refinement (design §10.3, §10.4)
+# ---------------------------------------------------------------------------
+
+# CP 10.1 ablation — velocity feedforward on and off, with the comparison plot.
+#
+# Writes logs/control/cp101.svg. The scenario is an INSTRUMENT, not a
+# compliance claim: see the long note at the top of the file for why row 23's
+# jitter and §9.1's clutter are removed, and why removing them is not making
+# the numbers look better than they are.
+cp101: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="logs/control"
+    mkdir -p "$out"
+    for k in 0 1; do
+        "{{build_dir}}/sat-tracker" --headless             --scenario scenarios/control/fast_linear.toml             --set "control.k_ff=$k" --trace --no-csv --no-report --quiet             --out "$out/ff$k"
+        printf "  k_ff = %s   " "$k"
+        python3 - "$out/ff$k/run.json" <<'PY'
+    import json, sys
+    m = json.load(open(sys.argv[1]))["metrics"]["tracking"]
+    print("tracking RMS %7.2f px   p95 %7.2f px" % (m["rms_px"], m["p95_px"]))
+    PY
+    done
+    python3 tools/plot_control.py -o "$out/cp101.svg" --column err_px         --title "CP 10.1 — velocity feedforward on a 200 px/s target"         --subtitle "scenarios/control/fast_linear.toml — kp=8, ki=0.5, kd=0.15"         --ylabel "pointing error, px"         "k_ff = 0 (feedback only)=$out/ff0/trace.csv"         "k_ff = 1 (feedforward)=$out/ff1/trace.csv"
+
+# The Stage 10 control checkpoints, verbose — the numbers ARE the checkpoints.
+test-control: build
+    "{{build_dir}}/test_loop" -tc="*CP 10.*" --success --no-skipped-summary 2>&1         | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true
+
+# ---------------------------------------------------------------------------
 # Video (design §8 — Benchmark Performance-2, 30% of marks)
 # ---------------------------------------------------------------------------
 

@@ -122,7 +122,8 @@ sat_add_test(loop
     SOURCES loop/test_gimbal.cpp
             loop/test_controller.cpp
             loop/test_closed_loop.cpp
-    DEPS    sat_core sat_plant sat_control sat_engine sat_perception
+            loop/test_feedforward.cpp
+    DEPS    sat_core sat_plant sat_control sat_engine sat_perception sat_scenario
 )
 
 # --- CP 3.3-3.5: the motion algebra and its analytic derivatives ------------

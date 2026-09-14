@@ -98,6 +98,32 @@ const std::vector<FieldSpec>& schema() {
         {"clutter.decoy_beacons",  ValueKind::Int, false, 0, 16, "",
          "design §9.1 asks for at least one near-identical decoy"},
 
+        // --- [control] — design §10.4 --------------------------------------
+        //
+        // The bounds are not cosmetic. kp is a bandwidth in rad/s, and a
+        // discrete loop running at control_hz goes unstable somewhere below
+        // its Nyquist rate: at 30 Hz that is ~94 rad/s, and the mount's 20 ms
+        // lag plus 10 ms transport delay eats most of the margin long before
+        // that. 40 is a generous ceiling that still refuses a typo'd 400.
+        {"control.kp",      ValueKind::Float, false, 0.0, 40.0, "",
+         "kp is the loop bandwidth in rad/s; above ~40 the 30 Hz discrete loop "
+         "and the mount's 30 ms of lag cannot stay stable"},
+        {"control.ki",      ValueKind::Float, false, 0.0, 40.0, "",
+         "integral gain, 1/s^2"},
+        {"control.kd",      ValueKind::Float, false, 0.0, 10.0, "",
+         "derivative gain, dimensionless; taken on the measurement, so large "
+         "values amplify encoder quantisation rather than the setpoint"},
+        // k_ff is allowed above 1 deliberately. Full feedforward is 1.0, but
+        // the transport delay means a slight OVER-feed can cancel the residual
+        // lag, and CP 10.1 is supposed to be able to find that empirically
+        // rather than have the schema assume it away.
+        {"control.k_ff",    ValueKind::Float, false, 0.0, 2.0,  "",
+         "velocity feedforward gain; 0 disables it (CP 10.1's ablation), 1 is "
+         "full cancellation of the tracking lag"},
+        {"control.i_limit", ValueKind::Float, false, 0.0, kInf, "",
+         "integrator clamp in urad*s; caps how much history the integral term "
+         "can hold, independently of the anti-windup"},
+
         // --- [requirements] — rows 16-20 -----------------------------------
         {"requirements.acquisition_s",     ValueKind::Float, false, 0.0, kInf, "row 16",
          "the specification requires acquisition within 2 s"},

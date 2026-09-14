@@ -105,6 +105,35 @@ struct TargetSpec {
 };
 
 // ---------------------------------------------------------------------------
+// ControlSpec — the pointing loop's tuning, design §10.4.
+//
+// Until Stage 10 the gains were a compile-time default inside PipelineConfig
+// and nothing in a scenario file could reach them. That was fine while the
+// loop was a proportional straw man, and it stopped being fine at CP 10.1,
+// whose acceptance criterion is an ON/OFF COMPARISON of velocity feedforward.
+// A comparison you can only make by editing a header and rebuilding is not a
+// measurement anyone can reproduce, and §13.3's ablation table needs each row
+// to be a runnable configuration rather than a git revision.
+//
+// So the gains move into the scenario, where the sweep machinery (CP 7.5), the
+// overlay mechanism and the validation schema already know how to vary and
+// check a key. `--set control.k_ff=0` is then the whole ablation.
+//
+// UNITS. The error is in microradians and the output is in microradians per
+// second, so kp has units of 1/s and IS the loop bandwidth in rad/s: kp = 8
+// means ~1.3 Hz. This is worth stating because it makes the gain choosable
+// from physics rather than by twiddling — §10.4's lag estimate,
+// speed / bandwidth, is only meaningful if kp is a bandwidth.
+// ---------------------------------------------------------------------------
+struct ControlSpec {
+    double kp      = 8.0;     ///< 1/s; the closed-loop bandwidth in rad/s
+    double ki      = 0.5;     ///< 1/s^2
+    double kd      = 0.15;    ///< dimensionless
+    double k_ff    = 1.0;     ///< velocity feedforward: 1 = full, 0 = off (CP 10.1)
+    double i_limit = 2.0e5;   ///< integrator clamp, urad*s
+};
+
+// ---------------------------------------------------------------------------
 // Timeline events — design §7.4. `action` is a validated enum, because new
 // actions are BEHAVIOUR and behaviour belongs in C++, not in a config file.
 // ---------------------------------------------------------------------------
@@ -168,6 +197,9 @@ struct Scenario {
     double gaussian_sigma    = 20.0;      ///< row 22: max 20 grey levels
     double salt_pepper       = 0.10;      ///< row 21: ~10%
     int    hot_pixels        = 40;
+
+    // --- [control] — design §10.4 ------------------------------------------
+    ControlSpec control{};
 
     // --- [atmosphere] — row 24 --------------------------------------------
     Atmosphere atmosphere = Atmosphere::Clear;

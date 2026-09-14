@@ -207,6 +207,7 @@ sat_add_module(sat_metrics
     SOURCES
         src/metrics/collector.cpp
         src/metrics/centroid_log.cpp
+        src/metrics/trace_log.cpp
         src/metrics/run_report.cpp
         src/metrics/compliance.cpp
         src/metrics/report.cpp

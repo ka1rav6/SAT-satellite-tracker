@@ -346,6 +346,12 @@ public:
     /// this.
     [[nodiscard]] TripleBuffer<SimSnapshot>& snapshots() noexcept { return snapshots_; }
     [[nodiscard]] const Gimbal&      gimbal()   const noexcept { return gimbal_; }
+
+    /// Read-only, for the CP 10.x control trace. The integrator's value is not
+    /// derivable from anything else published, and watching it is how windup
+    /// is diagnosed — CP 10.2's "settles cleanly with no ringing" is a
+    /// statement about this state, not about the output.
+    [[nodiscard]] const Controller&  controller() const noexcept { return control_; }
     [[nodiscard]] SyntheticSource&   source()         noexcept { return source_; }
     [[nodiscard]] const StageTimers& timers()   const noexcept { return timers_; }
 

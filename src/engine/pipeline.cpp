@@ -158,6 +158,18 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
 
     cfg.initial_boresight = sc.initial_boresight();   // spec row 6
 
+    // Design §10.4's gains, from the scenario rather than from a header
+    // default. Before CP 10.1 this line did not exist and every run used
+    // ControlGains::proportional(6.0) — a pure P loop with ki, kd and k_ff all
+    // at zero, which meant the feedforward path built at Stage 6 was plumbed
+    // but never energised. Reading them from the scenario is what makes the
+    // checkpoint's on/off comparison a `--set control.k_ff=0` away.
+    cfg.gains.kp      = sc.control.kp;
+    cfg.gains.ki      = sc.control.ki;
+    cfg.gains.kd      = sc.control.kd;
+    cfg.gains.k_ff    = sc.control.k_ff;
+    cfg.gains.i_limit = sc.control.i_limit;
+
     // §7.2's closed forms turned into the filter's q. The largest acceleration
     // over every target, because the tracker does not know which one it will
     // end up on and must be able to follow any of them.
@@ -496,11 +508,36 @@ bool Pipeline::step() {
     // -----------------------------------------------------------------------
     // B25: the aim point. THE ONE PLACE THE MODE ACTUALLY DOES SOMETHING.
     //
-    // In Track/Reacquire the aim is the filter's prediction one frame ahead,
-    // not its current estimate. Aiming at where the target IS guarantees a lag
-    // of exactly one frame's motion — 8 px at 240 px/s — before the controller
-    // has even started. Aiming at where it WILL BE removes that for free, and
-    // it costs one multiply, because the velocity is already estimated.
+    // In Track/Reacquire the aim is the filter's estimate AT THIS FRAME'S
+    // TIMESTAMP. It is not predicted a frame ahead, and CP 10.1 is where that
+    // changed — the previous version aimed at predict_position(frame_dt), and
+    // the reasoning behind it was right for a loop with no feedforward and
+    // wrong for one that has it. The correction is written out here because
+    // "we removed a lead term" reads like a regression otherwise.
+    //
+    //   A one-frame-ahead aim is A FEEDFORWARD, implemented in the setpoint.
+    //   Pushing the setpoint ahead by v*dt makes the proportional term produce
+    //   an extra kp*v*dt of rate, which is a velocity-proportional lead by
+    //   another name. When k_ff was zero that was the only lead in the loop and
+    //   it was worth having. With k_ff = 1 the velocity is fed forward
+    //   explicitly, and keeping both feeds it TWICE.
+    //
+    // The algebra, at constant target velocity v, ignoring the slow integrator:
+    //
+    //   steady state needs   kp*e + k_ff*v = v,  so  e = v*(1 - k_ff)/kp
+    //   with the lead aim    error metric = v*dt - e
+    //   at k_ff = 1          e = 0, and the mount LEADS the target by v*dt
+    //
+    // At 200 px/s and 30 Hz that is 6.7 px of lead — pointing ahead of the
+    // beacon instead of behind it, which is not an improvement, just a sign
+    // change. It was visible as a k_ff sweep whose minimum sat at 0.75 rather
+    // than 1.0, and 1 - kp*dt = 1 - 8*0.0333 = 0.733 predicts exactly that.
+    // Tuning k_ff down to 0.75 would have "fixed" the number while leaving a
+    // gain that silently depends on kp and the frame rate.
+    //
+    // Aiming at the current estimate makes k_ff = 1 the correct value for the
+    // reason it is supposed to be correct, and makes the k_ff = 0 ablation
+    // measure the pure feedback lag v/kp rather than v/kp minus a hidden lead.
     //
     // In Search the pattern owns the aim. Entering Search restarts it from the
     // last known position rather than from the screen centre: the prediction is
@@ -509,7 +546,7 @@ bool Pipeline::step() {
     // -----------------------------------------------------------------------
     Angle2 aim;
     if (fsm_.tracking_active() && trk.drivable()) {
-        aim = trk.predict_position(frame_dt);
+        aim = trk.position();
         if (fsm_.changed_this_frame()) search_.recentre(aim);
     } else {
         if (fsm_.changed_this_frame() && rec.mode == TrackMode::Search) {
@@ -552,9 +589,23 @@ bool Pipeline::step() {
         // covariance, and refusing to use it is what made a one-frame dropout
         // stop the mount dead. Search is now the only state that holds, and it
         // holds by aiming at a search pattern rather than by zeroing the rate.
+        // Integral action is switched off unless the loop is actually holding
+        // something. See controller.hpp for the measurement that forced this:
+        // integrating against a scanning search pattern wound the mount up hard
+        // enough to smear a false candidate into the image.
+        const bool integral_ok = fsm_.tracking_active() && trk.drivable();
+
+        // And on the way OUT of tracking the accumulated integral describes a
+        // target that no longer exists, so it is discarded rather than carried
+        // into the search. clear_state() was written at Stage 1 with the
+        // comment "used when the FSM re-enters Search" and, until CP 10.1,
+        // nothing called it — the documentation was right and the wiring was
+        // missing. Nothing noticed because ki was zero in every run.
+        if (fsm_.changed_this_frame() && !integral_ok) control_.clear_state();
+
         cmd_rate_ = control_.compute(aim, measured, ff, Rate2{},
                                      source_.clock().control_dt(),
-                                     az_sat, el_sat);
+                                     az_sat, el_sat, integral_ok);
     }
 
     // -----------------------------------------------------------------------

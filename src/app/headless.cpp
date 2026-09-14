@@ -8,9 +8,11 @@
 #include "engine/video_probe.hpp"
 #include "engine/video_source.hpp"
 #include "metrics/centroid_log.hpp"
+#include "metrics/trace_log.hpp"
 #include "metrics/collector.hpp"
 #include "metrics/report.hpp"
 #include "metrics/run_report.hpp"
+#include "scenario/overlay.hpp"
 #include "scenario/schema.hpp"
 #include "sat/version.hpp"
 
@@ -20,13 +22,44 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 namespace sat {
 
+// ---------------------------------------------------------------------------
+// load_with_overrides — the scenario, plus any --set keys.
+//
+// With no overrides this is exactly load_scenario, and deliberately so: the
+// common path must not start depending on the override machinery working. Only
+// when something is actually overridden do we read the text, rewrite the
+// document and re-parse it through the same loader.
+// ---------------------------------------------------------------------------
+namespace {
+
+Result<Scenario> load_with_overrides(const HeadlessOptions& opt) {
+    if (opt.overrides.empty()) return load_scenario(opt.scenario_path);
+
+    std::ifstream in(opt.scenario_path, std::ios::binary);
+    if (!in) return Err("cannot open scenario '" + opt.scenario_path + "'");
+    std::ostringstream buf;
+    buf << in.rdbuf();
+
+    std::vector<Override> ov;
+    ov.reserve(opt.overrides.size());
+    for (const auto& [k, v] : opt.overrides) ov.push_back(Override{k, v});
+
+    auto text = apply_overrides(buf.str(), ov);
+    if (!text) return Err(text.error());
+    return parse_scenario(*text, opt.scenario_path);
+}
+
+}  // namespace
+
 int run_headless(const HeadlessOptions& opt) {
     // --- load ---------------------------------------------------------------
-    auto loaded = load_scenario(opt.scenario_path);
+    auto loaded = load_with_overrides(opt);
     if (!loaded) {
         std::fprintf(stderr, "%s\n", loaded.error().c_str());
         return 1;
@@ -137,6 +170,25 @@ int run_headless(const HeadlessOptions& opt) {
         }
     }
 
+    // CP 10.x's control trace. Opened alongside centroid.csv and for the same
+    // reason — a file that only appears at the end of a run is a file you do
+    // not get when the run is what went wrong.
+    TraceLog trace_log;
+    if (opt.write_trace) {
+        TraceLogHeader th;
+        th.source    = opt.video_path.empty() ? opt.scenario_path : opt.video_path;
+        th.build     = SAT_GIT_HASH;
+        th.utc       = utc_timestamp_now();
+        th.ifov_urad = cam.ifov_urad();
+        th.kp   = sc.control.kp;   th.ki   = sc.control.ki;
+        th.kd   = sc.control.kd;   th.k_ff = sc.control.k_ff;
+        const std::string tp = opt.out_dir + "/trace.csv";
+        if (!trace_log.open(tp, th)) {
+            std::fprintf(stderr, "sat-tracker: cannot write '%s'\n", tp.c_str());
+            return 1;
+        }
+    }
+
     MetricCollector metrics;
     metrics.begin(sc.name, sc.seed, cam.ifov_urad(), expected,
                   /*pointing_supported=*/!pipe.is_video()
@@ -168,6 +220,36 @@ int run_headless(const HeadlessOptions& opt) {
         const FrameRecord& r = pipe.last();
         metrics.add(r);
         if (want_csv) log.write(r, screen);
+        if (trace_log.is_open()) {
+            TraceSample ts;
+            ts.frame  = r.frame;
+            ts.time_s = r.time_s;
+            ts.mode   = track_mode_name(r.mode);
+            if (r.truth_valid) {
+                // SIGNED, in screen pixels. The magnitude alone cannot tell a
+                // lag from a lead, and CP 10.1's whole finding — that a
+                // one-frame-ahead aim plus full feedforward overshoots — is
+                // invisible in an absolute value.
+                const Pixel2 bore = screen.to_pixel(r.boresight_true);
+                ts.truth_valid       = true;
+                ts.err_x_px          = bore.x - r.truth_screen.x;
+                ts.err_y_px          = bore.y - r.truth_screen.y;
+                ts.tracking_error_px = r.tracking_error_px;
+            }
+            ts.cmd_rate_x = r.cmd_rate.x;  ts.cmd_rate_y = r.cmd_rate.y;
+            const Rate2 gr = pipe.gimbal().rate();
+            ts.gimbal_rate_x = gr.x;       ts.gimbal_rate_y = gr.y;
+            ts.integ_x = pipe.controller().az().integrator();
+            ts.integ_y = pipe.controller().el().integrator();
+            ts.est_rate_x = r.estimate_rate.x;
+            ts.est_rate_y = r.estimate_rate.y;
+            const GimbalParams& gp = pipe.gimbal().az().params();
+            ts.saturated = gp.max_rate_urad_s > 0.0
+                        && (std::fabs(gr.x) >= gp.max_rate_urad_s * 0.999
+                         || std::fabs(gr.y) >= pipe.gimbal().el().params()
+                                                   .max_rate_urad_s * 0.999);
+            trace_log.write(ts);
+        }
         if (opt.write_report) {
             // Only frames where the metric is DEFINED are plotted. Plotting a
             // zero on a frame with no detection would draw a spike to the axis
@@ -269,6 +351,21 @@ int headless_command(int argc, char* argv[], int& i) {
             opt.truth_path = argv[++k];
         } else if (std::strcmp(a, "--video-mode") == 0 && k + 1 < argc) {
             opt.video_mode = argv[++k];
+        } else if (std::strcmp(a, "--set") == 0 && k + 1 < argc) {
+            // `--set dotted.key=value`. The value is TOML source text, so
+            // strings need quoting exactly as they would in the file — which
+            // is the overlay's contract and not a special case here.
+            const std::string kv = argv[++k];
+            const size_t eq = kv.find('=');
+            if (eq == std::string::npos || eq == 0) {
+                std::fprintf(stderr,
+                             "sat-tracker: --set wants 'dotted.key=value', got '%s'\n",
+                             kv.c_str());
+                return 2;
+            }
+            opt.overrides.emplace_back(kv.substr(0, eq), kv.substr(eq + 1));
+        } else if (std::strcmp(a, "--trace") == 0) {
+            opt.write_trace = true;
         } else if (std::strcmp(a, "--stages") == 0) {
             opt.stage_timings = true;
         } else if (std::strcmp(a, "--no-csv") == 0) {
