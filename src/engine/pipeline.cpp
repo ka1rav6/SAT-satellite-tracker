@@ -2,7 +2,10 @@
 
 #include "engine/pipeline.hpp"
 
+#include "engine/truth_csv.hpp"
 #include "scenario/schema.hpp"
+
+#include <cstdio>
 
 #include <algorithm>
 #include <cmath>
@@ -189,6 +192,100 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     build_stage6();
 }
 
+// ---------------------------------------------------------------------------
+// build_from_video — Stage 8. The source changes; nothing else does.
+// ---------------------------------------------------------------------------
+Status Pipeline::build_from_video(const Scenario& sc,
+                                  const std::filesystem::path& clip,
+                                  const VideoMode* mode_override,
+                                  const std::filesystem::path* truth_csv) {
+    // The synthetic world is still built, and deliberately so: it owns the
+    // clock, and the clock owns the sub-tick structure that the gimbal and the
+    // controller run on. What it does NOT do in video mode is render — step()
+    // takes its frames from the video source instead — so its emitters are
+    // irrelevant and its degradation chain is never called, which is INV-8
+    // enforced by the code path rather than by a flag.
+    build_from_scenario(sc);
+
+    auto v = VideoSource::open(clip, sc, mode_override);
+    if (!v) return Err(v.error());
+    video_ = std::move(*v);
+
+    if (!video_->inv8_warning().empty()) {
+        std::fprintf(stderr, "%s", video_->inv8_warning().c_str());
+    }
+
+    // §8.3 requirement 3. A rate that does not divide truth_hz cleanly would
+    // advance the world by a different amount between consecutive frames — a
+    // slow drift in every metric, invisible in any single frame. Reported, not
+    // worked around, because the fix is to raise truth_hz and that is the
+    // caller's decision.
+    if (video_->camera_divisor() <= 0) {
+        std::fprintf(stderr,
+            "sat-tracker: warning: the clip runs at %.4f fps, which does not divide\n"
+            "  the scenario's truth_hz of %d cleanly. The world will advance by a\n"
+            "  rounded number of sub-ticks per frame. Set sim.truth_hz to a multiple\n"
+            "  of the clip's rate to remove the drift.\n",
+            video_->fps(), sc.truth_hz);
+    }
+
+    if (truth_csv) {
+        auto t = load_truth_csv(*truth_csv, sc.screen_geometry());
+        if (!t) return Err(t.error());
+        video_->set_truth(std::move(*t));
+    }
+
+    // The geometry the metrics report in is the FILE's, not the scenario's
+    // nominal 2000x2000 — in screen mode because the video IS the canvas, and
+    // in direct mode because there is no canvas at all and screen == image.
+    const FrameGeometry g = video_->geometry();
+    cfg_.synthetic.screen = ScreenGeometry::make(g.screen_w, g.screen_h,
+                                                 cfg_.synthetic.camera);
+
+    // ------------------------------------------------------------------
+    // In DIRECT mode the frames are the file's size, which need not be the
+    // camera's. build_stage6 sized the perception workspace from
+    // cfg_.synthetic.camera — 640x480 — so a 641x481 clip would have written
+    // past the end of every buffer in the pipeline.
+    //
+    // CP 8.8 ships odd_641x481.mp4 for exactly this, and the generator's own
+    // comment predicted it: "a bicubic crop that assumes even dimensions will
+    // read past the last row". The prediction was right about the risk and
+    // wrong about where — the crop handles any size, and it was the workspace
+    // behind it that was fixed at the camera's.
+    //
+    // So in direct mode the camera geometry IS the file's, and everything
+    // downstream is rebuilt around it. The field of view is kept, because that
+    // is a property of the optics the clip was shot with and nothing in the
+    // file tells us otherwise.
+    // ------------------------------------------------------------------
+    if (!video_->supports_pointing()
+        && (g.width != cfg_.synthetic.camera.width
+         || g.height != cfg_.synthetic.camera.height)) {
+        std::fprintf(stderr,
+            "sat-tracker: the clip is %dx%d but the scenario's camera is %dx%d;\n"
+            "  in direct mode the frame IS the camera, so the camera geometry is\n"
+            "  taken from the file (field of view kept at %.2f x %.2f degrees).\n",
+            g.width, g.height, cfg_.synthetic.camera.width, cfg_.synthetic.camera.height,
+            cfg_.synthetic.camera.fov_x_deg, cfg_.synthetic.camera.fov_y_deg);
+        cfg_.synthetic.camera = CameraGeometry::make(g.width, g.height,
+                                                     cfg_.synthetic.camera.fov_x_deg,
+                                                     cfg_.synthetic.camera.fov_y_deg);
+        cfg_.synthetic.screen = ScreenGeometry::make(g.width, g.height,
+                                                     cfg_.synthetic.camera);
+        build_stage6();          // re-allocate the workspace at the real size
+    }
+    if (!video_->supports_pointing()) {
+        // video_direct: the frame does not follow the controller. INV-2's
+        // closed-loop requirement carves out this mode explicitly — the
+        // controller still runs and still reports where it WOULD aim, and the
+        // metrics still score the centroid, which is the whole of BP-2 under
+        // this reading of the requirement.
+        cfg_.control_enabled = false;
+    }
+    return Ok();
+}
+
 bool Pipeline::step() {
     SAT_ZONE(timers_, Stage::FrameTotal);
 
@@ -205,7 +302,11 @@ bool Pipeline::step() {
     for (int s = 0; s < subticks; ++s) {
         {
             SAT_ZONE(timers_, Stage::WorldAdvance);
-            source_.advance_world(truth_dt);
+            // Not in video mode: there is no world to advance, the clip is the
+            // world. Calling it anyway would burn emitters' RNG streams and
+            // make a video run's fingerprint depend on a simulation nobody
+            // asked for.
+            if (!video_) source_.advance_world(truth_dt);
         }
         {
             SAT_ZONE(timers_, Stage::GimbalStep);
@@ -228,17 +329,26 @@ bool Pipeline::step() {
     // B4: acquire. The source renders at the true boresight; we hand it the
     // commanded one and it adds the disturbance itself.
     // -----------------------------------------------------------------------
-    const Angle2 commanded = gimbal_.true_position();
+    // In video mode the COMMANDED angle is what the crop uses, and there is no
+    // true-vs-commanded distinction: INV-8 disables the disturbances, so the
+    // camera points exactly where it was told. That is precisely why video mode
+    // is the honest place to grade centroiding — the screen-frame number does
+    // not carry a pointing error the detector cannot influence (INV-6).
+    const Angle2 commanded = video_ ? gimbal_.position() : gimbal_.true_position();
     SourceFrame frame;
     {
         SAT_ZONE(timers_, Stage::FrameAcquire);
-        // The mount's real slew, for the exposure smear. Gimbal rate plus the
-        // platform's analytic rate — both smooth, both physical. Jitter is
-        // excluded on purpose; see SyntheticSource::render_frame.
-        const Rate2 gr = gimbal_.rate();
-        const Rate2 pr = source_.disturbance().platform_rate(frame_ / 30.0);
-        source_.set_blur_rate(Rate2{gr.x + pr.x, gr.y + pr.y});
-        if (!source_.next(commanded, frame)) return false;
+        if (video_) {
+            if (!video_->next(commanded, frame)) return false;   // EOF: clean
+        } else {
+            // The mount's real slew, for the exposure smear. Gimbal rate plus
+            // the platform's analytic rate — both smooth, both physical.
+            // Jitter is excluded on purpose; see SyntheticSource::render_frame.
+            const Rate2 gr = gimbal_.rate();
+            const Rate2 pr = source_.disturbance().platform_rate(frame_ / 30.0);
+            source_.set_blur_rate(Rate2{gr.x + pr.x, gr.y + pr.y});
+            if (!source_.next(commanded, frame)) return false;
+        }
     }
 
     FrameRecord rec{};
@@ -311,7 +421,13 @@ bool Pipeline::step() {
     // measurement that showed it has to be there at all.
     const double encoder = std::max(cfg_.pan.encoder_lsb_urad,
                                     cfg_.tilt.encoder_lsb_urad);
-    const double budget  = cfg_.pointing_sigma_px * cfg_.synthetic.camera.ifov_urad();
+    // INV-8: no disturbance is applied in video modes, so there is no pointing
+    // error to allow for and the budget collapses to the encoder alone. Leaving
+    // the spec-row-23 allowance in would widen the gate by ~35 px on exactly
+    // the benchmark where the measurement is cleanest, letting clutter in for
+    // no reason.
+    const double budget  = video_ ? 0.0
+        : cfg_.pointing_sigma_px * cfg_.synthetic.camera.ifov_urad();
     const double pointing_sigma = std::sqrt(encoder * encoder + budget * budget);
     meas_.clear();
     for (size_t i = 0; i < dets_.size(); ++i) {

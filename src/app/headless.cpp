@@ -5,6 +5,8 @@
 #include "app/timestamp.hpp"
 
 #include "engine/pipeline.hpp"
+#include "engine/video_probe.hpp"
+#include "engine/video_source.hpp"
 #include "metrics/centroid_log.hpp"
 #include "metrics/collector.hpp"
 #include "metrics/report.hpp"
@@ -13,6 +15,7 @@
 #include "sat/version.hpp"
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -47,11 +50,70 @@ int run_headless(const HeadlessOptions& opt) {
 
     // --- build --------------------------------------------------------------
     Pipeline pipe;
-    pipe.build_from_scenario(sc);
+    if (opt.video_path.empty()) {
+        pipe.build_from_scenario(sc);
+    } else {
+        VideoMode  mode{};
+        VideoMode* mode_ptr = nullptr;
+        if (opt.video_mode == "screen") { mode = VideoMode::Screen; mode_ptr = &mode; }
+        else if (opt.video_mode == "direct") { mode = VideoMode::Direct; mode_ptr = &mode; }
+        else if (!opt.video_mode.empty()) {
+            std::fprintf(stderr, "sat-tracker: --video-mode must be 'screen' or "
+                                 "'direct' (got '%s')\n", opt.video_mode.c_str());
+            return 2;
+        }
+        const std::filesystem::path truth{opt.truth_path};
+        if (Status st = pipe.build_from_video(sc, opt.video_path, mode_ptr,
+                                              opt.truth_path.empty() ? nullptr : &truth);
+            !st) {
+            std::fprintf(stderr, "sat-tracker: %s\n", st.error().c_str());
+            return 1;
+        }
+        const VideoSource* v = pipe.video();
+        if (!opt.quiet) {
+            std::printf("video             %s\n", opt.video_path.c_str());
+            // The SOURCE resolution, not the reported screen. In direct mode
+            // the screen geometry is the scenario's nominal canvas, which has
+            // nothing to do with the file — printing it said "2000x2000
+            // source" for a 640x480 clip.
+            std::printf("mode              %s%s\n",
+                        video_mode_name(v->mode()),
+                        opt.video_mode.empty() ? "  (auto-detected)" : "  (from --video-mode)");
+            std::printf("source            %dx%d @ %.3f fps  ->  %dx%d delivered\n",
+                        v->source_width(), v->source_height(), v->fps(),
+                        v->geometry().width, v->geometry().height);
+            if (!opt.truth_path.empty()) {
+                std::printf("truth             %s\n", opt.truth_path.c_str());
+            }
+            std::printf("\n");
+        }
+        // A video run's length is the clip's, not the scenario's: the source
+        // returns false at EOF and that is the clean termination §8.3
+        // requirement 7 asks for. So the duration is only a SIZING HINT here,
+        // used to reserve buffers.
+        //
+        // The first version set it to 1e9 to mean "until EOF" and the program
+        // died with bad_alloc before reading a frame: expected_frames is
+        // duration * camera_hz, so it asked for thirty billion samples. A
+        // sentinel that flows into an allocation is not a sentinel.
+        //
+        // The container's frame count is the right hint, and it is allowed to
+        // be wrong — a truncated file over-reports and the vectors simply do
+        // not fill. Clamped so a container claiming an absurd count cannot do
+        // the same thing again.
+        auto probe = probe_video(opt.video_path);
+        const double frames = (probe && probe->frame_count > 0)
+            ? static_cast<double>(probe->frame_count) : 3600.0;
+        sc.duration_s = std::min(frames, 1.0e6) / std::max(1.0, static_cast<double>(sc.camera_hz));
+    }
     pipe.set_publish_snapshots(opt.fingerprint);
 
     const CameraGeometry cam    = sc.camera_geometry();
-    const ScreenGeometry screen = sc.screen_geometry();
+    // In screen mode the video IS the canvas, so centroids are reported on the
+    // FILE's scale. pipeline.cpp resolves this; reading it back rather than
+    // recomputing keeps one source of truth for the number that §13.2's graded
+    // artifact is denominated in.
+    const ScreenGeometry screen = pipe.config().synthetic.screen;
     const size_t expected = static_cast<size_t>(sc.duration_s * sc.camera_hz) + 2;
 
     // --- artifacts, opened BEFORE the run (§13.2's A9 rule) ----------------
@@ -60,8 +122,8 @@ int run_headless(const HeadlessOptions& opt) {
     const bool want_csv = opt.write_artifacts && !opt.no_csv;
     if (want_csv) {
         CentroidLogHeader h;
-        h.source      = opt.scenario_path;
-        h.mode        = "synthetic";
+        h.source = opt.video_path.empty() ? opt.scenario_path : opt.video_path;
+        h.mode   = pipe.is_video() ? pipe.video()->name() : "synthetic";
         h.build       = SAT_GIT_HASH;
         h.utc         = utc_timestamp_now();
         h.screen_w    = screen.width;  h.screen_h = screen.height;
@@ -76,7 +138,9 @@ int run_headless(const HeadlessOptions& opt) {
     }
 
     MetricCollector metrics;
-    metrics.begin(sc.name, sc.seed, cam.ifov_urad(), expected);
+    metrics.begin(sc.name, sc.seed, cam.ifov_urad(), expected,
+                  /*pointing_supported=*/!pipe.is_video()
+                      || pipe.video()->supports_pointing());
 
     // Per-frame traces for the report's plots (CP 7.6). Kept here rather than
     // inside MetricCollector because the collector's series get SORTED by the
@@ -196,6 +260,12 @@ int headless_command(int argc, char* argv[], int& i) {
             opt.duration_override = std::atof(argv[++k]);
         } else if (std::strcmp(a, "--no-ai") == 0) {
             opt.no_ai = true;
+        } else if (std::strcmp(a, "--video") == 0 && k + 1 < argc) {
+            opt.video_path = argv[++k];
+        } else if (std::strcmp(a, "--truth") == 0 && k + 1 < argc) {
+            opt.truth_path = argv[++k];
+        } else if (std::strcmp(a, "--video-mode") == 0 && k + 1 < argc) {
+            opt.video_mode = argv[++k];
         } else if (std::strcmp(a, "--no-csv") == 0) {
             opt.no_csv = true;
         } else if (std::strcmp(a, "--no-report") == 0) {
@@ -210,6 +280,34 @@ int headless_command(int argc, char* argv[], int& i) {
             opt.write_report    = false;
         } else {
             std::fprintf(stderr, "sat-tracker: --headless: unrecognised option '%s'\n", a);
+            return 2;
+        }
+        i = k;
+    }
+    return run_headless(opt);
+}
+
+int video_command(int argc, char* argv[], int& i) {
+    if (i + 1 >= argc) {
+        std::fprintf(stderr, "sat-tracker: --video needs a file path\n");
+        return 2;
+    }
+    HeadlessOptions opt;
+    opt.scenario_path = std::string(SAT_SCENARIO_DIR) + "/video_screen.toml";
+    opt.video_path    = argv[++i];
+
+    for (int k = i + 1; k < argc; ++k) {
+        const char* a = argv[k];
+        if      (std::strcmp(a, "--truth") == 0 && k + 1 < argc)      opt.truth_path = argv[++k];
+        else if (std::strcmp(a, "--video-mode") == 0 && k + 1 < argc) opt.video_mode = argv[++k];
+        else if (std::strcmp(a, "--scenario") == 0 && k + 1 < argc)   opt.scenario_path = argv[++k];
+        else if (std::strcmp(a, "--out") == 0 && k + 1 < argc)        opt.out_dir = argv[++k];
+        else if (std::strcmp(a, "--no-ai") == 0)                      opt.no_ai = true;
+        else if (std::strcmp(a, "--quiet") == 0)                      opt.quiet = true;
+        else if (std::strcmp(a, "--no-csv") == 0)                     opt.no_csv = true;
+        else if (std::strcmp(a, "--no-report") == 0)                  opt.write_report = false;
+        else {
+            std::fprintf(stderr, "sat-tracker: --video: unrecognised option '%s'\n", a);
             return 2;
         }
         i = k;

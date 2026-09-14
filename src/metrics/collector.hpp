@@ -123,6 +123,18 @@ struct RunMetrics {
     double  frame_ms_p95    = 0.0;
     double  frame_ms_p99    = 0.0;
 
+    /// False in video_direct: the frame does not follow the controller, so
+    /// |boresight - target| measures nothing about the loop. §13.1's
+    /// tracking_error is undefined there and is reported as such rather than
+    /// as a large number that looks like a failure.
+    bool pointing_supported = true;
+
+    /// Frames whose truth was known at all. Zero in a video run with no
+    /// --truth CSV, which is a completely different situation from a run that
+    /// tracked nothing — and the summary has to say which, or a perfectly good
+    /// video run reads as a total failure.
+    int64_t frames_with_truth = 0;
+
     int64_t frames_total   = 0;
     double  duration_s     = 0.0;
     double  wall_time_s    = 0.0;           ///< measured OUTSIDE the sim (INV-3 safe)
@@ -140,7 +152,8 @@ class MetricCollector {
 public:
     /// Reserve for `expected_frames` so that add() never allocates (INV-4).
     void begin(const std::string& scenario_name, uint64_t seed,
-               double ifov_urad, size_t expected_frames);
+               double ifov_urad, size_t expected_frames,
+               bool pointing_supported = true);
 
     /// One frame. Called after Pipeline::step().
     void add(const FrameRecord& r);
@@ -164,9 +177,11 @@ private:
     std::string name_;
     uint64_t    seed_ = 0;
     double      ifov_ = 1.0;
+    bool        pointing_ = true;
 
     int64_t frames_          = 0;
     int64_t frames_in_fov_   = 0;
+    int64_t frames_with_truth_ = 0;
     int64_t frames_confirmed_ = 0;
     int64_t false_tracks_    = 0;
 

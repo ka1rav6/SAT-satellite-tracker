@@ -185,6 +185,10 @@ void print_usage() {
     std::printf("                       run with no window; writes centroid.csv and\n");
     std::printf("                       run.json to --out and prints the design 13.1\n");
     std::printf("                       metric summary (CP 7.3, CP 7.4)\n");
+    std::printf("  --video FILE [--truth CSV] [--video-mode screen|direct]\n");
+    std::printf("             [--scenario F] [--out DIR]\n");
+    std::printf("                       track a supplied clip; mode auto-detected from\n");
+    std::printf("                       its resolution (Benchmark Performance-2, 30%%)\n");
     std::printf("  --sweep FILE [--out DIR] [--jobs N] [--keep-csv] [--quiet]\n");
     std::printf("                       run the sweep in FILE across N worker processes\n");
     std::printf("                       and print the compliance matrix (CP 7.5, CP 7.7)\n");
@@ -194,8 +198,7 @@ void print_usage() {
     std::printf("                       run every built-in scenario twice and compare\n");
     std::printf("                       frame fingerprints (CP 2.6, INV-3)\n");
     std::printf("  --help               print this message\n");
-    std::printf("\nStill to come from design 13.4: --video, --sweep, --gen-dataset,\n");
-    std::printf("--fuzz-scenarios.\n");
+    std::printf("\nStill to come from design 13.4: --gen-dataset, --fuzz-scenarios.\n");
 }
 
 }  // namespace
@@ -211,6 +214,14 @@ int main(int argc, char* argv[]) {
         }
         if (std::strcmp(argv[i], "--headless") == 0) {
             return sat::headless_command(argc, argv, i);
+        }
+        // CP 8.9: "sat-tracker --video clip.mp4 --out logs/ with full defaults.
+        // Accept when: works with no other arguments, produces a valid centroid
+        // log." §13.4 calls this "the BP-2 entry point, MUST WORK BARE" — it is
+        // 30% of the marks and the first thing an evaluator will type, so it
+        // implies --headless rather than requiring it.
+        if (std::strcmp(argv[i], "--video") == 0) {
+            return sat::video_command(argc, argv, i);
         }
         if (std::strcmp(argv[i], "--sweep") == 0) {
             return sat::sweep_command(argc, argv, i);

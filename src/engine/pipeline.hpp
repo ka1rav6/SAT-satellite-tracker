@@ -38,6 +38,7 @@
 #include "core/triple_buffer.hpp"
 #include "engine/snapshot.hpp"
 #include "engine/synthetic_source.hpp"
+#include "engine/video_source.hpp"
 #include "scenario/scenario.hpp"
 #include "perception/pipeline.hpp"
 #include "perception/simple_detector.hpp"
@@ -46,6 +47,8 @@
 #include "tracking/track.hpp"
 
 #include <cstdint>
+#include <filesystem>
+#include <memory>
 #include <vector>
 
 namespace sat {
@@ -304,6 +307,25 @@ public:
     /// sequence, in one call.
     void build_from_scenario(const Scenario& sc);
 
+    // -----------------------------------------------------------------------
+    // Video modes (Stage 8, Benchmark Performance-2, 30%).
+    //
+    // Everything above build_from_scenario is unchanged: §6.2 B4 says frame
+    // acquisition is "THE ONLY PLACE THE MODES DIFFER", so a video run swaps
+    // the source and nothing else. Perception, tracking, control and metrics
+    // are the same code, which is what makes a result in one mode evidence
+    // about the other.
+    // -----------------------------------------------------------------------
+    [[nodiscard]] Status build_from_video(const Scenario& sc,
+                                          const std::filesystem::path& clip,
+                                          const VideoMode* mode_override = nullptr,
+                                          const std::filesystem::path* truth_csv = nullptr);
+
+    /// The video source, or nullptr in synthetic mode. For the log header and
+    /// for run.json's provenance.
+    [[nodiscard]] const VideoSource* video() const noexcept { return video_.get(); }
+    [[nodiscard]] bool is_video() const noexcept { return video_ != nullptr; }
+
     /// Run one camera frame: sub-ticks, acquire, detect, control.
     /// Returns false when the source is exhausted.
     [[nodiscard]] bool step();
@@ -363,6 +385,7 @@ private:
 
     PipelineConfig  cfg_{};
     SyntheticSource source_{};
+    std::unique_ptr<VideoSource> video_{};   ///< non-null in video modes
     Gimbal          gimbal_{};
     Controller      control_{};
     StageTimers     timers_{};

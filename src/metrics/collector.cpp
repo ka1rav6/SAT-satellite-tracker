@@ -8,8 +8,10 @@
 namespace sat {
 
 void MetricCollector::begin(const std::string& scenario_name, uint64_t seed,
-                            double ifov_urad, size_t expected_frames) {
+                            double ifov_urad, size_t expected_frames,
+                            bool pointing_supported) {
     *this = MetricCollector{};
+    pointing_ = pointing_supported;
     name_ = scenario_name;
     seed_ = seed;
     ifov_ = (ifov_urad > 0.0) ? ifov_urad : 1.0;
@@ -39,6 +41,7 @@ void MetricCollector::add(const FrameRecord& r) {
     // the part of a run where the target is genuinely not there to be seen —
     // which is what the ACQUISITION metrics measure, separately.
     // -----------------------------------------------------------------------
+    if (r.truth_valid) ++frames_with_truth_;
     if (r.truth_valid && r.truth_in_fov) {
         ++frames_in_fov_;
         if (!have_first_in_fov_) {
@@ -75,7 +78,7 @@ void MetricCollector::add(const FrameRecord& r) {
     if (confirmed && r.truth_valid && !r.truth_in_fov) ++false_tracks_;
 
     // --- tracking error, ONLY WHILE CONFIRMED ------------------------------
-    if (confirmed && r.truth_valid) {
+    if (confirmed && r.truth_valid && pointing_) {
         tracking_px_.push(r.tracking_error_px);
     }
 
@@ -108,6 +111,8 @@ RunMetrics MetricCollector::finish(const StageTimers& timers,
     m.scenario_name = name_;
     m.seed          = seed_;
     m.frames_total  = frames_;
+    m.frames_with_truth = frames_with_truth_;
+    m.pointing_supported = pointing_;
     m.duration_s    = last_time_s_;
     m.wall_time_s   = wall_time_s;
 
@@ -207,6 +212,9 @@ std::string format_summary(const RunMetrics& m) {
              m.centroid_rmse_image_px, m.centroid_p95_image_px, m.centroid_max_image_px);
         line("  bias (mean signed) %+7.4f, %+.4f px\n",
              m.centroid_bias_x_px, m.centroid_bias_y_px);
+    } else if (m.frames_with_truth == 0) {
+        out += "  n/a — no ground truth was supplied. The detector ran and its\n"
+               "        output is in centroid.csv; scoring it needs --truth.\n";
     } else {
         out += "  no frame had both a detection and the beacon in view\n";
     }
@@ -217,6 +225,13 @@ std::string format_summary(const RunMetrics& m) {
         line("  RMS               %8.3f px   p95 %8.3f   max %8.3f\n",
              m.tracking_rms_px, m.tracking_p95_px, m.tracking_max_px);
         line("  RMS               %8.1f urad\n", m.tracking_rms_urad);
+    } else if (!m.pointing_supported) {
+        out += "  n/a — this source cannot be pointed (video_direct), so there is\n"
+               "        no pointing error to measure. Centroiding above is the\n"
+               "        graded metric in this mode.\n";
+    } else if (m.frames_with_truth == 0) {
+        out += "  n/a — no ground truth was supplied, so pointing error cannot be\n"
+               "        scored. In video mode, pass --truth to enable it (CP 8.7).\n";
     } else {
         out += "  the track was never Confirmed\n";
     }
@@ -248,6 +263,8 @@ std::string format_summary(const RunMetrics& m) {
              static_cast<long long>(m.frames_confirmed),
              static_cast<long long>(m.frames_in_fov));
         line("  target loss       %8.2f %%   (row 18, < 5 %%)\n", 100.0 * m.target_loss_frac);
+    } else if (m.frames_with_truth == 0) {
+        out += "  retention              n/a   (no ground truth supplied)\n";
     } else {
         out += "  retention              n/a   (the beacon was never in view)\n";
     }

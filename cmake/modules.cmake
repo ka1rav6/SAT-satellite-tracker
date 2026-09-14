@@ -183,6 +183,9 @@ sat_add_module(sat_control
 sat_add_module(sat_engine
     SOURCES
         src/engine/video_probe.cpp
+        src/engine/decode_thread.cpp
+        src/engine/video_source.cpp
+        src/engine/truth_csv.cpp
         src/engine/synthetic_source.cpp
         src/engine/pipeline.cpp
         src/engine/snapshot.cpp

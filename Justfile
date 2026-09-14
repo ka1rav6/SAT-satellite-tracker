@@ -186,10 +186,6 @@ ablation: build
 # Video (design §8 — Benchmark Performance-2, 30% of marks)
 # ---------------------------------------------------------------------------
 
-# Regenerate the test clips with ffmpeg. They are committed (72 KB total), so
-# this is only needed when adding a case or after changing the generator.
-make-test-videos:
-    ./tools/make_test_videos.sh
 
 # CP 0.7 ★ GATE — prove this build can decode MP4 at all.
 #
@@ -413,3 +409,26 @@ matrix:
 report scenario="scenarios/compliance.toml" duration="10": build
     "{{build_dir}}/sat-tracker" --headless --scenario "{{scenario}}" \
         --duration "{{duration}}" --out logs/run
+
+# ---------------------------------------------------------------------------
+# Stage 8 — video ingest (design §8, Benchmark Performance-2, 30% of marks)
+# ---------------------------------------------------------------------------
+
+# Track a supplied clip. Mode is auto-detected from its resolution.
+#   just video tests/video/clips/screen_2000x2000_30fps.mp4
+video file: build
+    "{{build_dir}}/sat-tracker" --video "{{file}}" --out logs/video
+
+# The whole Stage 8 suite, verbose — the numbers ARE the checkpoints: the
+# crop's own centroid error (CP 8.6), the self-scoring accuracy (CP 8.7), and
+# what each of the ten awkward clips did (CP 8.8).
+test-video: build
+    "{{build_dir}}/test_video" --success --no-skipped-summary 2>&1 \
+        | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true
+
+# Regenerate the test clips. They are committed, so this is only needed when
+# adding a case or after changing the generator. It VERIFIES every clip
+# contains a beacon before finishing — see the note in the script about the
+# entire directory having been silently black.
+make-test-videos:
+    ./tools/make_test_videos.sh

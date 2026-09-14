@@ -213,10 +213,12 @@ target_compile_definitions(test_metrics PRIVATE
 # SKIP rather than passing silently, so a build that cannot do video says so.
 sat_add_test(video
     SOURCES video/test_probe.cpp
-    DEPS    sat_core sat_engine
+            video/test_video_source.cpp
+    DEPS    sat_core sat_engine sat_scenario
 )
 target_compile_definitions(test_video PRIVATE
     SAT_TEST_CLIP_DIR="${CMAKE_CURRENT_SOURCE_DIR}/video/clips"
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 # CP 8.8 probes each awkward clip in a SEPARATE PROCESS (see test_probe.cpp),
 # so it needs the path to the shipped binary.
