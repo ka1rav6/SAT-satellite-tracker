@@ -313,10 +313,33 @@ gates-full: gates gate-repro gate-repro-opt gate-repro-selftest
 #
 # Takes around five minutes. `just ci-full` adds the sanitizer and
 # cross-optimisation reproducibility runs on top.
-ci: gates test test-debug build-headless
+# A build resolving every header-only dependency the way CI does — by FETCHING
+# toml++, nlohmann/json and doctest at their pinned versions rather than using
+# whatever the system happens to have installed.
+#
+# What this catches: version drift. The system toml++ here is Debian's
+# 3.4.0+ds, not upstream's v3.4.0, and a difference between them would show up
+# as a compile error on one machine and not the other.
+#
+# What it does NOT catch, and this is worth being explicit about because it was
+# tried first for exactly that purpose: a third-party header included by a
+# module that does not LINK that library. Forcing the fetch does not remove
+# /usr/include from the default include path, so the system copy is still found
+# and the build still succeeds. That case is caught statically instead — see
+# `gate-source` and THIRD_PARTY in tools/check_source_invariants.py.
+build-fetched:
+    cmake -S . -B "{{build_dir}}-fetched" -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TESTING=ON \
+        -DCMAKE_DISABLE_FIND_PACKAGE_tomlplusplus=ON \
+        -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON \
+        -DCMAKE_DISABLE_FIND_PACKAGE_doctest=ON
+    cmake --build "{{build_dir}}-fetched" --parallel {{jobs}}
+    @echo "fetched-dependency build OK (no system headers masking a missing link edge)"
+
+ci: gates test test-debug build-headless build-fetched
 
 # The full pre-push check, including cross-optimisation reproducibility.
-ci-full: gates-full test test-debug build-headless sanitize
+ci-full: gates-full test test-debug build-headless build-fetched sanitize
 
 # ---------------------------------------------------------------------------
 # Housekeeping
@@ -324,7 +347,7 @@ ci-full: gates-full test test-debug build-headless sanitize
 
 # Wipe the build trees (including fetched dependencies under build/_deps).
 clean:
-    rm -rf "{{build_dir}}" "{{build_dir}}-debug" "{{build_dir}}-nogui" "{{build_dir}}-asan" vcpkg_installed
+    rm -rf "{{build_dir}}" "{{build_dir}}-debug" "{{build_dir}}-nogui" "{{build_dir}}-asan" "{{build_dir}}-fetched" vcpkg_installed
 
 # Wipe compiled output but keep fetched dependencies, so the next build is fast.
 clean-build:
@@ -385,3 +408,8 @@ sweep *ARGS: build
 # Just the matrix from the last sweep, without re-running it.
 matrix:
     @cat logs/sweep/compliance.txt
+
+# CP 7.6 — one run, with report.html. Opens nothing; prints the path.
+report scenario="scenarios/compliance.toml" duration="10": build
+    "{{build_dir}}/sat-tracker" --headless --scenario "{{scenario}}" \
+        --duration "{{duration}}" --out logs/run

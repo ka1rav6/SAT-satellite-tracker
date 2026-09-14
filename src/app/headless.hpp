@@ -40,6 +40,12 @@ struct HeadlessOptions {
     /// the sweep's wall time partly a measurement of the filesystem.
     bool no_csv = false;
 
+    /// Write report.html (CP 7.6). On by default: the checkpoint's criterion is
+    /// "finishing a run produces a showable report with ZERO MANUAL STEPS", and
+    /// a report you have to ask for is a manual step. The sweep turns it off —
+    /// 200 standalone reports are not what a sweep is for, and the matrix is.
+    bool write_report = true;
+
     /// Publish snapshots, which is what produces the INV-3 fingerprint. Costs
     /// a frame copy (~300 KB) per frame, so it is off for a pure speed run and
     /// on when provenance matters.

@@ -146,6 +146,83 @@ def check(root, name, rationale, subdirs, patterns, exclude=(), strip_strings=Tr
     return hits
 
 
+
+# ---------------------------------------------------------------------------
+# Third-party include boundaries.
+#
+# WHY THIS CHECK EXISTS, AND WHAT IT COST NOT TO HAVE IT
+# ---------------------------------------------------------------------------
+# cmake/modules.cmake links every third-party library PRIVATE to exactly one
+# module: toml++ to sat_scenario, nlohmann/json to sat_metrics, Eigen to
+# sat_tracking, OpenCV to sat_engine, ImGui to sat_gui. That is a deliberate
+# boundary — "the ONLY configuration language", "OpenCV never in the hot loop"
+# — and CMake enforces it for LINKING.
+#
+# It does not enforce it for INCLUDING, and on a developer machine nothing
+# does. src/app/sweep.cpp included <nlohmann/json.hpp> while sat_app linked no
+# JSON library at all. Because nlohmann-json3-dev is installed here, the header
+# sits in /usr/include and every compiler found it regardless of the link
+# graph: four local build configurations were green, including one that
+# deliberately forced the FetchContent path, because a fetched copy does not
+# remove the system one from the default include path.
+#
+# On CI, where that package is not installed, the header does not exist outside
+# the targets that link it — and EVERY job on EVERY platform failed to build.
+#
+# A system-installed header masking a missing link edge is invisible to any
+# amount of local building. A static check is the only cheap way to see it, and
+# unlike the module graph there is no behavioural test available: the code
+# compiles perfectly well on the machine where it is wrong.
+#
+# The table below mirrors modules.cmake by hand, which is duplication — but it
+# is six lines, and it goes red the moment an include crosses the boundary,
+# which is the moment it matters rather than the moment someone else builds it.
+# ---------------------------------------------------------------------------
+THIRD_PARTY = [
+    # (human name, include regex, directories permitted to include it)
+    ("toml++",         r'#\s*include\s*[<"]toml\+\+/',      ("src/scenario",)),
+    ("nlohmann/json",  r'#\s*include\s*[<"]nlohmann/',        ("src/metrics",)),
+    ("Eigen",          r'#\s*include\s*[<"]Eigen/',           ("src/tracking",)),
+    ("OpenCV",         r'#\s*include\s*[<"]opencv2?/',        ("src/engine",)),
+    ("Dear ImGui",     r'#\s*include\s*[<"](imgui|implot)',   ("src/gui", "src/third_party")),
+    ("GLFW",           r'#\s*include\s*[<"]GLFW/',            ("src/gui",)),
+]
+
+ALL_MODULE_DIRS = (
+    "src/core", "src/world", "src/scenario", "src/camera", "src/degrade",
+    "src/perception", "src/ai", "src/tracking", "src/search", "src/plant",
+    "src/control", "src/engine", "src/metrics", "src/gui", "src/app",
+)
+
+
+def check_third_party(root):
+    """Every third-party include outside the module that links that library."""
+    hits = []
+    for name, pattern, allowed in THIRD_PARTY:
+        rx = re.compile(pattern)
+        for sub in ALL_MODULE_DIRS:
+            if sub in allowed:
+                continue
+            for path in sources(root, (sub,)):
+                rel = path.relative_to(root).as_posix()
+                try:
+                    raw = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                # strip_comments_only: an include path IS a quoted string, so
+                # stripping string literals would blank the thing being sought.
+                stripped = strip_comments_only(raw)
+                raw_lines = raw.splitlines()
+                for lineno, line in enumerate(stripped.splitlines(), start=1):
+                    if rx.search(line):
+                        original = (raw_lines[lineno - 1].strip()
+                                    if lineno <= len(raw_lines) else "")
+                        hits.append((rel, lineno,
+                                     f"{original}   <- {name} is linked only to "
+                                     f"{', '.join(allowed)}"))
+    return hits
+
+
 # ---------------------------------------------------------------------------
 # The checks themselves.
 # ---------------------------------------------------------------------------
@@ -267,6 +344,22 @@ def main() -> int:
             print(file=sys.stderr)
         else:
             print(f"ok — {c['name']}")
+
+    tp = check_third_party(root)
+    name = "build: no third-party include outside the module that links it"
+    if tp:
+        failures += 1
+        print(f"VIOLATION — {name}", file=sys.stderr)
+        print("  cmake/modules.cmake links each third-party library PRIVATE to one\n"
+              "  module. A system-installed copy of that header is on the default\n"
+              "  include path here and is NOT on CI, so this builds locally and\n"
+              "  fails everywhere else. Either move the code, or add the link edge\n"
+              "  in modules.cmake and this table.", file=sys.stderr)
+        for rel, lineno, text in tp:
+            print(f"    {rel}:{lineno}: {text}", file=sys.stderr)
+        print(file=sys.stderr)
+    else:
+        print(f"ok — {name}")
 
     if failures:
         print(f"\n{failures} invariant check(s) failed.", file=sys.stderr)

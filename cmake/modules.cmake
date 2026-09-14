@@ -204,6 +204,7 @@ sat_add_module(sat_metrics
         src/metrics/centroid_log.cpp
         src/metrics/run_report.cpp
         src/metrics/compliance.cpp
+        src/metrics/report.cpp
     PUBLIC_DEPS sat_core sat_world sat_engine
 )
 target_link_libraries(sat_metrics PRIVATE nlohmann_json::nlohmann_json)

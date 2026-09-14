@@ -5,11 +5,17 @@
 #include "sat/version.hpp"
 
 #include "metrics/compliance.hpp"
+#include "metrics/report.hpp"
 #include "metrics/run_report.hpp"
 #include "scenario/schema.hpp"
+#include "app/timestamp.hpp"
 #include "scenario/sweep_spec.hpp"
 
-#include <nlohmann/json.hpp>
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#endif
+
 
 #include <algorithm>
 #include <atomic>
@@ -49,6 +55,10 @@ std::string shell_quote(const std::string& s) {
 /// symlink or from a different working directory, and a sweep that silently
 /// measured a different build than the one that started it would be worse than
 /// one that refused to run.
+///
+/// Falls back to the bare name if the platform will not say. That fallback is
+/// a real degradation — it resolves through PATH and could find a different
+/// build — so it is the last resort rather than the default.
 std::string self_path() {
     std::error_code ec;
 #if defined(_WIN32)
@@ -249,7 +259,7 @@ int run_sweep(const SweepOptions& opt) {
                             + " --out " + shell_quote(r.dir);
             if (spec.no_ai) cmd += " --no-ai";
             // A sweep wants the metrics, not 500 CSVs of ~2 MB each.
-            if (!opt.keep_csv) cmd += " --no-csv";
+            if (!opt.keep_csv) cmd += " --no-csv --no-report";
 #if !defined(_WIN32)
             cmd += " >/dev/null 2>&1";
 #else
@@ -378,6 +388,64 @@ int run_sweep(const SweepOptions& opt) {
     // something that scrolled past.
     std::ofstream mat(opt.out_dir + "/compliance.txt", std::ios::binary);
     if (mat) mat << matrix;
+
+    // And as a report (CP 7.6). The per-run reports are off for a sweep — 200
+    // of them is not what a sweep is for — but the sweep as a whole gets one,
+    // carrying the matrix and the aggregate numbers.
+    if (!all.empty()) {
+        ReportInput ri;
+        ri.title  = "SAT — compliance sweep";
+        ri.build  = SAT_GIT_HASH;
+        ri.utc    = utc_timestamp_now();
+        ri.scenario_name = spec.base_scenario;
+        char desc[256];
+        std::snprintf(desc, sizeof desc, "%zu runs over %zu conditions x %zu seeds",
+                      all.size(), groups.size(), spec.seeds.size());
+        ri.scenario_description = desc;
+        ri.requirements    = req;
+        ri.compliance_text = matrix;
+        // The aggregate run, so the headline tables have something to show.
+        // Means over the sweep; the per-condition detail is in the matrix
+        // below them, which is where a reader should actually look.
+        RunMetrics agg{};
+        for (const RunMetrics& m : all) {
+            agg.centroid_rmse_image_px  += m.centroid_rmse_image_px;
+            agg.centroid_p95_image_px   += m.centroid_p95_image_px;
+            agg.centroid_rmse_screen_px += m.centroid_rmse_screen_px;
+            agg.tracking_rms_px         += m.tracking_rms_px;
+            agg.tracking_p95_px         += m.tracking_p95_px;
+            agg.target_loss_frac        += m.target_loss_frac;
+            agg.fps_mean                += m.fps_mean;
+            agg.fps_p5                  += m.fps_p5;
+            agg.frame_ms_p50            += m.frame_ms_p50;
+            agg.frame_ms_p95            += m.frame_ms_p95;
+            agg.frame_ms_p99            += m.frame_ms_p99;
+            agg.acquisition_in_fov_s    += m.acquisition_in_fov_s;
+            agg.frames_total            += m.frames_total;
+            agg.centroid_frames         += m.centroid_frames;
+            agg.tracking_frames         += m.tracking_frames;
+            agg.frames_in_fov           += m.frames_in_fov;
+            agg.frames_confirmed        += m.frames_confirmed;
+            agg.duration_s              += m.duration_s;
+        }
+        const double n = static_cast<double>(all.size());
+        for (double* f : {&agg.centroid_rmse_image_px, &agg.centroid_p95_image_px,
+                          &agg.centroid_rmse_screen_px, &agg.tracking_rms_px,
+                          &agg.tracking_p95_px, &agg.target_loss_frac,
+                          &agg.fps_mean, &agg.fps_p5, &agg.frame_ms_p50,
+                          &agg.frame_ms_p95, &agg.frame_ms_p99,
+                          &agg.acquisition_in_fov_s, &agg.duration_s}) {
+            *f /= n;
+        }
+        agg.acquired = agg.acquired_in_fov = true;
+        agg.ai_enabled = !spec.no_ai;
+        ri.metrics = agg;
+
+        if (!write_report(opt.out_dir + "/report.html", ri)) {
+            std::fprintf(stderr, "sweep: cannot write '%s/report.html'\n",
+                         opt.out_dir.c_str());
+        }
+    }
 
     // A non-zero exit when any run failed. A sweep whose workers crashed and
     // which still exits 0 will be believed by CI.

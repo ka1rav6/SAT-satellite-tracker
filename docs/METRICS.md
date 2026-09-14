@@ -206,3 +206,22 @@ compliance matrix, labelled.
 |---|---|
 | `handover_success` | The mode FSM's `Track → Handover` transition exists and is tested, but is **disabled by default** until CP 10.7 builds the quadrant detector. Entering the state would claim a capability the system does not have. |
 | `fps` with the GUI on | §13.1 asks for it "reported separately". The headless figure is produced now; the GUI-on figure arrives with CP 14.4's measurement from the shipped binary. |
+
+### 2.12 Where these numbers come from
+
+| Artifact | Produced by | Contains |
+|---|---|---|
+| `centroid.csv` | `--headless` | one row per frame, §13.2's format — the graded submission artifact |
+| `run.json` | `--headless` | every metric above, plus the full scenario echoed and the INV-3 fingerprint |
+| `report.html` | `--headless` | the same, rendered, with inline SVG plots; self-contained |
+| `compliance.txt` | `--sweep` | §13.3's matrix, broken out per condition |
+| `report.html` | `--sweep` | the matrix plus sweep aggregates |
+
+`report.html` is generated in **C++, not Jinja**. §14 specifies Jinja, but the
+checkpoint's criterion is "finishing a run produces a showable report with zero
+manual steps", and a Python post-process is a manual step unless the binary
+invokes it — at which point the shipping binary depends on a Python
+installation, which §4's stack does not include and CP 15.5's "unzip and
+double-click" rules out. The cost is that the template is a string in a source
+file; the benefit is that the criterion is met on a clean machine. Recorded
+here rather than silently taken.

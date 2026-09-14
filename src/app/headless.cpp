@@ -7,11 +7,13 @@
 #include "engine/pipeline.hpp"
 #include "metrics/centroid_log.hpp"
 #include "metrics/collector.hpp"
+#include "metrics/report.hpp"
 #include "metrics/run_report.hpp"
 #include "scenario/schema.hpp"
 #include "sat/version.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -76,6 +78,22 @@ int run_headless(const HeadlessOptions& opt) {
     MetricCollector metrics;
     metrics.begin(sc.name, sc.seed, cam.ifov_urad(), expected);
 
+    // Per-frame traces for the report's plots (CP 7.6). Kept here rather than
+    // inside MetricCollector because the collector's series get SORTED by the
+    // first quantile call — see metrics/series.hpp — and a plot needs
+    // chronological order. Reserved up front so the loop still allocates
+    // nothing.
+    ReportTrace trace_centroid{"Centroiding error, image frame", "px", {}, {},
+                               1.0, "1 px"};
+    ReportTrace trace_tracking{"Tracking error", "px", {}, {},
+                               sc.tracking_error_px, "row 17"};
+    if (opt.write_report) {
+        for (ReportTrace* t : {&trace_centroid, &trace_tracking}) {
+            t->x.reserve(expected);
+            t->y.reserve(expected);
+        }
+    }
+
     // --- run ----------------------------------------------------------------
     // The wall clock is read HERE, outside the simulation, and never enters it.
     // INV-3 forbids the simulation from depending on it; measuring how long the
@@ -86,6 +104,20 @@ int run_headless(const HeadlessOptions& opt) {
         const FrameRecord& r = pipe.last();
         metrics.add(r);
         if (want_csv) log.write(r, screen);
+        if (opt.write_report) {
+            // Only frames where the metric is DEFINED are plotted. Plotting a
+            // zero on a frame with no detection would draw a spike to the axis
+            // that reads as perfect accuracy — the same flattering-zero the
+            // compliance matrix had to be fixed for.
+            if (r.centroid_error_valid) {
+                trace_centroid.x.push_back(r.time_s);
+                trace_centroid.y.push_back(r.centroid_error_px);
+            }
+            if (r.track_state == TrackState::Confirmed) {
+                trace_tracking.x.push_back(r.time_s);
+                trace_tracking.y.push_back(r.tracking_error_px);
+            }
+        }
     }
     const auto t1 = std::chrono::steady_clock::now();
     const double wall_s = std::chrono::duration<double>(t1 - t0).count();
@@ -106,12 +138,43 @@ int run_headless(const HeadlessOptions& opt) {
         }
     }
 
+    // --- report.html (CP 7.6) ----------------------------------------------
+    std::string report_path;
+    if (opt.write_artifacts && opt.write_report) {
+        ReportInput ri;
+        ri.build                = SAT_GIT_HASH;
+        ri.utc                  = utc_timestamp_now();
+        ri.scenario_name        = sc.name;
+        ri.scenario_description = sc.description;
+        ri.metrics              = m;
+        ri.requirements.acquisition_s     = sc.acquisition_s;
+        ri.requirements.tracking_error_px = sc.tracking_error_px;
+        ri.requirements.target_loss_frac  = sc.target_loss_frac;
+        ri.requirements.reacquisition_s   = sc.reacquisition_s;
+        ri.requirements.min_fps           = sc.min_fps;
+        // The derived floor on row 17, from this scenario's own jitter. See
+        // Requirements::tracking_floor_px.
+        const double a = sc.jitter_px_per_frame;
+        ri.requirements.tracking_floor_px = (a > 0.0) ? std::sqrt(2.0 * a * a / 3.0) : 0.0;
+        ri.traces = {trace_centroid, trace_tracking};
+
+        report_path = opt.out_dir + "/report.html";
+        if (!write_report(report_path, ri)) {
+            std::fprintf(stderr, "sat-tracker: cannot write '%s'\n", report_path.c_str());
+            return 1;
+        }
+    }
+
     if (!opt.quiet) {
         std::printf("%s", format_summary(m).c_str());
         if (opt.write_artifacts) {
-            std::printf("\nartifacts         %s/centroid.csv (%lld rows), %s/run.json\n",
-                        opt.out_dir.c_str(), static_cast<long long>(log.rows()),
-                        opt.out_dir.c_str());
+            std::printf("\nartifacts         %s/run.json", opt.out_dir.c_str());
+            if (want_csv) {
+                std::printf(", %s/centroid.csv (%lld rows)",
+                            opt.out_dir.c_str(), static_cast<long long>(log.rows()));
+            }
+            if (!report_path.empty()) std::printf(", %s", report_path.c_str());
+            std::printf("\n");
         }
     }
     return 0;
@@ -135,6 +198,8 @@ int headless_command(int argc, char* argv[], int& i) {
             opt.no_ai = true;
         } else if (std::strcmp(a, "--no-csv") == 0) {
             opt.no_csv = true;
+        } else if (std::strcmp(a, "--no-report") == 0) {
+            opt.write_report = false;
         } else if (std::strcmp(a, "--quiet") == 0) {
             opt.quiet = true;
         } else if (std::strcmp(a, "--bench") == 0) {
@@ -142,6 +207,7 @@ int headless_command(int argc, char* argv[], int& i) {
             // wall-time criterion is actually about.
             opt.write_artifacts = false;
             opt.fingerprint     = false;
+            opt.write_report    = false;
         } else {
             std::fprintf(stderr, "sat-tracker: --headless: unrecognised option '%s'\n", a);
             return 2;

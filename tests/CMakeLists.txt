@@ -198,6 +198,7 @@ sat_add_test(metrics
             metrics/test_centroid_log.cpp
             metrics/test_spec_run.cpp
             metrics/test_compliance.cpp
+            metrics/test_report.cpp
     DEPS    sat_core sat_metrics sat_app sat_engine sat_scenario
 )
 target_compile_definitions(test_metrics PRIVATE
