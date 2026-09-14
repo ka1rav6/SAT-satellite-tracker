@@ -191,6 +191,12 @@ target_compile_definitions(test_tracking PRIVATE
     SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 
+# --- CP 9.1-9.6: centroiding accuracy, 60% of the marks --------------------
+sat_add_test(centroid
+    SOURCES centroid/test_centroid.cpp
+    DEPS    sat_core sat_metrics sat_perception
+)
+
 # --- CP 7.1-7.2: the metric definitions and the graded centroid log --------
 sat_add_test(metrics
     SOURCES metrics/test_series.cpp

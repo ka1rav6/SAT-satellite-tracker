@@ -23,6 +23,8 @@
 
 #include "core/arena.hpp"
 #include "core/units.hpp"
+#include "perception/centroid/bias.hpp"
+#include "perception/centroid/estimators.hpp"
 #include "perception/cfar.hpp"
 #include "perception/grouping.hpp"
 #include "perception/morphology.hpp"
@@ -78,6 +80,17 @@ struct PerceptionParams {
     int   max_area   = 800;
     float min_fill   = 0.35f;      ///< rejects diagonal chains of noise
     float max_aspect = 3.0f;       ///< rejects streaks
+
+    // -----------------------------------------------------------------------
+    // Stage 9 — which estimator, and whether to correct its S-curve.
+    //
+    // §10.1.2's default: "background-subtracted WindowedCoM with bias
+    // correction". The supervisor switches at Stage 12; until then these are
+    // the knobs an ablation table varies, which is why they are data rather
+    // than constants.
+    // -----------------------------------------------------------------------
+    CentroidKind centroid_kind = CentroidKind::WindowedCoM;
+    bool correct_centroid_bias = true;
 
     /// Cap on candidates returned, highest SNR first. §9.4 expects 5-20 after
     /// gating; the cap stops a pathological frame from handing the tracker

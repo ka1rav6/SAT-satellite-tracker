@@ -432,3 +432,19 @@ test-video: build
 # entire directory having been silently black.
 make-test-videos:
     ./tools/make_test_videos.sh
+
+# ---------------------------------------------------------------------------
+# Stage 9 — centroiding accuracy (design §10.1, 60% of the marks)
+# ---------------------------------------------------------------------------
+
+# CP 9.2 / CP 9.3 — measure the S-curve and regenerate the compiled-in bias
+# table. Takes about a minute. Rebuild afterwards to compile the table in, then
+# run it again to see the gain.
+calibrate *ARGS: build
+    "{{build_dir}}/sat-tracker" --calibrate-centroid {{ARGS}}
+
+# The Stage 9 suite, verbose — the numbers ARE the checkpoints: the S-curve's
+# amplitude, the correction's gain, and the ratio to §10.1.1's bound per SNR bin.
+test-centroid: build
+    "{{build_dir}}/test_centroid" --success --no-skipped-summary 2>&1 \
+        | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true

@@ -194,7 +194,22 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
         if (!passes_gate(b, params_)) continue;
 
         Detection d{};
-        d.centroid_image = b.centroid();
+        // -----------------------------------------------------------------
+        // B13: centroid. §10.1.2's estimator, then §10.1.3's bias correction.
+        //
+        // The blob's centre of mass seeds the window rather than the brightest
+        // pixel. For spec row 9's default square beacon the top-hat is flat
+        // across the shape, so argmax is degenerate and lands on whichever
+        // corner noise favours — a window centred there cuts off most of the
+        // beacon. The harness measured 1.4 px of error from exactly that, with
+        // the giveaway that it was UNCORRELATED between noise realisations at
+        // the same sub-pixel phase.
+        // -----------------------------------------------------------------
+        const Pixel2 seed = b.centroid();
+        const int win = std::max(2, params_.target_size_px / 2 + 1);
+        d.centroid_image = centroid_estimate(params_.centroid_kind, b,
+                                             ws.tophat, ws.response,
+                                             width, height, seed, win);
         d.area_px    = static_cast<uint16_t>(std::min<int64_t>(b.n, 65535));
         d.bbox_w     = static_cast<uint16_t>(b.width());
         d.bbox_h     = static_cast<uint16_t>(b.height());
@@ -213,6 +228,16 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
         d.snr         = ws.snr[idx];
         d.size_est_px = ws.scale[idx];
         d.centroid_sigma_est = centroid_sigma(d.snr, d.size_est_px);
+
+        // The correction is applied AFTER size_est_px and snr are known,
+        // because the table is indexed by both. An unmeasured cell leaves the
+        // estimate alone (perception/centroid/bias.hpp), so a build whose
+        // table has not been calibrated behaves exactly as it did before
+        // Stage 9 rather than shifting by an invented amount.
+        if (params_.correct_centroid_bias) {
+            d.centroid_image = BiasTable::builtin().correct(
+                params_.centroid_kind, d.size_est_px, d.snr, d.centroid_image);
+        }
 
         out.push_back(d);
     }

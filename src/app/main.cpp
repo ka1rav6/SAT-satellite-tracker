@@ -10,6 +10,7 @@
 
 #include "core/frames.hpp"
 #include "core/units.hpp"
+#include "app/calibrate.hpp"
 #include "app/headless.hpp"
 #include "app/sweep.hpp"
 #include "app/verify_repro.hpp"
@@ -192,6 +193,9 @@ void print_usage() {
     std::printf("  --sweep FILE [--out DIR] [--jobs N] [--keep-csv] [--quiet]\n");
     std::printf("                       run the sweep in FILE across N worker processes\n");
     std::printf("                       and print the compliance matrix (CP 7.5, CP 7.7)\n");
+    std::printf("  --calibrate-centroid [--offsets N] [--out DIR]\n");
+    std::printf("                       measure the centroid S-curve and write the\n");
+    std::printf("                       compiled-in bias table (CP 9.2, CP 9.3)\n");
     std::printf("  --probe-video FILE   open FILE and report resolution/fps/frames (CP 0.7)\n");
     std::printf("  --has-video          exit 0 if this build can decode video, 1 if not\n");
     std::printf("  --verify-reproducibility [--seeds N] [--duration S]\n");
@@ -222,6 +226,9 @@ int main(int argc, char* argv[]) {
         // implies --headless rather than requiring it.
         if (std::strcmp(argv[i], "--video") == 0) {
             return sat::video_command(argc, argv, i);
+        }
+        if (std::strcmp(argv[i], "--calibrate-centroid") == 0) {
+            return sat::calibrate_centroid_command(argc, argv, i);
         }
         if (std::strcmp(argv[i], "--sweep") == 0) {
             return sat::sweep_command(argc, argv, i);

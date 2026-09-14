@@ -130,6 +130,8 @@ sat_add_module(sat_perception
         src/perception/cfar.cpp
         src/perception/grouping.cpp
         src/perception/pipeline.cpp
+        src/perception/centroid/estimators.cpp
+        src/perception/centroid/bias.cpp
     PUBLIC_DEPS sat_core
 )
 
@@ -208,6 +210,7 @@ sat_add_module(sat_metrics
         src/metrics/run_report.cpp
         src/metrics/compliance.cpp
         src/metrics/report.cpp
+        src/metrics/centroid_harness.cpp
     PUBLIC_DEPS sat_core sat_world sat_engine
 )
 target_link_libraries(sat_metrics PRIVATE nlohmann_json::nlohmann_json)
@@ -371,6 +374,7 @@ sat_add_module(sat_app
         src/app/headless.cpp
         src/app/timestamp.cpp
         src/app/sweep.cpp
+        src/app/calibrate.cpp
         src/app/verify_repro.cpp
     PUBLIC_DEPS sat_core sat_engine sat_metrics sat_scenario
 )

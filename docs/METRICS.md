@@ -200,7 +200,76 @@ The loop contributes ~0.8 px on top of the disturbance, and meets row 17 with
 room to spare once the disturbance is removed. Both figures are reported in the
 compliance matrix, labelled.
 
-### 2.11 Not yet implemented
+### 2.11 Centroiding accuracy against the theoretical bound (Stage 9)
+
+§10.1.1 gives a limit for an ideal estimator:
+
+```
+σ_centroid ≳ w / (2 · SNR)
+```
+
+CP 9.6 asks for measured accuracy **within 1.5× of it at every SNR bin**. We do
+not meet that at low SNR, and the shortfall is recorded here rather than
+absorbed into a looser threshold.
+
+Measured on a 10 px square beacon, `WindowedCoM`, with the calibrated bias
+table, 80 sub-pixel offsets per bin:
+
+| SNR | bound (px) | measured (px) | ratio |
+|---|---|---|---|
+| 3 | 1.667 | 2.29 | 1.37× |
+| 5 | 1.000 | 2.03 | 2.03× |
+| 8 | 0.625 | 1.84 | 2.94× |
+| 13 | 0.385 | 1.40 | 3.64× |
+| 20 | 0.250 | 0.52 | 2.06× |
+| 32 | 0.156 | 0.37 | 2.35× |
+| 50 | 0.100 | 0.19 | 1.89× |
+| 80 | 0.063 | 0.11 | 1.69× |
+
+**Why.** The bound assumes an ideal estimator on an isolated, well-sampled
+profile. Two things here are not that:
+
+- the blob contour is found at half-max, and at low SNR that contour wanders,
+  adding error the bound does not model;
+- the default beacon is a **flat-topped square** (spec row 9), so all of its
+  positional information is in the edges and a moment estimator has fewer
+  effective samples than the bound assumes.
+
+**What would close it.** §10.1.2 already names the fix, and it is not a better
+moment estimator: *"MatchedPeak — best at low SNR (noise already integrated
+away)"*, with the supervisor switching to it there and `Learned` below that.
+Those are Stage 11 and Stage 12.
+
+The regime the graded scenarios actually run in is the upper half of this
+table: a 10 px beacon at spec row 22's maximum noise integrates to about
+SNR 60, where the ratio is 1.7–1.9×.
+
+### 2.12 The S-curve correction (CP 9.3)
+
+§10.1.3's procedure, run by `sat-tracker --calibrate-centroid`: 200 sub-pixel
+offsets × 6 sizes × 8 SNR bins × 3 estimators, fitting
+`bias(u) = a·sin(2πu) + b·sin(4πu)` per cell.
+
+**A cell's coefficients are stored only when the curve is actually
+resolvable** — at least 10% of the error's variance explained by the fit. Least
+squares always returns two numbers; at low SNR they are fitted to noise, and
+subtracting them made the estimate 2–5% *worse*. 30 of 144 candidate cells
+qualify, and the rest are left empty, which `BiasTable::correct()` treats as
+"do nothing".
+
+Measured gain, `WindowedCoM`, 5 px beacon:
+
+| SNR | before (px) | after (px) | gain |
+|---|---|---|---|
+| ≤ 13 | — | — | 1.00× (no cell stored) |
+| 20 | 0.334 | 0.252 | 1.33× |
+| 32 | 0.246 | 0.145 | 1.69× |
+| 50 | 0.171 | 0.084 | **2.02×** |
+| 80 | 0.119 | 0.064 | 1.86× |
+
+§10.1.3 expects 2–5× at high SNR; we are at the bottom of that range.
+
+### 2.13 Not yet implemented
 
 | Metric | Status |
 |---|---|
