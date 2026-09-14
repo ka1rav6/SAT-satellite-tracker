@@ -214,6 +214,28 @@ target_compile_definitions(test_metrics PRIVATE
     SAT_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}"
 )
 
+# --- spec row 20: the frame budget, RUN SERIALLY ---------------------------
+#
+# Registered separately from the metrics suite because it is the one test in
+# the project that asserts a WALL-CLOCK figure, and `ctest --parallel 8` would
+# have it competing with fifteen other suites for the same cores. It passed
+# serially and failed under contention — measuring the scheduler rather than
+# the tracker — so CTest is told to run it alone.
+#
+# The test case itself is marked skip() so the ordinary metrics run does not
+# include it; --no-skip here is what turns it on.
+add_test(NAME frame_budget
+         COMMAND test_metrics --no-skip -ts=perf -s)
+# An empty run must FAIL, not pass. The first version of this entry filtered on
+# a test-case name containing spaces, matched nothing, and CTest reported it
+# green with zero assertions.
+set_tests_properties(frame_budget PROPERTIES
+    PASS_REGULAR_EXPRESSION "assertions: [1-9]")
+set_tests_properties(frame_budget PROPERTIES
+    RUN_SERIAL TRUE
+    TIMEOUT ${SAT_TEST_TIMEOUT}
+    LABELS "perf")
+
 # --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------
 # Runs whether or not OpenCV is present: without it the gate test reports a loud
 # SKIP rather than passing silently, so a build that cannot do video says so.

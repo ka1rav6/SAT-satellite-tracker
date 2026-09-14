@@ -213,7 +213,26 @@ TEST_CASE("clutter costs tracking accuracy, and the cost is measured not hidden"
 // CP 14.2 / spec row 20 — the frame budget
 // ===========================================================================
 
-TEST_CASE("spec row 20: the loop sustains at least 20 FPS") {
+// ---------------------------------------------------------------------------
+// A SEPARATE, SERIAL TEST SUITE.
+//
+// Skipped in the ordinary run and registered as its own CTest entry — see
+// tests/CMakeLists.txt. A wall-clock assertion under `ctest --parallel 8`
+// measures the scheduler, not the tracker: this bound passed serially and
+// failed under contention, which was the third time a timing check had gone
+// red for a reason with nothing to do with the code.
+//
+// It is a doctest TEST_SUITE rather than a name filter because the first
+// attempt filtered on `-tc="spec row 20*"`, the spaces did not survive the
+// argument round trip, and CTest reported the entry as PASSING WITH ZERO
+// ASSERTIONS. A test that silently runs nothing is worse than no test — it
+// occupies the place where the check was supposed to be. `-ts=perf` has no
+// spaces and cannot fail that way, and the CTest entry now asserts a minimum
+// assertion count so an empty run is a failure rather than a pass.
+// ---------------------------------------------------------------------------
+TEST_SUITE("perf") {
+
+TEST_CASE("spec row 20: the loop sustains at least 20 FPS" * doctest::skip()) {
     // -------------------------------------------------------------------
     // A WALL-CLOCK ASSERTION IN CI, AND WHY IT IS WRITTEN LOOSELY.
     //
@@ -255,6 +274,7 @@ TEST_CASE("spec row 20: the loop sustains at least 20 FPS") {
     // to the optimised one and Debug gets a bound that still catches an
     // order-of-magnitude regression.
     // -------------------------------------------------------------------
+    // Run alone, so this is the machine's honest single-core figure.
 #ifdef NDEBUG
     CHECK(ms < 200.0);     // ~4x the measured 46.6 ms
 #else
@@ -312,3 +332,5 @@ TEST_CASE("CP 14.2: no single stage dominates the frame the way three used to") 
     CHECK(th > 0.0);
 #endif
 }
+
+}  // TEST_SUITE("perf")
