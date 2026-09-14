@@ -370,7 +370,8 @@ bool Pipeline::step() {
     {
         SAT_ZONE(timers_, Stage::Centroid);
         if (cfg_.detector == PipelineConfig::Detector::Classical && perception_ready_) {
-            perception_.process(frame.pixels, frame.width, frame.height, ws_, dets_);
+            perception_.process(frame.pixels, frame.width, frame.height, ws_, dets_,
+                                &timers_);
         } else {
             // The CP 4.11 ablation arm. §9.4 is explicit that this "must never
             // be the default", and it is not — but it has to be runnable

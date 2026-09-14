@@ -207,4 +207,11 @@ private:
 /// stdout summary and the report.
 [[nodiscard]] std::string format_summary(const RunMetrics& m);
 
+/// CP 14.4: "p50/p95/p99 per stage reportable from the SHIPPED binary."
+///
+/// Against §15's per-stage budget, so the table says not just how long each
+/// stage took but how far from its target it is — which is the only form in
+/// which the number leads anywhere.
+[[nodiscard]] std::string format_stage_timings(const StageTimers& t);
+
 }  // namespace sat

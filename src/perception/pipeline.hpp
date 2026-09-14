@@ -22,6 +22,7 @@
 #pragma once
 
 #include "core/arena.hpp"
+#include "core/profile.hpp"
 #include "core/units.hpp"
 #include "perception/centroid/bias.hpp"
 #include "perception/centroid/estimators.hpp"
@@ -111,7 +112,10 @@ struct PerceptionWorkspace {
     std::span<uint64_t> resp_sumsq;  ///< (w+1)*(h+1)
     std::span<uint8_t>  scale;       ///< winning scale,     w*h
     std::span<uint8_t>  mask;        ///< CFAR mask,         w*h
-    std::span<float>    snr;         ///< CFAR SNR,          w*h
+    /// The second CFAR pass's mask, OR'd into `mask`. A separate buffer
+    /// because cfar_mask writes EVERY pixel — pointing it at `mask` would
+    /// erase the first pass rather than add to it.
+    std::span<uint8_t>  mask2;       ///< w*h
     MorphWorkspace      morph;
     GroupingWorkspace   grouping;
 
@@ -134,8 +138,15 @@ public:
 
     /// Run the pipeline. `out` is cleared and filled with gated candidates,
     /// strongest first.
+    ///
+    /// `timers` is optional. CP 14.4 requires per-stage p50/p95/p99 "from the
+    /// SHIPPED binary", not from a special profiling build, so the
+    /// instrumentation is always compiled in — it is one rdtsc pair per stage
+    /// against a stage that costs milliseconds. Passing nullptr skips it, which
+    /// the unit tests do so that a microbenchmark is not timing the timer.
     void process(std::span<const uint8_t> pixels, int width, int height,
-                 const PerceptionWorkspace& ws, std::vector<Detection>& out);
+                 const PerceptionWorkspace& ws, std::vector<Detection>& out,
+                 StageTimers* timers = nullptr);
 
     /// Blobs before gating, for diagnostics and for CP 5.7's "candidates drop
     /// from thousands to under 25" measurement.

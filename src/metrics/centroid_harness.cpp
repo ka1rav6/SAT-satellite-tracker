@@ -71,8 +71,18 @@ CentroidAccuracy measure_cell(CentroidKind kind, int size_px, float snr,
     std::vector<uint8_t> raw(n), filtered(n);
     std::vector<int16_t> tophat(n);
 
+    const int se = structuring_element_size(size_px);
+
+    // Scratch sized by ASKING, not by assuming it is one frame's worth. It was
+    // n bytes here, which happened to be enough until the morphology's vertical
+    // pass started processing 64 columns at once and needed 2 * padded * 64.
+    // top_hat() then found the workspace insufficient and returned WITHOUT
+    // writing, so every estimator read a stale buffer and returned the same
+    // wrong answer — which is exactly how it presented: CoM and SurfaceFit
+    // agreeing to the last digit at 0.75 px where they had been 0.13 px apart.
     MorphWorkspace morph;
-    std::vector<uint8_t> ma(n), mb(n), mc(n), ms(n);
+    std::vector<uint8_t> ma(n), mb(n), mc(n);
+    std::vector<uint8_t> ms(MorphWorkspace::scratch_bytes(w, h, se));
     morph.a = ma; morph.b = mb; morph.c = mc; morph.scratch = ms;
 
     RngSet rng(p.seed + static_cast<uint64_t>(size_px) * 1000
@@ -82,7 +92,6 @@ CentroidAccuracy measure_cell(CentroidKind kind, int size_px, float snr,
     acc.u.reserve(static_cast<size_t>(p.offsets));
     acc.err_x.reserve(static_cast<size_t>(p.offsets));
 
-    const int se = structuring_element_size(size_px);
     const int win = std::max(2, size_px / 2 + 1);
 
     double sum_sq = 0.0, sum_dx = 0.0, worst = 0.0;

@@ -22,7 +22,7 @@ bool PerceptionWorkspace::allocate(Arena& arena, int width, int height, int se_s
     resp_sumsq = arena.alloc<uint64_t>(satn);
     scale      = arena.alloc<uint8_t>(n);
     mask      = arena.alloc<uint8_t>(n);
-    snr       = arena.alloc<float>(n);
+    mask2     = arena.alloc<uint8_t>(n);
 
     morph.a       = arena.alloc<uint8_t>(n);
     morph.b       = arena.alloc<uint8_t>(n);
@@ -41,7 +41,15 @@ bool PerceptionWorkspace::allocate(Arena& arena, int width, int height, int se_s
     return !filtered.empty() && !tophat.empty() && !sat_sum.empty() &&
            !sat_sumsq.empty() && !response.empty() && !response_q.empty() &&
            !resp_sum.empty() && !resp_sumsq.empty() && !scale.empty() &&
-           !mask.empty() && !snr.empty() && !morph.a.empty() &&
+           !mask.empty() && !mask2.empty() && !morph.a.empty() &&
+           // Not merely non-empty: SUFFICIENT. top_hat() returns without
+           // writing when the workspace is too small, which is silent — the
+           // caller reads a stale buffer and every estimator downstream agrees
+           // on the same wrong answer. The centroid harness hit exactly that
+           // when the morphology's scratch requirement grew, and the symptom
+           // (two independent estimators matching to the last digit) took
+           // longer to recognise than it should have.
+           morph.sufficient(width, height, se_size) &&
            !grouping.runs.empty();
 }
 
@@ -68,7 +76,11 @@ float centroid_sigma(float snr, int size_est_px) noexcept {
 void ClassicalPerception::process(std::span<const uint8_t> pixels,
                                   int width, int height,
                                   const PerceptionWorkspace& ws,
-                                  std::vector<Detection>& out) {
+                                  std::vector<Detection>& out,
+                                  StageTimers* timers) {
+    // A no-op timer when none was supplied, so the body below has one shape.
+    StageTimers scratch;
+    StageTimers& t = timers ? *timers : scratch;
     out.clear();
     last_blobs_ = 0;
     const size_t n = static_cast<size_t>(width) * static_cast<size_t>(height);
@@ -77,17 +89,20 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
     // --- B6: median 3x3 ---------------------------------------------------
     std::span<const uint8_t> src = pixels;
     if (params_.median_enabled && ws.filtered.size() >= n) {
+        SAT_ZONE(t, Stage::Median);
         median_3x3(pixels, ws.filtered, width, height);
         src = ws.filtered;
     }
 
     // --- B7: top-hat background removal -----------------------------------
     const int se = structuring_element_size(params_.target_size_px);
-    top_hat(src, ws.tophat, width, height, se, ws.morph);
+    { SAT_ZONE(t, Stage::TopHat);
+      top_hat(src, ws.tophat, width, height, se, ws.morph); }
 
     // --- B8: summed-area tables over the top-hat --------------------------
     SummedArea sa{ws.sat_sum, ws.sat_sumsq, width, height};
-    build_sat(ws.tophat, width, height, sa);
+    { SAT_ZONE(t, Stage::SummedArea);
+      build_sat(ws.tophat, width, height, sa); }
 
     // --- B9: multi-scale matched filter -----------------------------------
     //
@@ -103,9 +118,30 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
     // so CFAR raises its threshold to match and misses the target. Measured on
     // CP 5.9's worst case, thresholding the max missed the beacon entirely in
     // 23 of 120 frames; a single scale missed none.
-    matched_filter(sa, width, height, ws.response, ws.scale);
-    matched_filter_at_scale(sa, width, height,
-                            nearest_scale(params_.target_size_px), ws.response);
+    // -----------------------------------------------------------------------
+    // ONE FULL PASS, NOT SEVEN.
+    //
+    // This used to run matched_filter() over the whole image — six scales,
+    // 307,200 pixels, writing a per-pixel winning-scale map — and then
+    // matched_filter_at_scale() for the detection response, so seven full
+    // passes in total.
+    //
+    // The scale map was read at exactly one place: size_est_px, for each
+    // surviving CANDIDATE. There are at most max_candidates of those, 24 by
+    // default. So six of the seven passes computed 307,200 values in order to
+    // use two dozen of them.
+    //
+    // Measured at 22.7 ms p50, the single largest tracker-side stage against
+    // §15's 0.12 ms budget. Evaluating matched_best() per candidate instead
+    // makes it 1 pass plus ~24 six-scale point evaluations, and nothing about
+    // the result changes: matched_best(x, y) IS what the map held at (x, y).
+    //
+    // The lesson is the ordinary one — this was not a slow algorithm, it was a
+    // fast algorithm applied to 12,800 times more data than anything read.
+    // -----------------------------------------------------------------------
+    { SAT_ZONE(t, Stage::MatchedFilter);
+      matched_filter_at_scale(sa, width, height,
+                              nearest_scale(params_.target_size_px), ws.response); }
 
     // --- B10: CFAR, on the MATCHED-FILTER RESPONSE -------------------------
     //
@@ -134,13 +170,21 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
     // precision and reproducibility reasons in §9.4.3. The response is bounded
     // by max_tophat * k_max / sqrt(k_max) = 255 * 20 = 5100, comfortably inside
     // int16.
-    for (size_t i = 0; i < n; ++i) {
-        ws.response_q[i] = static_cast<int16_t>(
-            std::clamp(static_cast<int>(std::lround(ws.response[i])), -32768, 32767));
-    }
     SummedArea resp_sa{ws.resp_sum, ws.resp_sumsq, width, height};
-    build_sat(ws.response_q, width, height, resp_sa);
-    cfar_mask(resp_sa, width, height, params_.cfar, ws.mask, ws.snr);
+    {
+        SAT_ZONE(t, Stage::SummedArea);
+        for (size_t i = 0; i < n; ++i) {
+            ws.response_q[i] = static_cast<int16_t>(
+                std::clamp(static_cast<int>(std::lround(ws.response[i])), -32768, 32767));
+        }
+        build_sat(ws.response_q, width, height, resp_sa);
+    }
+    // The per-pixel SNR map is NOT produced: an empty span takes cfar_mask's
+    // fast path. It used to be written for all 307,200 pixels and read at the
+    // candidate centroids — see the note in cfar.cpp, and the identical one at
+    // the matched filter above.
+    { SAT_ZONE(t, Stage::Cfar);
+      cfar_mask(resp_sa, width, height, params_.cfar, ws.mask, {}); }
 
     // ...and UNION with CFAR on the top-hat itself.
     //
@@ -167,16 +211,12 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
     // The false-alarm rate of a union is at most the sum, so the stated Pfa
     // becomes 2*Q(k) ~ 9.6e-5 rather than 4.8e-5 — still a number that can be
     // predicted and defended, which is the property §9.4.5 actually cares about.
-    for (size_t i = 0; i < n; ++i) {
-        const CfarResult t = cfar_at(sa, static_cast<int>(i % static_cast<size_t>(width)),
-                                     static_cast<int>(i / static_cast<size_t>(width)),
-                                     params_.cfar);
-        if (t.detected) {
-            ws.mask[i] = 1u;
-            // Keep the stronger of the two SNRs, so candidate ranking reflects
-            // whichever detector saw the target more clearly.
-            ws.snr[i] = std::max(ws.snr[i], t.snr);
-        }
+    {
+        SAT_ZONE(t, Stage::Cfar);
+        // Into a scratch mask, then OR'd in — cfar_mask writes every pixel, so
+        // it cannot be pointed at ws.mask without erasing the first pass.
+        cfar_mask(sa, width, height, params_.cfar, ws.mask2, {});
+        for (size_t i = 0; i < n; ++i) ws.mask[i] |= ws.mask2[i];
     }
 
     // --- B11: grouping -----------------------------------------------------
@@ -186,8 +226,9 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
     // available image of it, and the matched filter has deliberately blurred
     // the response over a 5-20 px box. Using the response as the weight would
     // pull every centroid toward the centre of its own smoothing kernel.
-    last_blobs_ = group_components(ws.mask, ws.tophat, width, height,
-                                   ws.grouping, blobs_);
+    { SAT_ZONE(t, Stage::Grouping);
+      last_blobs_ = group_components(ws.mask, ws.tophat, width, height,
+                                     ws.grouping, blobs_); }
 
     // --- B12/B13: gate, then centroid each survivor -----------------------
     for (const BlobAccum& b : blobs_) {
@@ -225,8 +266,14 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
                                   0, height - 1);
         const size_t idx = static_cast<size_t>(cy) * static_cast<size_t>(width)
                          + static_cast<size_t>(cx);
-        d.snr         = ws.snr[idx];
-        d.size_est_px = ws.scale[idx];
+        // The stronger of the two detectors' SNRs at this candidate, so
+        // ranking reflects whichever saw the target more clearly. Evaluated
+        // here rather than read from a full-image map; see cfar.cpp.
+        d.snr = std::max(cfar_at(resp_sa, cx, cy, params_.cfar).snr,
+                         cfar_at(sa, cx, cy, params_.cfar).snr);
+        // §9.4.4's size estimate, evaluated HERE rather than read from a
+        // full-image map — see the note at the matched filter above.
+        d.size_est_px = static_cast<uint16_t>(matched_best(sa, cx, cy).scale);
         d.centroid_sigma_est = centroid_sigma(d.snr, d.size_est_px);
 
         // The correction is applied AFTER size_est_px and snr are known,

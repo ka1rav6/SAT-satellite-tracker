@@ -61,6 +61,9 @@ struct HeadlessOptions {
 
     /// Print the §13.1 summary block to stdout.
     bool quiet = false;
+
+    /// Print CP 14.4's per-stage p50/p95/p99 against §15's budget.
+    bool stage_timings = false;
 };
 
 /// Run it. Returns a process exit code: 0 on success, non-zero on a scenario

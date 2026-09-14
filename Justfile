@@ -448,3 +448,8 @@ calibrate *ARGS: build
 test-centroid: build
     "{{build_dir}}/test_centroid" --success --no-skipped-summary 2>&1 \
         | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true
+
+# CP 14.4 — per-stage p50/p95/p99 from the SHIPPED binary, against §15's budget.
+stages scenario="scenarios/compliance.toml" duration="6": build
+    "{{build_dir}}/sat-tracker" --headless --scenario "{{scenario}}" \
+        --duration "{{duration}}" --out logs/prof --stages

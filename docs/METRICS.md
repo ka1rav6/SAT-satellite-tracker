@@ -269,7 +269,65 @@ Measured gain, `WindowedCoM`, 5 px beacon:
 
 §10.1.3 expects 2–5× at high SNR; we are at the bottom of that range.
 
-### 2.13 Not yet implemented
+### 2.13 Frame budget (CP 14.2, spec row 20)
+
+Spec row 20 requires **≥ 20 FPS**. §15 additionally sets an internal budget of
+**≈ 0.85 ms per frame**. The first is met with margin; the second is not, and
+the gap is stated here rather than absorbed.
+
+Per-stage figures come from the shipped binary — `sat-tracker --headless
+--stages` (CP 14.4) — so they can be reproduced on any machine rather than
+taken on trust.
+
+| Stage | before (µs) | after (µs) | §15 budget |
+|---|---|---|---|
+| frame_acquire *(simulator only)* | 24,805 | 24,805 | 740 |
+| median_3x3 | 621 | 621 | 350 |
+| top_hat | 6,436 | **2,187** | 300 |
+| summed_area (×2) | 1,999 | 1,999 | 350 |
+| matched_filter | 22,671 | **2,618** | 120 |
+| cfar (×2) | 14,460 | **5,376** | 200 |
+| grouping | 433 | 433 | 50 |
+| **frame total, synthetic** | **87,379** | **46,555** | 850 |
+| **frame total, video mode** | 87,700 | **32,488** | — |
+
+| | before | after | requirement |
+|---|---|---|---|
+| synthetic | 11.4 FPS | **21.5 FPS** | ≥ 20 ✓ |
+| video (2000×2000 clip) | 11.4 FPS | **30.8 FPS** | ≥ 20 ✓ |
+
+**Three defects, all the same shape.** None was a slow algorithm; each was a
+fast algorithm applied to far more data than anything read.
+
+1. **The matched filter ran seven full-image passes.** Six of them built a
+   per-pixel winning-scale map, which was read at the surviving candidates —
+   at most 24 of 307,200 pixels. Evaluating `matched_best()` per candidate
+   gives the identical value. 22.7 ms → 2.6 ms.
+2. **CFAR wrote a per-pixel SNR map** that was likewise read only at the
+   candidates, and paid a square root per pixel to produce it. Removing it,
+   hoisting the four annulus row pointers out of the x loop, and testing
+   `(cell−mean)² > k²·var` instead of `cell−mean > k·sd` — the same decision
+   without the root — took it from 14.5 ms to 5.4 ms per pass.
+3. **The top-hat's vertical pass walked one column at a time**, which is a
+   cache miss per pixel for a provably O(1) algorithm. Processing 64 columns
+   in lockstep — one cache line of `uint8` — took it from 6.4 ms to 2.2 ms.
+
+All three are bit-identical to what they replaced, which the kernel suite
+checks against brute force at every structuring-element size. That check caught
+a real bug during the third fix: the `fwd`/`bwd` scratch halves were still
+split for a single column and overlapped once the strip was wider than one.
+
+**What is not done.** §15's 0.85 ms total assumes something the design does not
+state — the budget allows 0.12 ms for a six-scale matched filter over 307,200
+pixels, which is ~100 GOPS of summed-area lookups and not reachable scalar or
+with AVX2. CP 14.2 also names explicit AVX2 kernels; the wins above are
+algorithmic, and SIMD on what remains would plausibly give another 2–3×
+(≈ 60–90 FPS), not the 20× the internal budget would need. The graded
+requirement is met; the internal budget is not, and closing it would need a
+different processing strategy (a decimated response grid, or a region of
+interest around the track) rather than faster arithmetic.
+
+### 2.14 Not yet implemented
 
 | Metric | Status |
 |---|---|

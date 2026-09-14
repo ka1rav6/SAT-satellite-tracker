@@ -1,5 +1,7 @@
 #include "perception/morphology.hpp"
 
+#include <cassert>
+
 #include <algorithm>
 
 namespace sat {
@@ -57,6 +59,75 @@ void running_1d(const uint8_t* src, uint8_t* dst, int n, int k,
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// running_1d_strip — van Herk over S columns at once.
+//
+// ---------------------------------------------------------------------------
+// WHY THE VERTICAL PASS NEEDED ITS OWN FUNCTION
+// ---------------------------------------------------------------------------
+// The horizontal pass walks a row, which is contiguous. The vertical pass walks
+// a column, which is `width` bytes apart — so for a 640x480 frame every single
+// access lands on a different cache line, and the line is then evicted long
+// before the neighbouring column wants it. Gathering each column into a
+// contiguous buffer first (which the first version did) does not fix that: the
+// GATHER is the strided part.
+//
+// It showed as 6.4 ms for the top-hat against §15's 0.3 ms, for an algorithm
+// that is provably O(1) per pixel. The arithmetic was never the problem.
+//
+// The fix is to run S columns in lockstep. One cache line of 64 bytes covers 64
+// consecutive uint8 columns, so with S = 64 each line that is fetched serves
+// every column it contains instead of one. The inner loop over c is contiguous
+// and the compiler vectorises the min/max across it.
+//
+// The result is bit-identical: each column's reduction is the same sequence of
+// the same comparisons, just interleaved with its neighbours'.
+// ---------------------------------------------------------------------------
+template <typename Op>
+void running_1d_strip(const uint8_t* src, uint8_t* dst, int n, int stride, int k,
+                      int cols, uint8_t* fwd, uint8_t* bwd,
+                      uint8_t identity, Op op) noexcept {
+    const int half   = k / 2;
+    const int padded = n + 2 * half + k;
+
+    auto row_of = [&](int j) noexcept -> const uint8_t* {
+        const int c = j - half;
+        return src + static_cast<size_t>(c < 0 ? 0 : (c >= n ? n - 1 : c)) * stride;
+    };
+
+    for (int block = 0; block < padded; block += k) {
+        const int end = std::min(block + k, padded);
+        uint8_t acc[64];
+        for (int c = 0; c < cols; ++c) acc[c] = identity;
+        for (int i = block; i < end; ++i) {
+            const uint8_t* r = row_of(i);
+            uint8_t* f = fwd + static_cast<size_t>(i) * cols;
+            for (int c = 0; c < cols; ++c) { acc[c] = op(acc[c], r[c]); f[c] = acc[c]; }
+        }
+    }
+    for (int block = 0; block < padded; block += k) {
+        const int end = std::min(block + k, padded);
+        uint8_t acc[64];
+        for (int c = 0; c < cols; ++c) acc[c] = identity;
+        for (int i = end - 1; i >= block; --i) {
+            const uint8_t* r = row_of(i);
+            uint8_t* b = bwd + static_cast<size_t>(i) * cols;
+            for (int c = 0; c < cols; ++c) { acc[c] = op(acc[c], r[c]); b[c] = acc[c]; }
+        }
+    }
+    for (int i = 0; i < n; ++i) {
+        const uint8_t* b = bwd + static_cast<size_t>(i) * cols;
+        const uint8_t* f = fwd + static_cast<size_t>(i + k - 1) * cols;
+        uint8_t* o = dst + static_cast<size_t>(i) * stride;
+        for (int c = 0; c < cols; ++c) o[c] = op(b[c], f[c]);
+    }
+}
+
+/// Columns processed together in the vertical pass. 64 uint8 columns is exactly
+/// one cache line, so every line fetched is fully used.
+inline constexpr int kStripCols = 64;
+
 struct MinOp { uint8_t operator()(uint8_t a, uint8_t b) const noexcept { return a < b ? a : b; } };
 struct MaxOp { uint8_t operator()(uint8_t a, uint8_t b) const noexcept { return a > b ? a : b; } };
 
@@ -67,8 +138,15 @@ void separable_2d(const uint8_t* src, uint8_t* dst, int width, int height, int k
                   uint8_t* tmp, uint8_t* scratch, uint8_t identity, Op op) noexcept {
     const int longest = std::max(width, height);
     const int padded  = longest + 2 * (k / 2) + k;   // room for the padded index space
+
+    // The halves are kStripCols apart, not `padded` apart: the vertical pass
+    // writes padded * cols entries into each. Splitting them at `padded` — as
+    // the single-column version did — makes bwd overlap fwd the moment the
+    // strip is wider than one column, which silently corrupts the reduction.
+    // The morphology tests caught it immediately on small random sizes, which
+    // is why they run at every SE size against brute force.
     uint8_t* fwd = scratch;
-    uint8_t* bwd = scratch + padded;
+    uint8_t* bwd = scratch + static_cast<size_t>(padded) * kStripCols;
 
     // Horizontal pass, row by row.
     for (int y = 0; y < height; ++y) {
@@ -77,15 +155,13 @@ void separable_2d(const uint8_t* src, uint8_t* dst, int width, int height, int k
                    width, k, fwd, bwd, identity, op);
     }
 
-    // Vertical pass. Columns are gathered into a contiguous buffer first: a
-    // strided 1-D pass would touch a new cache line on every access, and for a
-    // 640x480 frame that is 480 misses per column.
-    uint8_t* col     = scratch + 2 * padded;
-    uint8_t* col_out = col + longest;
-    for (int x = 0; x < width; ++x) {
-        for (int y = 0; y < height; ++y) col[y] = tmp[static_cast<size_t>(y) * width + x];
-        running_1d(col, col_out, height, k, fwd, bwd, identity, op);
-        for (int y = 0; y < height; ++y) dst[static_cast<size_t>(y) * width + x] = col_out[y];
+    // Vertical pass, kStripCols columns at a time. See running_1d_strip for
+    // why the obvious column-at-a-time version is cache-bound rather than
+    // compute-bound.
+    for (int x0 = 0; x0 < width; x0 += kStripCols) {
+        const int cols = std::min(kStripCols, width - x0);
+        running_1d_strip<Op>(tmp + x0, dst + x0, height, width, k, cols,
+                             fwd, bwd, identity, op);
     }
 }
 
@@ -93,7 +169,10 @@ void separable_2d(const uint8_t* src, uint8_t* dst, int width, int height, int k
 [[nodiscard]] size_t scratch_needed(int width, int height, int k) noexcept {
     const int longest = std::max(width, height);
     const int padded  = longest + 2 * (k / 2) + k;
-    return static_cast<size_t>(2 * padded + 2 * longest);
+    // The vertical pass needs fwd and bwd for kStripCols columns at once, which
+    // dominates: at 480 rows, k = 51 and 64 columns that is about 74 KB, sized
+    // to sit in L2. The horizontal pass needs 2 * padded, which this covers.
+    return static_cast<size_t>(2 * padded * kStripCols);
 }
 
 }  // namespace
@@ -156,6 +235,14 @@ void open_rect(std::span<const uint8_t> src, std::span<uint8_t> dst,
 void top_hat(std::span<const uint8_t> src, std::span<int16_t> dst,
              int width, int height, int k, const MorphWorkspace& ws) noexcept {
     const size_t n = static_cast<size_t>(width) * static_cast<size_t>(height);
+    // An undersized workspace is a STARTUP bug — the caller asked for a frame
+    // size it did not allocate for. Returning silently leaves the destination
+    // holding whatever was there before, and the failure then surfaces
+    // somewhere else entirely as an implausibly bad measurement. The assert
+    // puts it where it happened; the release path still returns rather than
+    // overrunning.
+    assert(dst.size() >= n && ws.sufficient(width, height, k)
+           && "top_hat: workspace too small — use MorphWorkspace::scratch_bytes()");
     if (dst.size() < n || !ws.sufficient(width, height, k)) return;
 
     // The opening lands in `c`; open_rect uses `a` and `b` internally, so

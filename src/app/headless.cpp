@@ -231,6 +231,9 @@ int run_headless(const HeadlessOptions& opt) {
 
     if (!opt.quiet) {
         std::printf("%s", format_summary(m).c_str());
+        if (opt.stage_timings) {
+            std::printf("\n%s", format_stage_timings(pipe.timers()).c_str());
+        }
         if (opt.write_artifacts) {
             std::printf("\nartifacts         %s/run.json", opt.out_dir.c_str());
             if (want_csv) {
@@ -266,6 +269,8 @@ int headless_command(int argc, char* argv[], int& i) {
             opt.truth_path = argv[++k];
         } else if (std::strcmp(a, "--video-mode") == 0 && k + 1 < argc) {
             opt.video_mode = argv[++k];
+        } else if (std::strcmp(a, "--stages") == 0) {
+            opt.stage_timings = true;
         } else if (std::strcmp(a, "--no-csv") == 0) {
             opt.no_csv = true;
         } else if (std::strcmp(a, "--no-report") == 0) {

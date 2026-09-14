@@ -283,4 +283,65 @@ std::string format_summary(const RunMetrics& m) {
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// format_stage_timings — CP 14.4.
+//
+// §15's table gives a scalar budget per stage and a total of ~0.85 ms. Printing
+// the measurement beside the budget is what turns a profile into a decision:
+// "SummedArea 4.2 ms" is a number, "SummedArea 4.2 ms against 0.35 ms, 12x
+// over" is a place to start.
+// ---------------------------------------------------------------------------
+std::string format_stage_timings(const StageTimers& t) {
+    // Design §15's scalar column, microseconds. Stages the design does not
+    // budget separately get 0, which prints as a blank rather than as a
+    // target they are failing.
+    struct Budget { Stage stage; double us; };
+    static constexpr Budget kBudget[] = {
+        {Stage::WorldAdvance,   20.0},   // "World, 10 sub-ticks"
+        {Stage::Disturbance,     0.0},
+        {Stage::GimbalStep,     10.0},   // part of "Control + plant"
+        {Stage::FrameAcquire,  740.0},   // background + splat + damage chain
+        {Stage::Median,        350.0},
+        {Stage::TopHat,        300.0},
+        {Stage::SummedArea,    350.0},   // "SAT x2"
+        {Stage::MatchedFilter, 120.0},
+        {Stage::Cfar,          200.0},
+        {Stage::Grouping,       50.0},
+        {Stage::Centroid,       20.0},
+        {Stage::Tracking,       10.0},   // "IMM"
+        {Stage::Supervisor,      5.0},
+        {Stage::Control,        10.0},
+        {Stage::Metrics,         0.0},
+        {Stage::Snapshot,       30.0},
+        {Stage::FrameTotal,    850.0},   // "Total (synthetic) ~ 0.85 ms"
+    };
+
+    std::string out =
+        "STAGE TIMINGS  (design section 15 budget; percentiles, never means)\n"
+        "stage             count      p50       p95       p99    budget    over\n"
+        "-----------------------------------------------------------------------\n";
+    char b[256];
+    for (const Budget& e : kBudget) {
+        const LatencyHistogram& h = t[e.stage];
+        if (h.count() == 0) continue;
+        const double p50 = h.p50();
+        if (e.us > 0.0) {
+            std::snprintf(b, sizeof b,
+                          "%-16s %7llu %8.1f  %8.1f  %8.1f  %8.1f  %6.1fx\n",
+                          stage_name(e.stage),
+                          static_cast<unsigned long long>(h.count()),
+                          p50, h.p95(), h.p99(), e.us, p50 / e.us);
+        } else {
+            std::snprintf(b, sizeof b,
+                          "%-16s %7llu %8.1f  %8.1f  %8.1f\n",
+                          stage_name(e.stage),
+                          static_cast<unsigned long long>(h.count()),
+                          p50, h.p95(), h.p99());
+        }
+        out += b;
+    }
+    out += "(microseconds)\n";
+    return out;
+}
+
 }  // namespace sat
