@@ -30,10 +30,15 @@ struct HeadlessOptions {
     /// with a model in the loop and one produced without are different claims.
     bool no_ai = false;
 
-    /// Write centroid.csv and run.json. CP 7.5's sweep wants them; the `--bench`
+    /// Write centroid.csv as well as run.json. CP 7.5's sweep wants them; the `--bench`
     /// path does not, and measuring the simulation with a per-frame fprintf in
     /// the loop would be measuring the fprintf.
     bool write_artifacts = true;
+
+    /// Write run.json but not centroid.csv. A 500-run sweep wants the metrics,
+    /// not 500 CSVs of a couple of megabytes each — and writing them would make
+    /// the sweep's wall time partly a measurement of the filesystem.
+    bool no_csv = false;
 
     /// Publish snapshots, which is what produces the INV-3 fingerprint. Costs
     /// a frame copy (~300 KB) per frame, so it is off for a pure speed run and

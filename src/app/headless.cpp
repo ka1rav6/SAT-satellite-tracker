@@ -55,7 +55,8 @@ int run_headless(const HeadlessOptions& opt) {
     // --- artifacts, opened BEFORE the run (§13.2's A9 rule) ----------------
     CentroidLog log;
     const std::string csv_path = opt.out_dir + "/centroid.csv";
-    if (opt.write_artifacts) {
+    const bool want_csv = opt.write_artifacts && !opt.no_csv;
+    if (want_csv) {
         CentroidLogHeader h;
         h.source      = opt.scenario_path;
         h.mode        = "synthetic";
@@ -84,7 +85,7 @@ int run_headless(const HeadlessOptions& opt) {
     while (pipe.step()) {
         const FrameRecord& r = pipe.last();
         metrics.add(r);
-        if (opt.write_artifacts) log.write(r, screen);
+        if (want_csv) log.write(r, screen);
     }
     const auto t1 = std::chrono::steady_clock::now();
     const double wall_s = std::chrono::duration<double>(t1 - t0).count();
@@ -132,6 +133,8 @@ int headless_command(int argc, char* argv[], int& i) {
             opt.duration_override = std::atof(argv[++k]);
         } else if (std::strcmp(a, "--no-ai") == 0) {
             opt.no_ai = true;
+        } else if (std::strcmp(a, "--no-csv") == 0) {
+            opt.no_csv = true;
         } else if (std::strcmp(a, "--quiet") == 0) {
             opt.quiet = true;
         } else if (std::strcmp(a, "--bench") == 0) {

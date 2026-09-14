@@ -11,6 +11,7 @@
 #include "core/frames.hpp"
 #include "core/units.hpp"
 #include "app/headless.hpp"
+#include "app/sweep.hpp"
 #include "app/verify_repro.hpp"
 #include "scenario/schema.hpp"
 
@@ -184,6 +185,9 @@ void print_usage() {
     std::printf("                       run with no window; writes centroid.csv and\n");
     std::printf("                       run.json to --out and prints the design 13.1\n");
     std::printf("                       metric summary (CP 7.3, CP 7.4)\n");
+    std::printf("  --sweep FILE [--out DIR] [--jobs N] [--keep-csv] [--quiet]\n");
+    std::printf("                       run the sweep in FILE across N worker processes\n");
+    std::printf("                       and print the compliance matrix (CP 7.5, CP 7.7)\n");
     std::printf("  --probe-video FILE   open FILE and report resolution/fps/frames (CP 0.7)\n");
     std::printf("  --has-video          exit 0 if this build can decode video, 1 if not\n");
     std::printf("  --verify-reproducibility [--seeds N] [--duration S]\n");
@@ -207,6 +211,9 @@ int main(int argc, char* argv[]) {
         }
         if (std::strcmp(argv[i], "--headless") == 0) {
             return sat::headless_command(argc, argv, i);
+        }
+        if (std::strcmp(argv[i], "--sweep") == 0) {
+            return sat::sweep_command(argc, argv, i);
         }
         if (std::strcmp(argv[i], "--verify-reproducibility") == 0) {
             return verify_reproducibility_command(argc, argv, i);

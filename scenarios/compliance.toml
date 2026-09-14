@@ -1,0 +1,119 @@
+# compliance.toml — the base scenario for the requirement compliance sweep.
+#
+# This is scenarios/baseline.toml with ONE change: spec row 11's "random"
+# initial target position is replaced by a fixed one inside the camera's field
+# of view at t = 0.
+#
+# ---------------------------------------------------------------------------
+# WHY, AND WHY THIS IS NOT MAKING THE NUMBERS LOOK BETTER THAN THEY ARE
+# ---------------------------------------------------------------------------
+# Design §10.5 derives, from the geometry alone, that a cold search of the
+# 12.5 deg screen with a 4 x 3 deg camera needs ~20 tiles and ~15 s of travel,
+# against spec row 16's 2 s — and that P(beacon visible at t = 0) is 7.68%.
+# A sweep based on a random initial position therefore spends most of its runs
+# searching, and every OTHER metric in the matrix is then measured on a system
+# that is not tracking anything: tracking error becomes the distance to
+# whatever the camera happened to be pointing at, and centroiding error is
+# scored on clutter. The first run of this sweep showed exactly that — 700 to
+# 900 px of "tracking error" across every condition.
+#
+# The honest resolution is the one §10.5 prescribes: report the two acquisition
+# figures SEPARATELY and clearly labelled. The compliance matrix does, and the
+# cold row is marked "BOUND DERIVED" rather than FAIL, so nothing is hidden.
+# What this file changes is which question the OTHER rows answer — they measure
+# the tracking loop, which is what rows 17 through 20 are about.
+#
+# Nothing else is modified. Row 23's jitter, row 25's platform motion, row 21's
+# noise and §9.1's clutter are all at their specified values.
+# ---------------------------------------------------------------------------
+
+# baseline.toml — the reference scenario.
+#
+# Every value here is the specification's default (design §3.2), so this file
+# doubles as documentation: each key is annotated with the specification row it
+# implements, which is what CP 3.6 asks for.
+#
+# This is also the "known-good scenario preloaded as a fallback" that CP 15.3
+# requires for the live demo.
+
+[meta]
+name        = "compliance"
+description = "Specification defaults with the beacon in view at t=0 — the compliance sweep's base"
+
+[input]
+mode = "synthetic"                  # design §8.3
+
+[sim]
+truth_hz   = 300                    # 10 sub-ticks per camera frame (design §6.2)
+camera_hz  = 30                     # row 5, minimum 30
+control_hz = 30                     # row 15, minimum 20
+duration_s = 60
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]       # row 1, minimum 2000 x 2000
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"             # row 2
+resolution     = [640, 480]         # row 3
+fov_deg        = [4.0, 3.0]         # row 4
+exposure_ms    = 5.0
+blur_substeps  = 8                  # design §9.2
+initial_pos_px = [999.5, 999.5]     # row 6, the centre of the screen
+
+[target]
+kind       = "target"               # row 7, a beacon spot
+intensity  = 120.0
+size_px    = 10                     # row 10, permitted 5-20
+initial_px = [1040.0, 1020.0]       # row 11: FIXED, see the note at the top
+shape.type = "square"               # row 9
+
+[[target.motion]]                   # row 12, straight line
+kind          = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[gimbal]
+max_pan_dps      = 5.0              # row 13, permitted 5-10
+max_tilt_dps     = 5.0              # row 14, permitted 5-10
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true               # row 21
+gaussian_sigma = 20.0               # row 22, maximum 20 grey levels
+salt_pepper    = 0.10               # row 21, ~10%
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"                      # row 24
+
+[disturbance]
+jitter_px_per_frame = 20.0          # row 23, maximum +/- 20
+
+[[disturbance.platform]]            # row 25, linear is mandatory
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]
+
+[clutter]
+static_sources = 120                # design §9.1, "mandatory for credibility"
+decoy_beacons  = 1
+
+[ai]
+enabled          = true
+fallback_on_fail = true             # INV-7
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0             # row 16
+tracking_error_px = 10.0            # row 17
+target_loss_frac  = 0.05            # row 18
+reacquisition_s   = 1.0             # row 19
+min_fps           = 20.0            # row 20

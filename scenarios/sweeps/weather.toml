@@ -1,0 +1,56 @@
+# sweeps/weather.toml — the compliance sweep (CP 7.5, CP 7.7).
+#
+# Spec row 24 lists five atmospheric conditions and row 21 the noise sources.
+# This sweep crosses them, runs every combination at several seeds, and hands
+# the result to design §13.3's compliance matrix.
+#
+# WHY SEEDS RATHER THAN ONE RUN PER CONDITION. A single run gives a number; a
+# spread of seeds gives a distribution, and the matrix reports p95s. The whole
+# point of Stage 7 is that "3.2 px" stops being an anecdote, and a p95 over one
+# sample is not a p95.
+#
+# WHY CLUTTER IS AN AXIS RATHER THAN A CONSTANT. Design §9.1 calls 120 static
+# sources "mandatory for credibility" and deliberately makes some of them
+# BRIGHTER than the beacon. Nothing in the classical pipeline can tell one
+# bright point source from another by appearance — that is CP 4.11's finding,
+# and its designed answers are §10.2's priority policy (Stage 12) and
+# CandidateNet (Stage 11), neither of which exists yet.
+#
+# Left as a constant it dominates every row and the matrix reports one known
+# deficiency fifteen times over, saying nothing about anything else. As an axis
+# it is isolated: the clutter-free rows show what the tracking loop does, the
+# cluttered rows show exactly what the missing discriminator costs, and the
+# difference between them is the number Stages 11 and 12 have to move.
+
+[sweep]
+base       = "scenarios/compliance.toml"
+seed_count = 5             # seeds 1..5 at every combination
+duration_s = 4.0           # 120 frames: enough for every statistic asserted
+
+# Row 24: clear, haze, fog, rain, low light.
+[[axis]]
+key    = "atmosphere.mode"
+values = ["clear", "haze", "fog", "rain", "lowlight"]
+
+# Row 21: impulse noise off, and at the specification figure.
+[[axis]]
+key    = "noise.salt_pepper"
+values = [0.0, 0.10]
+
+# Design §9.1's clutter, isolated. See the note above.
+[[axis]]
+key    = "clutter.static_sources"
+values = [0, 120]
+
+# The decoy, separately from the clutter field — because it is a DIFFERENT
+# problem and conflating them hides both.
+#
+# §9.1 asks for a decoy that is near-identical to the beacon. Bulk clutter is
+# a discrimination problem (many sources, some brighter, all static); a decoy
+# is an association problem (one source, indistinguishable by appearance,
+# moving). The first sweep set static_sources to 0 and left the decoy on, and
+# the "clutter-free" rows still showed 31 px of centroiding error — all of it
+# the decoy, and invisible as such until it got its own axis.
+[[axis]]
+key    = "clutter.decoy_beacons"
+values = [0, 1]

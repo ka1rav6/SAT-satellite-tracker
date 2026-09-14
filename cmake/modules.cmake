@@ -88,6 +88,8 @@ sat_add_module(sat_world
 sat_add_module(sat_scenario
     SOURCES
         src/scenario/schema.cpp
+        src/scenario/overlay.cpp
+        src/scenario/sweep_spec.cpp
         src/scenario/toml_loader.cpp
     PUBLIC_DEPS sat_core sat_world
 )
@@ -201,6 +203,7 @@ sat_add_module(sat_metrics
         src/metrics/collector.cpp
         src/metrics/centroid_log.cpp
         src/metrics/run_report.cpp
+        src/metrics/compliance.cpp
     PUBLIC_DEPS sat_core sat_world sat_engine
 )
 target_link_libraries(sat_metrics PRIVATE nlohmann_json::nlohmann_json)
@@ -347,17 +350,39 @@ if(SAT_HAVE_ONNX)
 endif()
 
 # ===========================================================================
+# app — the command implementations, as a LIBRARY.
+#
+# main.cpp is argv dispatch and nothing else; every command behind it lives
+# here. The split exists so the commands can be TESTED: CP 7.5's sweep
+# expansion and CP 7.3's headless runner are ordinary functions taking ordinary
+# structs, and a test that had to spawn a process to check the cartesian
+# product would not be worth writing.
+#
+# It is the one module allowed to read a wall clock outside core/profile.hpp
+# (see app/timestamp.hpp for why), which is another reason to keep its boundary
+# explicit rather than letting it be "whatever main.cpp happens to include".
+# ===========================================================================
+sat_add_module(sat_app
+    SOURCES
+        src/app/headless.cpp
+        src/app/timestamp.cpp
+        src/app/sweep.cpp
+        src/app/verify_repro.cpp
+    PUBLIC_DEPS sat_core sat_engine sat_metrics sat_scenario
+)
+target_compile_definitions(sat_app PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios")
+
+# ===========================================================================
 # Application executable.
 # ===========================================================================
 add_executable(sat-tracker
     src/app/main.cpp
-    src/app/headless.cpp
-    src/app/timestamp.cpp
-    src/app/verify_repro.cpp
 )
 
 target_link_libraries(sat-tracker PRIVATE
     sat_core
+    sat_app
     sat_engine
     sat_metrics
     sat_gui

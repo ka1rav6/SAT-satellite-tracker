@@ -28,12 +28,20 @@
 
 #pragma once
 
+#include "core/result.hpp"
 #include "metrics/collector.hpp"
 #include "scenario/scenario.hpp"
 
 #include <string>
+#include <string_view>
 
 namespace sat {
+
+/// The scenario, echoed as JSON. Exported because the sweep needs to answer
+/// "did this override actually change anything?", and comparing two parsed
+/// scenarios field by field would mean a third place that has to list every
+/// key. See app/sweep.cpp.
+[[nodiscard]] std::string scenario_json_text(const Scenario& sc);
 
 /// Serialise one run. `fingerprint_hash` is the combined INV-3 hash over every
 /// frame, or 0 if snapshots were not published.
@@ -49,5 +57,20 @@ namespace sat {
                                   const Scenario& sc,
                                   const std::string& build_hash,
                                   uint64_t fingerprint_hash);
+
+// ---------------------------------------------------------------------------
+// metrics_from_json — read back what run_json wrote.
+//
+// The sweep's parent process never sees a worker's RunMetrics in memory: the
+// worker is a separate process (app/sweep.hpp explains why) and run.json is the
+// only channel between them. So this is not a convenience — it is half of the
+// sweep's plumbing, and the round trip run_json -> metrics_from_json is tested
+// as such.
+//
+// `json_text` is the file's contents. Returns an error rather than a
+// default-constructed RunMetrics on malformed input: a run that produced
+// unreadable output has FAILED, and a sweep that silently averaged in a row of
+// zeros would report a better number the more runs crashed.
+[[nodiscard]] Result<RunMetrics> metrics_from_json(std::string_view json_text);
 
 }  // namespace sat

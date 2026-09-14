@@ -372,3 +372,16 @@ headless *ARGS: build
 spec-run: build
     "{{build_dir}}/test_metrics" -tc="*specification's own jitter*,*derived floor*,*clutter costs*" \
         --success | grep -E "MESSAGE|TEST CASE|ERROR|test cases"
+
+# CP 7.5 / ★ CP 7.7 — the requirement compliance sweep.
+#
+# 200 runs (40 conditions x 5 seeds) across worker processes, then design
+# §13.3's matrix. Takes about 5 minutes on 8 cores; see the note in
+# scenarios/sweeps/weather.toml for what each axis isolates and why.
+sweep *ARGS: build
+    "{{build_dir}}/sat-tracker" --sweep scenarios/sweeps/weather.toml \
+        --out logs/sweep {{ARGS}}
+
+# Just the matrix from the last sweep, without re-running it.
+matrix:
+    @cat logs/sweep/compliance.txt

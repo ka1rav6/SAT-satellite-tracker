@@ -14,8 +14,8 @@ namespace {
 /// The scenario, echoed key for key. Written by hand rather than by a
 /// reflection macro so that adding a §7.1 key and forgetting to echo it is a
 /// visible omission in a diff rather than an invisible one.
-nlohmann::json scenario_json(const Scenario& sc) {
-    nlohmann::json j;
+nlohmann::ordered_json scenario_json(const Scenario& sc) {
+    nlohmann::ordered_json j;
     j["name"]        = sc.name;
     j["description"] = sc.description;
 
@@ -38,9 +38,9 @@ nlohmann::json scenario_json(const Scenario& sc) {
         {"initial_pos_px", {sc.initial_pos_px[0], sc.initial_pos_px[1]}},
     };
 
-    nlohmann::json targets = nlohmann::json::array();
+    nlohmann::ordered_json targets = nlohmann::ordered_json::array();
     for (const TargetSpec& t : sc.targets) {
-        nlohmann::json tj = {
+        nlohmann::ordered_json tj = {
             {"kind",      t.kind},
             {"intensity", t.intensity},
             {"size_px",   t.size_px},
@@ -48,7 +48,7 @@ nlohmann::json scenario_json(const Scenario& sc) {
             {"random_initial", t.random_initial},
             {"initial_px", {t.initial_px[0], t.initial_px[1]}},
         };
-        nlohmann::json ms = nlohmann::json::array();
+        nlohmann::ordered_json ms = nlohmann::ordered_json::array();
         for (const MotionSpec& m : t.motion) {
             // Only the fields the component actually uses would be tidier, but
             // it would require a per-kind switch that has to be kept in step
@@ -91,9 +91,9 @@ nlohmann::json scenario_json(const Scenario& sc) {
         {"salt_pepper",    sc.salt_pepper},
         {"hot_pixels",     sc.hot_pixels},
     };
-    j["atmosphere"]  = nlohmann::json{{"mode", atmosphere_name(sc.atmosphere)}};
-    j["disturbance"] = nlohmann::json{{"jitter_px_per_frame", sc.jitter_px_per_frame}};
-    j["clutter"]     = nlohmann::json{{"static_sources", sc.static_sources},
+    j["atmosphere"]  = nlohmann::ordered_json{{"mode", atmosphere_name(sc.atmosphere)}};
+    j["disturbance"] = nlohmann::ordered_json{{"jitter_px_per_frame", sc.jitter_px_per_frame}};
+    j["clutter"]     = nlohmann::ordered_json{{"static_sources", sc.static_sources},
                                       {"decoy_beacons",  sc.decoy_beacons}};
     j["requirements"] = {
         {"acquisition_s",     sc.acquisition_s},
@@ -105,7 +105,7 @@ nlohmann::json scenario_json(const Scenario& sc) {
     return j;
 }
 
-nlohmann::json metrics_json(const RunMetrics& m) {
+nlohmann::ordered_json metrics_json(const RunMetrics& m) {
     return {
         // Names match docs/METRICS.md exactly, so a reader of one can look up
         // the other without a translation table.
@@ -147,7 +147,7 @@ nlohmann::json metrics_json(const RunMetrics& m) {
             {"false_tracks",     m.false_tracks},
             {"false_track_rate_per_min", m.false_track_rate_per_min},
         }},
-        {"plant", nlohmann::json{{"saturation_frac", m.saturation_frac}}},
+        {"plant", nlohmann::ordered_json{{"saturation_frac", m.saturation_frac}}},
         {"speed", {
             {"frame_ms_p50", m.frame_ms_p50},
             {"frame_ms_p95", m.frame_ms_p95},
@@ -163,13 +163,22 @@ nlohmann::json metrics_json(const RunMetrics& m) {
 
 }  // namespace
 
+std::string scenario_json_text(const Scenario& sc) {
+    return scenario_json(sc).dump(2);
+}
+
 std::string run_json(const RunMetrics& m, const Scenario& sc,
                      const std::string& build_hash, uint64_t fingerprint_hash) {
-    nlohmann::json j;
+    nlohmann::ordered_json j;
     j["format"] = "sat-run-v1";
 
     // Provenance first, and deliberately so: anyone opening this file should
     // see what produced it before they see what it claims.
+    //
+    // This needs ordered_json rather than json. nlohmann's default object type
+    // is a std::map, which sorts keys — so "metrics" came out before
+    // "provenance" and the comment above was describing an intention the code
+    // did not implement. A test asserting the order is what caught it.
     j["provenance"] = {
         {"build",       build_hash},
         {"seed",        sc.seed},
@@ -191,6 +200,95 @@ bool write_run_json(const std::string& path, const RunMetrics& m, const Scenario
     if (!out) return false;
     out << run_json(m, sc, build_hash, fingerprint_hash) << "\n";
     return static_cast<bool>(out);
+}
+
+Result<RunMetrics> metrics_from_json(std::string_view json_text) {
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(json_text);
+    } catch (const std::exception& e) {
+        return Err(std::string("run.json does not parse: ") + e.what());
+    }
+    if (!j.contains("metrics") || !j.contains("provenance")) {
+        return Err("run.json is missing its metrics or provenance block");
+    }
+
+    // Every field is read with a default, so a run.json written by an older
+    // build loses the fields it did not have rather than failing to load. The
+    // top-level blocks above are required, because their absence means this is
+    // not a run.json at all.
+    const nlohmann::json& m = j["metrics"];
+    auto num = [](const nlohmann::json& o, const char* k, double d = 0.0) {
+        return o.contains(k) ? o[k].get<double>() : d;
+    };
+    auto integer = [](const nlohmann::json& o, const char* k) -> int64_t {
+        return o.contains(k) ? o[k].get<int64_t>() : 0;
+    };
+    auto flag = [](const nlohmann::json& o, const char* k) {
+        return o.contains(k) && o[k].get<bool>();
+    };
+
+    RunMetrics r;
+    if (m.contains("centroiding")) {
+        const auto& c = m["centroiding"];
+        r.centroid_rmse_screen_px = num(c, "rmse_screen_px");
+        r.centroid_p95_screen_px  = num(c, "p95_screen_px");
+        r.centroid_max_screen_px  = num(c, "max_screen_px");
+        r.centroid_rmse_image_px  = num(c, "rmse_image_px");
+        r.centroid_p95_image_px   = num(c, "p95_image_px");
+        r.centroid_max_image_px   = num(c, "max_image_px");
+        r.centroid_bias_x_px      = num(c, "bias_x_px");
+        r.centroid_bias_y_px      = num(c, "bias_y_px");
+        r.centroid_frames         = integer(c, "frames_scored");
+    }
+    if (m.contains("tracking")) {
+        const auto& t = m["tracking"];
+        r.tracking_rms_px   = num(t, "rms_px");
+        r.tracking_p95_px   = num(t, "p95_px");
+        r.tracking_max_px   = num(t, "max_px");
+        r.tracking_rms_urad = num(t, "rms_urad");
+        r.tracking_frames   = integer(t, "frames_scored");
+    }
+    if (m.contains("acquisition")) {
+        const auto& a = m["acquisition"];
+        r.acquired             = flag(a, "acquired");
+        r.acquisition_cold_s   = num(a, "cold_s");
+        r.acquired_in_fov      = flag(a, "acquired_in_fov");
+        r.acquisition_in_fov_s = num(a, "in_fov_s");
+    }
+    if (m.contains("reacquisition")) {
+        const auto& q = m["reacquisition"];
+        r.reacquisitions       = integer(q, "episodes");
+        r.reacquisition_mean_s = num(q, "mean_s");
+        r.reacquisition_p95_s  = num(q, "p95_s");
+        r.reacquisition_max_s  = num(q, "max_s");
+    }
+    if (m.contains("lock")) {
+        const auto& l = m["lock"];
+        r.lock_retention_rate = num(l, "retention_rate");
+        r.target_loss_frac    = num(l, "target_loss_frac");
+        r.frames_in_fov       = integer(l, "frames_in_fov");
+        r.frames_confirmed    = integer(l, "frames_confirmed");
+        r.false_tracks        = integer(l, "false_tracks");
+        r.false_track_rate_per_min = num(l, "false_track_rate_per_min");
+    }
+    if (m.contains("plant")) r.saturation_frac = num(m["plant"], "saturation_frac");
+    if (m.contains("speed")) {
+        const auto& s = m["speed"];
+        r.frame_ms_p50 = num(s, "frame_ms_p50");
+        r.frame_ms_p95 = num(s, "frame_ms_p95");
+        r.frame_ms_p99 = num(s, "frame_ms_p99");
+        r.fps_mean     = num(s, "fps_from_p50");
+        r.fps_p5       = num(s, "fps_from_p95");
+        r.wall_time_s  = num(s, "wall_time_s");
+        r.frames_total = integer(s, "frames_total");
+        r.duration_s   = num(s, "duration_s");
+    }
+    const auto& p = j["provenance"];
+    if (p.contains("scenario"))   r.scenario_name = p["scenario"].get<std::string>();
+    if (p.contains("seed"))       r.seed = p["seed"].get<uint64_t>();
+    if (p.contains("ai_enabled")) r.ai_enabled = p["ai_enabled"].get<bool>();
+    return Ok(std::move(r));
 }
 
 }  // namespace sat
