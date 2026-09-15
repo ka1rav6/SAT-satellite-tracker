@@ -144,6 +144,7 @@ nlohmann::ordered_json metrics_json(const RunMetrics& m) {
             {"target_loss_frac", m.target_loss_frac},
             {"frames_in_fov",    m.frames_in_fov},
             {"frames_confirmed", m.frames_confirmed},
+            {"frames_held_in_fov", m.frames_held_in_fov},
             {"false_tracks",     m.false_tracks},
             {"false_track_rate_per_min", m.false_track_rate_per_min},
         }},
@@ -277,6 +278,7 @@ Result<RunMetrics> metrics_from_json(std::string_view json_text) {
         r.target_loss_frac    = num(l, "target_loss_frac");
         r.frames_in_fov       = integer(l, "frames_in_fov");
         r.frames_confirmed    = integer(l, "frames_confirmed");
+        r.frames_held_in_fov  = integer(l, "frames_held_in_fov");
         r.false_tracks        = integer(l, "false_tracks");
         r.false_track_rate_per_min = num(l, "false_track_rate_per_min");
     }

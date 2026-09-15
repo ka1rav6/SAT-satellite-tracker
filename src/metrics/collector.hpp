@@ -110,7 +110,8 @@ struct RunMetrics {
     double  lock_retention_rate = 0.0;      ///< Confirmed frames / in-FOV frames
     double  target_loss_frac    = 0.0;      ///< 1 - lock_retention_rate
     int64_t frames_in_fov       = 0;
-    int64_t frames_confirmed    = 0;
+    int64_t frames_confirmed    = 0;   ///< every Confirmed frame, in view or not
+    int64_t frames_held_in_fov  = 0;   ///< Confirmed AND in view — the numerator
 
     double  false_track_rate_per_min = 0.0; ///< §13.1, per minute
     int64_t false_tracks            = 0;
@@ -198,6 +199,8 @@ private:
     int64_t frames_in_fov_   = 0;
     int64_t frames_with_truth_ = 0;
     int64_t frames_confirmed_ = 0;
+    /// Confirmed AND in view — the retention numerator. See collector.cpp.
+    int64_t frames_held_in_fov_ = 0;
 
     // CP 10.7. First entry only — see the note at the call site.
     bool    handover_reached_   = false;

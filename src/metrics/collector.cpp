@@ -44,6 +44,11 @@ void MetricCollector::add(const FrameRecord& r) {
     if (r.truth_valid) ++frames_with_truth_;
     if (r.truth_valid && r.truth_in_fov) {
         ++frames_in_fov_;
+        // The retention NUMERATOR, and it is deliberately inside this branch.
+        // See the note at the ratio below for why counting every Confirmed
+        // frame reports the most flattering possible number in exactly the
+        // worst case.
+        if (confirmed) ++frames_held_in_fov_;
         if (!have_first_in_fov_) {
             have_first_in_fov_ = true;
             first_in_fov_s_    = r.time_s;
@@ -160,18 +165,37 @@ RunMetrics MetricCollector::finish(const StageTimers& timers,
     m.reacquisitions       = static_cast<int64_t>(reacq_s_.count());
 
     m.frames_in_fov    = frames_in_fov_;
-    m.frames_confirmed = frames_confirmed_;
-    // Guarded: a run where the beacon is never in view has no denominator, and
-    // 0/0 reported as either 0% or 100% retention would be a lie in opposite
-    // directions. It is reported as zero with frames_in_fov = 0 beside it, so
-    // the reader can see the ratio is undefined rather than bad.
+    m.frames_confirmed   = frames_confirmed_;
+    m.frames_held_in_fov = frames_held_in_fov_;
+    // -----------------------------------------------------------------------
+    // §13.1: "lock_retention_rate = frames Confirmed / frames beacon in view".
+    //
+    // The numerator is frames that are Confirmed AND IN VIEW, not every
+    // Confirmed frame, and the difference is not pedantry — it was reporting
+    // 100% retention on a run that had lost the beacon entirely.
+    //
+    // A 60 s compliance run with 120 clutter sources ends with the tracker
+    // holding a clutter source while the beacon has left the field: 1798
+    // Confirmed frames against 727 in-view frames, a ratio of 2.47. The old
+    // code clamped that to 1.0 and printed "retention 100.00 %" directly above
+    // "false tracks 1073.60 /min". Both numbers were computed correctly and
+    // together they were a contradiction, with the clamp turning the system's
+    // worst failure into its best-looking metric.
+    //
+    // The clamp's own justification was real — a filter coasting correctly
+    // through an occlusion does produce Confirmed frames while the beacon is
+    // out of view — but intersecting the numerator with the denominator's
+    // condition handles that case properly rather than papering over it: those
+    // frames are in neither, so they neither inflate nor penalise. The ratio
+    // now cannot exceed 1 by construction, so there is nothing to clamp.
+    //
+    // Guarded for the empty denominator: a run where the beacon is never in
+    // view has no ratio, and 0/0 as either 0% or 100% would be a lie in
+    // opposite directions. Zero, with frames_in_fov = 0 printed beside it.
+    // -----------------------------------------------------------------------
     m.lock_retention_rate = frames_in_fov_
-        ? static_cast<double>(frames_confirmed_) / static_cast<double>(frames_in_fov_)
+        ? static_cast<double>(frames_held_in_fov_) / static_cast<double>(frames_in_fov_)
         : 0.0;
-    // Clamped: Confirmed frames can exceed in-FOV frames when the filter coasts
-    // correctly through a brief occlusion, which would otherwise report a
-    // retention above 100% and a NEGATIVE loss fraction.
-    if (m.lock_retention_rate > 1.0) m.lock_retention_rate = 1.0;
     m.target_loss_frac = frames_in_fov_ ? (1.0 - m.lock_retention_rate) : 0.0;
 
     m.false_tracks = false_tracks_;
@@ -273,11 +297,19 @@ std::string format_summary(const RunMetrics& m) {
 
     out += "\nLOCK\n";
     if (m.frames_in_fov > 0) {
-        line("  retention         %8.2f %%   (%lld confirmed / %lld in-FOV frames)\n",
+        line("  retention         %8.2f %%   (%lld held / %lld in-FOV frames)\n",
              100.0 * m.lock_retention_rate,
-             static_cast<long long>(m.frames_confirmed),
+             static_cast<long long>(m.frames_held_in_fov),
              static_cast<long long>(m.frames_in_fov));
         line("  target loss       %8.2f %%   (row 18, < 5 %%)\n", 100.0 * m.target_loss_frac);
+        // Printed whenever they differ, because the gap IS the false-track
+        // count and seeing it next to the retention is what makes the two
+        // numbers legible together rather than contradictory.
+        if (m.frames_confirmed != m.frames_held_in_fov) {
+            line("                              %lld further Confirmed frames with "
+                 "the beacon out of view\n",
+                 static_cast<long long>(m.frames_confirmed - m.frames_held_in_fov));
+        }
     } else if (m.frames_with_truth == 0) {
         out += "  retention              n/a   (no ground truth supplied)\n";
     } else {

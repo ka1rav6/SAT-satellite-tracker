@@ -142,19 +142,57 @@ TEST_CASE("CP 7.1: lock retention divides by in-FOV frames, not by total frames"
     CHECK(m.target_loss_frac == doctest::Approx(0.2));
 }
 
-TEST_CASE("CP 7.1: retention cannot exceed 100% and loss cannot go negative") {
-    // Coasting correctly through an occlusion leaves the track Confirmed on
-    // frames where the beacon is not visible. Unclamped that reports retention
-    // above 100% and a NEGATIVE target loss, which would sail through a
-    // compliance check while being nonsense.
+TEST_CASE("CP 7.1: Confirmed frames with the beacon out of view are not retention") {
+    // This case used to assert that the ratio was CLAMPED to 100%, on the
+    // grounds that a filter coasting correctly through an occlusion leaves the
+    // track Confirmed while the beacon is invisible, and an unclamped ratio
+    // would report retention above 100% and a negative target loss.
+    //
+    // The reasoning was right about the occlusion and wrong about the fix, and
+    // Stage 10 found out how wrong. A 60 s compliance run with 120 clutter
+    // sources ends holding a clutter source after the beacon has left the
+    // field: 1798 Confirmed frames against 727 in-view frames, a ratio of 2.47,
+    // which the clamp turned into "retention 100.00 %" printed directly above
+    // "false tracks 1073.60 /min". Both numbers were computed correctly and
+    // together they were a contradiction — and the clamp made the system's
+    // worst failure mode produce its best-looking metric.
+    //
+    // Intersecting the numerator with the denominator's condition handles the
+    // occlusion properly instead of papering over it: a frame where the beacon
+    // is out of view is in NEITHER, so it can neither inflate the ratio nor
+    // penalise it. The ratio cannot exceed 1 by construction and there is
+    // nothing left to clamp.
     std::vector<FrameRecord> f;
     for (int i = 0; i < 10; ++i) f.push_back(scored(i, TrackState::Confirmed, 0.1, 1.0, true));
     for (int i = 10; i < 20; ++i) f.push_back(scored(i, TrackState::Confirmed, 0.1, 1.0, false));
     const RunMetrics m = collect(f);
-    CHECK(m.frames_confirmed > m.frames_in_fov);
+
+    CHECK(m.frames_confirmed   == 20);   // every Confirmed frame
+    CHECK(m.frames_in_fov      == 10);
+    CHECK(m.frames_held_in_fov == 10);   // ...of which ten were on the beacon
     CHECK(m.lock_retention_rate == doctest::Approx(1.0));
-    CHECK(m.target_loss_frac == doctest::Approx(0.0));
-    CHECK(m.target_loss_frac >= 0.0);
+    CHECK(m.target_loss_frac    == doctest::Approx(0.0));
+}
+
+TEST_CASE("CP 7.1: losing the beacon cannot report as perfect retention") {
+    // The failure the clamp used to hide, in miniature: the beacon is in view
+    // for 10 frames and held for 5 of them, then leaves, and the tracker keeps
+    // a confirmed track on something else for 50 more.
+    //
+    // Retention must be 50%, not 100%. The 50 off-target frames are false
+    // tracks and are counted as such, separately.
+    std::vector<FrameRecord> f;
+    for (int i = 0; i < 5; ++i)  f.push_back(scored(i, TrackState::Confirmed, 0.1, 1.0, true));
+    for (int i = 5; i < 10; ++i) f.push_back(scored(i, TrackState::Coasting,  0.1, 1.0, true));
+    for (int i = 10; i < 60; ++i) f.push_back(scored(i, TrackState::Confirmed, 0.1, 1.0, false));
+    const RunMetrics m = collect(f);
+
+    CHECK(m.frames_in_fov      == 10);
+    CHECK(m.frames_held_in_fov == 5);
+    CHECK(m.frames_confirmed   == 55);
+    CHECK(m.lock_retention_rate == doctest::Approx(0.5));
+    CHECK(m.target_loss_frac    == doctest::Approx(0.5));
+    CHECK(m.false_tracks        == 50);
 }
 
 TEST_CASE("CP 7.1: an undefined ratio is reported with its denominator, not as zero percent") {
