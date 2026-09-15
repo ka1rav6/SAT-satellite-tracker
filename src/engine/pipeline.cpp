@@ -111,11 +111,34 @@ void Pipeline::build_stage6() {
     search_.reset(cfg_.search, cfg_.initial_boresight);
 }
 
+// ---------------------------------------------------------------------------
+// reset_controller — gains AND the plant model, together.
+//
+// One function because they were two lines in two places and CP 10.4 found out
+// the hard way: build() got the plant model and build_from_scenario() did not,
+// so every scenario-driven run used the DEFAULT model — no rate ceiling, no
+// acceleration limit — and the Smith predictor's numbers were identical with
+// the limits added and without them. Identical numbers after a change that
+// should have mattered is the tell; the code was never running.
+// ---------------------------------------------------------------------------
+void Pipeline::reset_controller() {
+    control_.reset(cfg_.gains);
+    // The controller's BELIEF about the mount, copied from the same
+    // configuration the plant was built from. That is the honest starting
+    // point — a real system would take these from a datasheet or a calibration
+    // and they would be slightly wrong, which is the risk control/smith.hpp is
+    // about and tests/control/test_stage10.cpp deliberately exercises.
+    control_.set_plant_model(PlantModel{cfg_.pan.latency_s, cfg_.pan.tau_s,
+                                        cfg_.pan.max_rate_urad_s,
+                                        cfg_.pan.max_accel_urad_s2},
+                             source_.clock().control_dt());
+}
+
 void Pipeline::build(const PipelineConfig& cfg, EmitterSoA emitters) {
     cfg_ = cfg;
     source_.build(cfg_.synthetic, std::move(emitters));
     gimbal_.reset(cfg_.pan, cfg_.tilt, cfg_.initial_boresight);
-    control_.reset(cfg_.gains);
+    reset_controller();
     cmd_rate_ = Rate2{};
     frame_    = 0;
     last_     = FrameRecord{};
@@ -170,6 +193,8 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     cfg.gains.k_ff    = sc.control.k_ff;
     cfg.gains.i_limit = sc.control.i_limit;
     cfg.gains.anti_windup = sc.control.anti_windup;
+    cfg.gains.smith       = sc.control.smith;
+    cfg.gains.smith_rate_blend = sc.control.smith_rate_blend;
 
     // §7.2's closed forms turned into the filter's q. The largest acceleration
     // over every target, because the tracker does not know which one it will
@@ -192,7 +217,7 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     cfg_ = cfg;
     source_.build_from_scenario(sc);
     gimbal_.reset(cfg_.pan, cfg_.tilt, cfg_.initial_boresight);
-    control_.reset(cfg_.gains);
+    reset_controller();
     cmd_rate_ = Rate2{};
     frame_    = 0;
     last_     = FrameRecord{};
@@ -547,7 +572,11 @@ bool Pipeline::step() {
     // -----------------------------------------------------------------------
     Angle2 aim;
     if (fsm_.tracking_active() && trk.drivable()) {
-        aim = trk.position();
+        // CP 10.4: advanced by the controller's prediction horizon, which is
+        // ZERO unless the Smith predictor is on. Both sides of the error move
+        // together or neither does — control/smith.hpp has the argument, and
+        // CP 10.1's double lead is what happens when only one of them moves.
+        aim = trk.predict_position(control_.horizon_s());
         if (fsm_.changed_this_frame()) search_.recentre(aim);
     } else {
         if (fsm_.changed_this_frame() && rec.mode == TrackMode::Search) {

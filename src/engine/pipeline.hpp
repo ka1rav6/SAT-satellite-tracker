@@ -379,6 +379,12 @@ public:
     // give. That is the case the argument is kept alive for.
     // -----------------------------------------------------------------------
     void set_platform_rate_est(Rate2 r) noexcept { platform_rate_est_ = r; }
+
+    /// Mutable access, for CP 10.4's deliberately-wrong plant model. Nothing in
+    /// the engine uses it; a test that cannot make the controller's model
+    /// disagree with the plant cannot demonstrate §10.4's "amplifies model
+    /// error" at all.
+    [[nodiscard]] Controller& controller_mut() noexcept { return control_; }
     [[nodiscard]] SyntheticSource&   source()         noexcept { return source_; }
     [[nodiscard]] const StageTimers& timers()   const noexcept { return timers_; }
 
@@ -433,6 +439,9 @@ private:
     ModeFsm             fsm_{};
     SearchPattern       search_{};
     bool                perception_ready_ = false;
+
+    /// Gains and the plant model together — see the note in pipeline.cpp.
+    void reset_controller();
 
     Rate2       cmd_rate_{};      ///< the value that closes the loop (INV-2)
     Rate2       platform_rate_est_{};   ///< CP 10.3: zero; see set_platform_rate_est

@@ -36,6 +36,7 @@
 
 #pragma once
 
+#include "control/smith.hpp"
 #include "core/units.hpp"
 
 #include <cmath>
@@ -89,6 +90,23 @@ struct ControlGains {
     double k_ff    = 1.0;    ///< velocity feedforward; 1.0 = full, 0.0 = off
     double i_limit = 2.0e5;  ///< integrator clamp, urad*s
 
+    /// CP 10.4's Smith predictor. OFF, because it was measured and it does not
+    /// help on this plant — smith.hpp carries the numbers and the reason. The
+    /// design anticipated this outcome: "if it destabilises, leave it off —
+    /// optional". It stays switchable so the claim can be re-checked whenever
+    /// the plant's numbers change.
+    bool   smith = false;
+
+    /// How much the Smith predictor's model trusts the differentiated encoder
+    /// for its rate seed: 1 is fully, 0 uses the model's own integrated rate.
+    /// See smith.hpp. This was a HYPOTHESIS about why the predictor hurt —
+    /// the encoder quantises to 20 urad and differentiating it over a 33 ms
+    /// step injects 600 urad/s into the prediction — and the measurement
+    /// rejected it: 17.00 / 16.97 / 16.96 px at blends of 0 / 0.5 / 1. Kept
+    /// because a tested-and-rejected explanation is worth more written down
+    /// than deleted, and a test pins that it still makes no difference.
+    double smith_rate_blend = 1.0;
+
     /// Conditional integration (CP 10.2). Defaults ON, and turning it off is
     /// not an option anybody should exercise in a real run — it exists so the
     /// checkpoint can MEASURE what anti-windup is worth instead of asserting
@@ -120,6 +138,18 @@ public:
         integ_      = 0.0;
         prev_meas_  = 0.0;
         have_prev_  = false;
+        smith_.reset(model_, dt_hint_);
+        smith_.set_rate_blend(g_.smith_rate_blend);
+    }
+
+    /// The controller's BELIEF about the plant, for CP 10.4. A copy of the
+    /// numbers, never a handle on the GimbalAxis — see smith.hpp for why a
+    /// predictor that cannot disagree with the plant tests nothing.
+    void set_plant_model(const PlantModel& m, double dt) noexcept {
+        model_    = m;
+        dt_hint_  = dt;
+        smith_.reset(model_, dt_hint_);
+        smith_.set_rate_blend(g_.smith_rate_blend);
     }
 
     /// Change gains without kicking the loop.
@@ -163,13 +193,32 @@ public:
                                  bool integral_enabled = true) noexcept {
         // --- derivative, on the measurement ---------------------------------
         double d = 0.0;
+        double measured_rate = 0.0;
         if (have_prev_ && dt > 0.0) {
+            measured_rate = (measurement - prev_meas_) / dt;
             // Negated because d/dt(error) = −d/dt(measurement) for a fixed
             // setpoint, and we want the damping sign of an error derivative.
-            d = -(measurement - prev_meas_) / dt;
+            d = -measured_rate;
         }
         prev_meas_ = measurement;
         have_prev_ = true;
+
+        // --- CP 10.4: the Smith predictor -----------------------------------
+        //
+        // Everything below this line then sees a measurement that has been
+        // advanced to where the mount will be when a command issued now can
+        // first take effect. The proportional, integral and derivative paths
+        // all use it, because they are all reacting to the same staleness.
+        //
+        // The error is corrected rather than the setpoint: advancing the AIM
+        // instead would be the same double-lead mistake CP 10.1 found, since
+        // the target's motion is already the feedforward's job. This lead is
+        // about the MOUNT's motion, which nothing else accounts for.
+        double effective_error = error;
+        if (g_.smith) {
+            const double lead = smith_.lead(measured_rate);
+            effective_error = error - lead;
+        }
 
         // --- integral, with conditional integration --------------------------
         // Freezing the integrator while saturated is the anti-windup. Without
@@ -202,29 +251,49 @@ public:
         // it disabled would be measuring a different controller rather than
         // this one without a safeguard.
         if ((!saturated || !g_.anti_windup) && integral_enabled) {
-            integ_ += error * dt;
+            integ_ += effective_error * dt;
             integ_ = clamp_abs(integ_, g_.i_limit);
         }
 
-        return g_.kp * error
-             + g_.ki * integ_
-             + g_.kd * d
-             + g_.k_ff * target_rate_est    // the ten lines that matter most
-             - platform_rate_est;           // cancel known platform drift
+        const double out = g_.kp * effective_error
+                         + g_.ki * integ_
+                         + g_.kd * d
+                         + g_.k_ff * target_rate_est  // the ten lines that matter most
+                         - platform_rate_est;         // cancel known platform drift
+
+        // AFTER computing it, never before: the command being issued cannot be
+        // used to predict its own effect.
+        smith_.push(out);
+        return out;
     }
 
     [[nodiscard]] double integrator() const noexcept { return integ_; }
+
+    /// CP 10.4: how far ahead the error is evaluated, seconds. Zero when the
+    /// Smith predictor is off. The CALLER must advance the setpoint by the same
+    /// amount — smith.hpp explains why advancing one side of the error biases
+    /// it by exactly this.
+    [[nodiscard]] double horizon_s() const noexcept {
+        return g_.smith ? smith_.horizon_s() : 0.0;
+    }
     [[nodiscard]] const ControlGains& gains() const noexcept { return g_; }
 
     /// Zero the integrator and derivative history. Used when the FSM re-enters
     /// Search, where the old error history describes a target that is gone.
-    void clear_state() noexcept { integ_ = 0.0; have_prev_ = false; prev_meas_ = 0.0; }
+    void clear_state() noexcept {
+        integ_ = 0.0; have_prev_ = false; prev_meas_ = 0.0;
+        smith_.reset(model_, dt_hint_);
+    }
 
 private:
     ControlGains g_{};
     double       integ_     = 0.0;
     double       prev_meas_ = 0.0;
     bool         have_prev_ = false;
+
+    PlantModel     model_{};
+    double         dt_hint_ = 1.0 / 30.0;
+    SmithPredictor smith_{};
 };
 
 // ---------------------------------------------------------------------------
@@ -233,6 +302,10 @@ private:
 class Controller {
 public:
     void reset(const ControlGains& g) noexcept { az_.reset(g); el_.reset(g); }
+    void set_plant_model(const PlantModel& m, double dt) noexcept {
+        az_.set_plant_model(m, dt);
+        el_.set_plant_model(m, dt);
+    }
     void set_gains(const ControlGains& g) noexcept { az_.set_gains(g); el_.set_gains(g); }
     void clear_state() noexcept { az_.clear_state(); el_.clear_state(); }
 
@@ -251,6 +324,9 @@ public:
                         integral_enabled)
         };
     }
+
+    /// Both axes share a control period and a plant model, so one number.
+    [[nodiscard]] double horizon_s() const noexcept { return az_.horizon_s(); }
 
     [[nodiscard]] AxisController&       az()       noexcept { return az_; }
     [[nodiscard]] AxisController&       el()       noexcept { return el_; }

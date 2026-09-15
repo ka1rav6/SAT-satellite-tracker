@@ -120,6 +120,12 @@ const std::vector<FieldSpec>& schema() {
         {"control.k_ff",    ValueKind::Float, false, 0.0, 2.0,  "",
          "velocity feedforward gain; 0 disables it (CP 10.1's ablation), 1 is "
          "full cancellation of the tracking lag"},
+        {"control.smith", ValueKind::Bool, false, 0.0, 0.0, "",
+         "CP 10.4's Smith predictor; controls against where the mount will be "
+         "once the commands already in flight have landed"},
+        {"control.smith_rate_blend", ValueKind::Float, false, 0.0, 1.0, "",
+         "how much the Smith predictor's rate seed trusts the differentiated "
+         "encoder; 0 uses the model's own integrated rate"},
         {"control.anti_windup", ValueKind::Bool, false, 0.0, 0.0, "",
          "conditional integration (CP 10.2); off is for the ablation only"},
         {"control.i_limit", ValueKind::Float, false, 0.0, kInf, "",

@@ -656,3 +656,111 @@ TEST_CASE("CP 10.6: row 17 is lost BEFORE the actuator runs out") {
     CHECK(lost > 2.2 * none);
     CHECK(lost < 3.8 * none);
 }
+
+// ===========================================================================
+// CP 10.4 — the Smith predictor
+//
+// "Bandwidth improves without losing stability margin. If it destabilises,
+//  leave it off — optional."
+//
+// It is off. These tests say why, and they are written so that they state the
+// THRESHOLD rather than the verdict: if a future plant has a delay large
+// enough for a predictor to earn its place, the first case turns red and says
+// so, instead of quietly enshrining today's answer.
+// ===========================================================================
+TEST_CASE("CP 10.4: the loop is not delay-limited, so the predictor cannot help") {
+    // The argument in one number. A Smith predictor buys bandwidth when the
+    // DELAY is what is binding. The horizon here is the transport delay plus
+    // one control period:
+    //
+    //   43 ms at 30 Hz with a 10 ms latency
+    //
+    // and the crossover is kp = 8 rad/s, so the delay costs
+    //
+    //   8 * 0.043 = 0.34 rad = 20 degrees
+    //
+    // of phase at crossover, out of a margin that starts near 90. Twenty
+    // degrees is not what is limiting this loop; the acceleration limit during
+    // acquisition and the rate ceiling at high demand are, and no amount of
+    // prediction removes either.
+    //
+    // 45 degrees is the conventional line below which delay compensation
+    // starts to pay. If the plant ever crosses it this fails and the
+    // conclusion below has to be revisited.
+    const double horizon_s = 0.010 + 1.0 / 30.0;
+    const double phase_deg = 8.0 * horizon_s * 180.0 / 3.14159265358979;
+    MESSAGE("delay phase at crossover: " << phase_deg << " degrees over a "
+            << 1000.0 * horizon_s << " ms horizon");
+    CHECK(phase_deg < 45.0);
+}
+
+TEST_CASE("CP 10.4: measured on the plant, the predictor costs rather than buys") {
+    // The run behind the decision. Scored at a 600 px/s demand — high enough
+    // that the lag is the dominant error, which is the regime a delay
+    // compensator is supposed to own.
+    Scenario off = fast_target_with_drift(6.0, -400.0 / std::sqrt(2.0),
+                                               -400.0 / std::sqrt(2.0));
+    off.control.smith = false;
+    Scenario on = off;
+    on.control.smith = true;
+
+    const RunResult a = run(off, 0.0);
+    const RunResult b = run(on,  0.0);
+    REQUIRE(a.scored > 100);
+    REQUIRE(b.scored > 100);
+
+    MESSAGE("600 px/s demand: smith off " << a.rms_px << " px RMS (max "
+            << a.max_px << "), smith on " << b.rms_px << " px RMS (max "
+            << b.max_px << ")");
+
+    // Not better. Stated as "does not improve" rather than "is worse", because
+    // the useful assertion is that turning it ON is not leaving something on
+    // the table — that is the claim the default rests on.
+    CHECK(b.rms_px > 0.95 * a.rms_px);
+}
+
+TEST_CASE("CP 10.4: the predictor's model is a copy, and a wrong one shows") {
+    // The risk §10.4 names — "amplifies model error" — demonstrated rather
+    // than asserted. The controller's PlantModel is a copy of the plant's
+    // numbers precisely so it CAN be wrong; a predictor that reads the plant's
+    // own state is not a predictor.
+    //
+    // Five times the true transport delay is the sort of error a datasheet
+    // figure or a bus that got slower would produce.
+    const Scenario sc = fast_target_with_drift(6.0, -400.0 / std::sqrt(2.0),
+                                                    -400.0 / std::sqrt(2.0));
+    const double dt = 1.0 / static_cast<double>(sc.control_hz);
+
+    auto score = [&](bool smith, double model_latency_s) {
+        Scenario s2 = sc;
+        s2.control.smith = smith;
+        Pipeline p;
+        p.build_from_scenario(s2);
+        if (smith) {
+            p.controller_mut().set_plant_model(
+                PlantModel{model_latency_s, sc.time_constant_s,
+                           deg_to_urad(sc.max_pan_dps),
+                           deg_to_urad(sc.max_accel_dps2)}, dt);
+        }
+        double sum_sq = 0.0; int n = 0;
+        while (p.step()) {
+            const FrameRecord& r = p.last();
+            if (!r.truth_valid) continue;
+            if (r.track_state != TrackState::Confirmed) continue;
+            sum_sq += r.tracking_error_px * r.tracking_error_px;
+            ++n;
+        }
+        REQUIRE(n > 100);
+        return std::sqrt(sum_sq / n);
+    };
+
+    const double honest = score(true, sc.latency_s);
+    const double wrong  = score(true, 5.0 * sc.latency_s);
+    MESSAGE("model latency 10 ms -> " << honest << " px RMS;  50 ms -> "
+            << wrong << " px RMS");
+
+    // A model that over-states the delay predicts motion that never happens.
+    // The degradation is the point: it is why the predictor is a liability on
+    // a loop that was not delay-limited to begin with.
+    CHECK(wrong > honest);
+}

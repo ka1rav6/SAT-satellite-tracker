@@ -136,6 +136,10 @@ struct ControlSpec {
     /// checkpoint's counterfactual is a run rather than a rebuild; leaving it
     /// false in a compliance scenario would be misconfiguring the system.
     bool   anti_windup = true;
+
+    /// CP 10.4's Smith predictor. See control/smith.hpp.
+    bool   smith = false;
+    double smith_rate_blend = 1.0;   ///< 1 = trust the encoder, 0 = the model
 };
 
 // ---------------------------------------------------------------------------
