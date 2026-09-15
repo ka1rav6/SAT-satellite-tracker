@@ -246,6 +246,18 @@ cp106: build
     @python3 tools/cp106_sweep.py --binary "{{build_dir}}/sat-tracker" \
         --scenario scenarios/control/fast_linear.toml --out logs/control
 
+# CP 10.7 — handover success rate and time-to-handover, over 20 seeds per arm.
+#
+# The second arm adds spec row 23's maximum camera jitter, which a
+# co-boresighted quadrant cell sees in full and the encoder does not see at
+# all. See the tool's header for the arithmetic; the short version is that the
+# specification's own jitter is five times the handover criterion, so the
+# system correctly refuses to hand over rather than claiming an alignment a
+# real fine sensor would immediately lose.
+cp107: build
+    @python3 tools/cp107_sweep.py --binary "{{build_dir}}/sat-tracker" \
+        --scenario scenarios/control/fast_linear.toml --out logs/control
+
 # The Stage 10 control checkpoints, verbose — the numbers ARE the checkpoints.
 test-control: build
     "{{build_dir}}/test_loop" -tc="*CP 10.*" --success --no-skipped-summary 2>&1         | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true

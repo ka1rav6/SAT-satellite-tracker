@@ -205,10 +205,23 @@ TEST_CASE("CP 6.6: any state goes to Safe on the loss timeout, and stays there")
     CHECK(fsm.mode() == TrackMode::Safe);
 }
 
-TEST_CASE("CP 6.6: Handover is disabled until CP 10.7 builds the quadrant detector") {
-    // Entering Handover would claim a capability the system does not have. The
-    // transition is implemented and tested so it cannot rot, but it is off.
+TEST_CASE("CP 6.6: the Handover transition needs its full window, and can be switched off") {
+    // This case was written at Stage 6 to assert the OPPOSITE default:
+    // handover was disabled because entering it would have claimed a
+    // capability the system did not have, there being no fine sensor to hand
+    // to. CP 10.7 built control/handover.hpp's quadrant detector and enabled
+    // it, so the default flipped and this case now checks the two things that
+    // survive that change.
+    //
+    //   The switch still works in both directions. Handover is a claim about a
+    //   downstream system this project does not contain, and a run that should
+    //   not make that claim must be able to say so.
+    //
+    //   29 frames is not 30. §10.4 says "for 30 consecutive frames", and an
+    //   off-by-one here would hand over a frame early on every single run —
+    //   the sort of error that never shows up in an aggregate.
     ModeFsmParams p;
+    p.handover_enabled = false;
     int64_t frame = 0;
     double  t     = 0.0;
 
@@ -239,7 +252,7 @@ TEST_CASE("CP 6.6: Handover is disabled until CP 10.7 builds the quadrant detect
     hold_accurate(off, 60);
     CHECK(off.mode() == TrackMode::Track);
 
-    p.handover_enabled = true;
+    p.handover_enabled = true;   // the CP 10.7 default
     ModeFsm on;
     on.reset(p);
     frame = 0; t = 0.0;

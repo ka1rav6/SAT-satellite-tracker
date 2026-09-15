@@ -100,12 +100,12 @@ struct ModeFsmParams {
     double ifov_urad             = 109.08;
     int    handover_frames       = 30;
 
-    /// Handover is a CP 10.7 deliverable. Until the quadrant detector exists,
-    /// entering the state would claim a capability the system does not have, so
-    /// the transition is present, tested, and disabled by default. This is a
-    /// switch rather than commented-out code so that CP 10.7 is a one-line
-    /// change and so the transition cannot rot in the meantime.
-    bool   handover_enabled = false;
+    /// CP 10.7. Enabled now that control/handover.hpp's quadrant detector
+    /// exists and the pipeline feeds it an OBSERVABLE offset rather than the
+    /// truth-derived tracking error. It stays a switch because handover is a
+    /// claim about a downstream system that this project does not contain, and
+    /// a run that should not make that claim should be able to say so.
+    bool   handover_enabled = true;
 
     /// §10.4: "any -> Safe: loss timeout exceeded". Seconds with no drivable
     /// track. Spec row 19 allows 1 s for re-acquisition, so a timeout below

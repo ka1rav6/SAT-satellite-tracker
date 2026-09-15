@@ -115,6 +115,21 @@ struct RunMetrics {
     double  false_track_rate_per_min = 0.0; ///< §13.1, per minute
     int64_t false_tracks            = 0;
 
+    // --- handover — CP 10.7 ------------------------------------------------
+    //
+    // The deliverable of COARSE alignment is a handover: the moment the loop
+    // can tell a fine sensor "the beam is inside your capture range, take it".
+    // A coarse tracker with no such moment has no definition of success beyond
+    // "the error looks small", which is why this is reported alongside the
+    // graded rows rather than as a curiosity.
+    //
+    // Reached-or-not per run; a sweep turns that into the success RATE the
+    // checkpoint asks for, the same way it turns per-run acquisition times
+    // into a distribution.
+    bool    handover_reached = false;
+    double  handover_time_s  = 0.0;     ///< from run start; 0 when never reached
+    double  handover_rms_urad_best = 1e9;  ///< closest the loop ever got
+
     // --- plant and timing --------------------------------------------------
     double  saturation_frac = 0.0;
     double  fps_mean        = 0.0;          ///< sustained closed-loop
@@ -183,6 +198,11 @@ private:
     int64_t frames_in_fov_   = 0;
     int64_t frames_with_truth_ = 0;
     int64_t frames_confirmed_ = 0;
+
+    // CP 10.7. First entry only — see the note at the call site.
+    bool    handover_reached_   = false;
+    double  handover_time_s_    = 0.0;
+    double  handover_best_urad_ = 1e9;
     int64_t false_tracks_    = 0;
 
     // --- acquisition and re-acquisition state ------------------------------

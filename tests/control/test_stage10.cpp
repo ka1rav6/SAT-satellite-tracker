@@ -30,11 +30,13 @@
 
 #include <doctest/doctest.h>
 
+#include "control/handover.hpp"
 #include "engine/pipeline.hpp"
 #include "scenario/scenario.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <vector>
 
 using namespace sat;
@@ -763,4 +765,112 @@ TEST_CASE("CP 10.4: the predictor's model is a copy, and a wrong one shows") {
     // The degradation is the point: it is why the predictor is a liability on
     // a loop that was not delay-limited to begin with.
     CHECK(wrong > honest);
+}
+
+// ===========================================================================
+// CP 10.7 — the handover stub
+//
+// "FSM reaches Handover on a good run; success rate reported over a sweep."
+// ===========================================================================
+TEST_CASE("CP 10.7: the quadrant cell reports NO error outside its capture range") {
+    // The property that makes it a null sensor rather than a wide-field one,
+    // and the one most likely to be got wrong. A quad cell with no beam on it
+    // reports no signal — not a large error. Treating loss of signal as a
+    // large error is how a fine loop runs away from a beam it never had.
+    QuadrantDetector q;
+    q.reset(QuadrantParams{1000.0, 100.0});
+
+    CHECK(q.in_capture(Angle2{500.0, 500.0}));      // |.| = 707 urad
+    CHECK_FALSE(q.in_capture(Angle2{800.0, 800.0}));// |.| = 1131 urad
+
+    const Angle2 far = q.signal(Angle2{5000.0, 0.0});
+    CHECK(far.x == doctest::Approx(0.0));
+    CHECK(far.y == doctest::Approx(0.0));
+
+    // Inside the linear region the response is proportional; past it, it
+    // saturates rather than growing.
+    CHECK(q.signal(Angle2{50.0, 0.0}).x == doctest::Approx(0.5));
+    CHECK(q.signal(Angle2{900.0, 0.0}).x == doctest::Approx(1.0));
+}
+
+TEST_CASE("CP 10.7: an unfilled window never reads as a settled loop") {
+    // The other easy mistake: averaging whatever is in the buffer. Twenty-nine
+    // perfect frames would then report a perfect RMS and hand over one frame
+    // early, every time, on evidence that does not exist yet.
+    HandoverMonitor m;
+    m.reset(30);
+    for (int i = 0; i < 29; ++i) m.push(1.0);
+    CHECK(m.rms_urad() > 1e8);
+    m.push(1.0);
+    CHECK(m.rms_urad() == doctest::Approx(1.0));
+
+    // And a dropout discards the history rather than carrying it across.
+    m.clear();
+    CHECK(m.rms_urad() > 1e8);
+}
+
+namespace {
+
+/// Every mode the FSM visited during a run.
+std::vector<TrackMode> modes_visited(const Scenario& sc) {
+    Pipeline p;
+    p.build_from_scenario(sc);
+    std::vector<TrackMode> seen;
+    while (p.step()) {
+        const TrackMode m = p.last().mode;
+        if (seen.empty() || seen.back() != m) seen.push_back(m);
+    }
+    return seen;
+}
+
+bool reached(const std::vector<TrackMode>& v, TrackMode m) {
+    return std::find(v.begin(), v.end(), m) != v.end();
+}
+
+}  // namespace
+
+TEST_CASE("CP 10.7: the FSM reaches Handover on a good run") {
+    const auto v = modes_visited(fast_target(11.0));
+    MESSAGE("modes visited: " << v.size() << " transitions, Handover "
+            << std::string(reached(v, TrackMode::Handover) ? "reached" : "NOT reached"));
+    CHECK(reached(v, TrackMode::Handover));
+}
+
+TEST_CASE("CP 10.7: spec row 23's jitter makes handover unachievable, and says so") {
+    // The finding, and it is a statement about the SPECIFICATION rather than
+    // about this implementation.
+    //
+    // Row 23 allows +/- 20 px per frame of jitter on the TRUE boresight. A
+    // quadrant cell is co-boresighted, so it sees every bit of that — unlike
+    // the encoder, which sees none of it. Uniform[-A,A] over two axes gives an
+    // RMS of sqrt(2*400/3) = 16.33 px = 1781 urad, against a handover
+    // criterion of capture/3 = 333 urad.
+    //
+    // The criterion is therefore unreachable by a factor of five, and no
+    // control law changes that: the disturbance displaces the boresight AFTER
+    // the command is issued. The same arithmetic already puts a 16.33 px floor
+    // under spec row 17 (docs/RESULTS.md), so this is the same inconsistency
+    // showing up in a second place.
+    //
+    // What the system does about it is the part that matters: it does not hand
+    // over, and it reports why. Claiming a handover that a real fine sensor
+    // would immediately lose is the failure mode worth avoiding.
+    Scenario jittery = fast_target(11.0);
+    jittery.jitter_px_per_frame = 20.0;      // row 23's maximum
+
+    const auto clean = modes_visited(fast_target(11.0));
+    const auto rough = modes_visited(jittery);
+
+    MESSAGE("Handover with no jitter: "
+            << std::string(reached(clean, TrackMode::Handover) ? "yes" : "no")
+            << ";  at row 23's 20 px/frame: "
+            << std::string(reached(rough, TrackMode::Handover) ? "yes" : "no"));
+
+    CHECK(reached(clean, TrackMode::Handover));
+    CHECK_FALSE(reached(rough, TrackMode::Handover));
+
+    // Still tracking, though — the loop holds the beacon perfectly well. It
+    // just cannot hold it inside a 333 urad box that the jitter is 1781 urad
+    // wide.
+    CHECK(reached(rough, TrackMode::Track));
 }

@@ -32,6 +32,7 @@
 #pragma once
 
 #include "control/controller.hpp"
+#include "control/handover.hpp"
 #include "control/mode_fsm.hpp"
 #include "core/arena.hpp"
 #include "core/profile.hpp"
@@ -120,6 +121,16 @@ struct FrameRecord {
     Angle2     estimate{};            ///< the filter's angular position
     Rate2      estimate_rate{};       ///< and its velocity — the feedforward input
     double     estimate_sigma_urad = 0.0;
+
+    // --- CP 10.7: handover ------------------------------------------------
+    /// The beacon's offset from the boresight as a co-boresighted quadrant
+    /// cell would see it, microradians. Observable: the frame is rendered at
+    /// the true boresight, so the detection's distance from the image centre
+    /// IS this offset. Valid only when `detected`.
+    double     quad_offset_urad = 0.0;
+    bool       quad_in_capture  = false;
+    /// RMS of that offset over the handover window. 1e9 until the window fills.
+    double     handover_rms_urad = 1e9;
 
     /// Where the controller was told to point this frame. In Track this is the
     /// filter's prediction; in Search it is the search pattern's look point.
@@ -442,6 +453,9 @@ private:
 
     /// Gains and the plant model together — see the note in pipeline.cpp.
     void reset_controller();
+
+    QuadrantDetector quad_{};       ///< CP 10.7's fine sensor model
+    HandoverMonitor  handover_{};
 
     Rate2       cmd_rate_{};      ///< the value that closes the loop (INV-2)
     Rate2       platform_rate_est_{};   ///< CP 10.3: zero; see set_platform_rate_est

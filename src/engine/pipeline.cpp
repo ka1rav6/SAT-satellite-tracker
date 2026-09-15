@@ -102,6 +102,13 @@ void Pipeline::build_stage6() {
     cfg_.mode.ifov_urad = cam.ifov_urad();
     fsm_.reset(cfg_.mode);
 
+    // CP 10.7: the handover sensor and the window its criterion is written
+    // against. The window comes from the FSM's own parameter so the two cannot
+    // disagree about how many frames "30 consecutive frames" means.
+    quad_.reset(QuadrantParams{cfg_.mode.handover_capture_urad,
+                               cfg_.mode.handover_capture_urad * 0.1});
+    handover_.reset(cfg_.mode.handover_frames);
+
     if (cfg_.search.step.x <= 0.0 || cfg_.search.step.y <= 0.0) {
         const SearchStrategy keep = cfg_.search.strategy;
         cfg_.search = SearchParams::from_camera(cam, cfg_.synthetic.screen,
@@ -523,12 +530,36 @@ bool Pipeline::step() {
     // -----------------------------------------------------------------------
     // B24: mode FSM.
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // CP 10.7: the handover sensor.
+    //
+    // The offset a co-boresighted quadrant cell would see. It is OBSERVABLE
+    // and not truth-derived: the frame is rendered at the true boresight, so
+    // the detection's distance from the image centre is exactly that offset.
+    // Feeding the metrics' tracking error here instead would have the mode FSM
+    // deciding to hand over using information the real system does not have,
+    // which is the conflation INV-6 exists to prevent.
+    //
+    // A frame with no detection feeds nothing, rather than feeding zero. Zero
+    // is the most flattering possible value for the quantity being tested, and
+    // INV-9 makes the same point about the centroid log: a missing measurement
+    // is a gap, never a placeholder.
+    // -----------------------------------------------------------------------
+    if (rec.detected) {
+        const Angle2 off = cfg_.synthetic.camera.unproject(rec.detection_img);
+        rec.quad_offset_urad = std::hypot(off.x, off.y);
+        rec.quad_in_capture  = quad_.in_capture(off);
+        handover_.push(rec.quad_offset_urad);
+    }
+    if (!trk.drivable()) handover_.clear();
+    rec.handover_rms_urad = handover_.rms_urad();
+
     ModeFsmInputs fsm_in;
     fsm_in.running         = true;
     fsm_in.have_track      = tracker_.has_track();
     fsm_in.track_state     = trk.state();
     fsm_in.candidate_count = rec.candidate_count;
-    fsm_in.rms_error_px    = 1e9;      // CP 10.7 feeds the real figure
+    fsm_in.rms_error_px    = rec.handover_rms_urad / cfg_.synthetic.camera.ifov_urad();
     rec.mode = fsm_.step(fsm_in, frame_, frame.timestamp_s);
 
     // -----------------------------------------------------------------------

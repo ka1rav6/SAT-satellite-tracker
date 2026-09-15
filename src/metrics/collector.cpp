@@ -52,6 +52,18 @@ void MetricCollector::add(const FrameRecord& r) {
 
     if (confirmed) ++frames_confirmed_;
 
+    // --- CP 10.7: handover -------------------------------------------------
+    // First entry only. A run that drops back to Track and re-enters would
+    // otherwise report the LAST handover time, and the question being asked is
+    // how long coarse alignment took, not how many times it succeeded.
+    if (!handover_reached_ && r.mode == TrackMode::Handover) {
+        handover_reached_ = true;
+        handover_time_s_  = r.time_s;
+    }
+    if (r.handover_rms_urad < handover_best_urad_) {
+        handover_best_urad_ = r.handover_rms_urad;
+    }
+
     // --- centroiding, GRADED ----------------------------------------------
     // Only on frames with a detection AND with the beacon visible. The second
     // condition is the one §13.1 leaves implicit and engine/pipeline.cpp
@@ -167,6 +179,9 @@ RunMetrics MetricCollector::finish(const StageTimers& timers,
         ? (static_cast<double>(false_tracks_) * 60.0 / last_time_s_) : 0.0;
 
     m.saturation_frac = saturation_frac;
+    m.handover_reached = handover_reached_;
+    m.handover_time_s  = handover_time_s_;
+    m.handover_rms_urad_best = handover_best_urad_;
 
     const LatencyHistogram& total = timers[Stage::FrameTotal];
     m.frame_ms_p50 = total.p50() * 1e-3;    // the histogram is in microseconds
@@ -271,6 +286,22 @@ std::string format_summary(const RunMetrics& m) {
     line("  false tracks      %8.2f /min (%lld frames confirmed with no beacon in view)\n",
          m.false_track_rate_per_min, static_cast<long long>(m.false_tracks));
     line("  gimbal saturation %8.2f %%\n", 100.0 * m.saturation_frac);
+
+    // CP 10.7. Reported as its own block because it is a different KIND of
+    // claim from the rows above: those grade how well the loop points, this
+    // says whether coarse alignment ever finished.
+    line("\nHANDOVER     (CP 10.7, quadrant cell, 1 mrad capture)\n");
+    if (m.handover_reached) {
+        line("  reached             at %6.3f s   (RMS offset held under "
+             "capture/3 for the required window)\n", m.handover_time_s);
+    } else if (m.handover_rms_urad_best >= 1e8) {
+        line("  not reached          the window never filled — no sustained "
+             "run of detections\n");
+    } else {
+        line("  not reached          best sustained RMS offset %8.1f urad "
+             "(needed under %.1f)\n",
+             m.handover_rms_urad_best, 1000.0 / 3.0);
+    }
 
     out += "\nSPEED        (row 20, >= 20 FPS)\n";
     line("  frame time        p50 %.3f ms   p95 %.3f ms   p99 %.3f ms\n",

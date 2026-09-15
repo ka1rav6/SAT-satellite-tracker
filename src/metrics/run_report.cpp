@@ -148,6 +148,14 @@ nlohmann::ordered_json metrics_json(const RunMetrics& m) {
             {"false_track_rate_per_min", m.false_track_rate_per_min},
         }},
         {"plant", nlohmann::ordered_json{{"saturation_frac", m.saturation_frac}}},
+        // CP 10.7. A sweep aggregates `reached` across runs into the success
+        // RATE the checkpoint asks for, which is why the per-run record is a
+        // bool and a time rather than a rate of its own.
+        {"handover", {
+            {"reached",        m.handover_reached},
+            {"time_s",         m.handover_time_s},
+            {"best_rms_urad",  m.handover_rms_urad_best},
+        }},
         {"speed", {
             {"frame_ms_p50", m.frame_ms_p50},
             {"frame_ms_p95", m.frame_ms_p95},
@@ -273,6 +281,14 @@ Result<RunMetrics> metrics_from_json(std::string_view json_text) {
         r.false_track_rate_per_min = num(l, "false_track_rate_per_min");
     }
     if (m.contains("plant")) r.saturation_frac = num(m["plant"], "saturation_frac");
+    if (m.contains("handover")) {
+        const auto& h = m["handover"];
+        if (h.contains("reached") && h["reached"].is_boolean()) {
+            r.handover_reached = h["reached"].get<bool>();
+        }
+        r.handover_time_s        = num(h, "time_s");
+        r.handover_rms_urad_best = num(h, "best_rms_urad");
+    }
     if (m.contains("speed")) {
         const auto& s = m["speed"];
         r.frame_ms_p50 = num(s, "frame_ms_p50");
