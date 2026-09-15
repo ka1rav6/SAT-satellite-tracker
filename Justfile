@@ -225,6 +225,27 @@ cp102: build
     python3 tools/plot_control.py -o "$out/cp102.svg" --column err_x_px         --title "CP 10.2 — a saturating 375 px slew, with and without anti-windup"         --subtitle "scenarios/control/slew.toml — kp=8, ki=2, kd=0.15; the loop asks for 3.75x the rate ceiling"         --ylabel "pointing error (azimuth), px"         "anti-windup on=$out/awtrue/trace.csv"         "anti-windup off=$out/awfalse/trace.csv"
     python3 tools/plot_control.py -o "$out/cp102_integrator.svg" --column integ_x         --title "CP 10.2 — what the integrator does during the slew"         --subtitle "conditional integration freezes it while the plant is against its stops"         --ylabel "integrator, urad*s"         "anti-windup on=$out/awtrue/trace.csv"         "anti-windup off=$out/awfalse/trace.csv"
 
+# CP 10.6 — error and saturation against disturbance level.
+#
+# Design §1.3's central claim is that the disturbance can exceed the actuator's
+# authority outright. This is the chart that states where: a 200 px/s target
+# with spec row 25's platform motion scaled up until the mount runs out of
+# rate.
+#
+# The arithmetic the chart is checked against: the mount's 5 deg/s ceiling is
+# 87266 urad/s = 800 px/s per axis. The commanded boresight has to move at
+# (target rate - drift rate) — see CP 10.3 for why it is a difference — so with
+# the drift opposing the target the demand is 200 + d px/s and the ceiling is
+# reached at d = 600 px/s.
+#
+# The variants are generated rather than committed: the axis is a velocity
+# inside [[disturbance.platform]], an array of tables, and --set addresses
+# dotted keys. Writing nine near-identical scenario files to vary one number is
+# exactly the drift scenarios/control/fast_linear.toml's header warns about.
+cp106: build
+    @python3 tools/cp106_sweep.py --binary "{{build_dir}}/sat-tracker" \
+        --scenario scenarios/control/fast_linear.toml --out logs/control
+
 # The Stage 10 control checkpoints, verbose — the numbers ARE the checkpoints.
 test-control: build
     "{{build_dir}}/test_loop" -tc="*CP 10.*" --success --no-skipped-summary 2>&1         | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true

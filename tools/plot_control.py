@@ -91,7 +91,8 @@ def esc(s):
     return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
-def render(datasets, column, title, subtitle, ylabel, out_path):
+def render(datasets, column, title, subtitle, ylabel, out_path,
+           xlabel="time, s", marks=False, vline=None, vlabel=""):
     xs = [p[0] for _, pts in datasets for p in pts]
     ys = [p[1] for _, pts in datasets for p in pts]
     if not xs:
@@ -155,10 +156,20 @@ def render(datasets, column, title, subtitle, ylabel, out_path):
     o.append(f'<rect x="{PAD_L}" y="{PAD_T}" width="{pw}" height="{ph}" '
              f'fill="none" stroke="#bbb"/>')
     o.append(f'<text x="{PAD_L+pw/2:.0f}" y="{HEIGHT-10}" font-size="11" '
-             f'fill="#333" text-anchor="middle">time, s</text>')
+             f'fill="#333" text-anchor="middle">{esc(xlabel)}</text>')
     o.append(f'<text x="14" y="{PAD_T+ph/2:.0f}" font-size="11" fill="#333" '
              f'text-anchor="middle" transform="rotate(-90 14 {PAD_T+ph/2:.0f})">'
              f'{esc(ylabel)}</text>')
+
+    # A vertical annotation — CP 10.6 uses it to mark the actuator's authority
+    # limit, which is the whole point of the chart: the number you can state.
+    if vline is not None and x0 <= vline <= x1:
+        vx = sx(vline)
+        o.append(f'<line x1="{vx:.1f}" y1="{PAD_T}" x2="{vx:.1f}" y2="{PAD_T+ph}" '
+                 f'stroke="#b03030" stroke-width="1.2" stroke-dasharray="5,3"/>')
+        if vlabel:
+            o.append(f'<text x="{vx+5:.1f}" y="{PAD_T+ph-8:.1f}" font-size="10" '
+                     f'fill="#b03030">{esc(vlabel)}</text>')
 
     for i, (label, pts) in enumerate(datasets):
         c = COLOURS[i % len(COLOURS)]
@@ -166,6 +177,10 @@ def render(datasets, column, title, subtitle, ylabel, out_path):
                      for j, (px, py) in enumerate(pts))
         o.append(f'<path d="{d}" fill="none" stroke="{c}" stroke-width="1.5" '
                  f'stroke-linejoin="round"/>')
+        if marks:
+            for px, py in pts:
+                o.append(f'<circle cx="{sx(px):.2f}" cy="{sy(py):.2f}" r="3" '
+                         f'fill="{c}"/>')
         ly = PAD_T + 14 + i * 16
         o.append(f'<line x1="{PAD_L+pw-150}" y1="{ly-4}" x2="{PAD_L+pw-128}" '
                  f'y2="{ly-4}" stroke="{c}" stroke-width="2.5"/>')
@@ -185,8 +200,43 @@ def main(argv):
     ap.add_argument("--title", default="")
     ap.add_argument("--subtitle", default="")
     ap.add_argument("--ylabel", default="")
+    ap.add_argument("--xlabel", default="time, s")
+    # ---------------------------------------------------------------------
+    # --xy: plot AGGREGATE points instead of a time series.
+    #
+    # CP 10.6's chart is one point per RUN — "at this disturbance level the
+    # loop broke down" — not one point per frame. Rather than a second script,
+    # the caller passes LABEL=x1:y1,x2:y2,... and the same axes, scaling and
+    # SVG writer are reused. Reading run.json and doing the arithmetic is the
+    # recipe's job, because what counts as "the disturbance level" differs per
+    # checkpoint and hard-coding one here would be a second schema.
+    # ---------------------------------------------------------------------
+    ap.add_argument("--xy", action="store_true",
+                    help="inputs are LABEL=x:y,x:y,... rather than trace files")
+    ap.add_argument("--marks", action="store_true", help="draw a dot per point")
+    ap.add_argument("--vline", type=float, default=None,
+                    help="draw a dashed vertical annotation at this x")
+    ap.add_argument("--vlabel", default="")
     ap.add_argument("inputs", nargs="+", metavar="LABEL=TRACE.csv")
     a = ap.parse_args(argv)
+
+    if a.xy:
+        datasets = []
+        for spec in a.inputs:
+            label, body = spec.rsplit("=", 1)
+            pts = []
+            for pair in body.split(","):
+                if not pair.strip():
+                    continue
+                xs, ys = pair.split(":")
+                pts.append((float(xs), float(ys)))
+            pts.sort()
+            datasets.append((label, pts))
+        render(datasets, a.column, a.title or "", a.subtitle,
+               a.ylabel or "", a.out, a.xlabel, marks=True,
+               vline=a.vline, vlabel=a.vlabel)
+        print(a.out)
+        return 0
 
     datasets = []
     for spec in a.inputs:
@@ -203,7 +253,8 @@ def main(argv):
         datasets.append((label, pts))
 
     render(datasets, a.column, a.title or a.column, a.subtitle,
-           a.ylabel or a.column, a.out)
+           a.ylabel or a.column, a.out, a.xlabel, marks=a.marks,
+           vline=a.vline, vlabel=a.vlabel)
     print(a.out)
     return 0
 
