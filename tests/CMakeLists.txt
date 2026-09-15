@@ -122,9 +122,23 @@ sat_add_test(loop
     SOURCES loop/test_gimbal.cpp
             loop/test_controller.cpp
             loop/test_closed_loop.cpp
-            loop/test_feedforward.cpp
+    DEPS    sat_core sat_plant sat_control sat_engine sat_perception
+)
+
+# --- Stage 10: the control checkpoints -------------------------------------
+#
+# Its own suite, with its own timeout, because every case drives the whole
+# engine for several simulated seconds: the feedforward's input is a Kalman
+# estimate produced from noisy centroids through a gated association, and
+# handing the controller an exact velocity would answer a question nobody
+# asked. Folded into `loop` it made a suite of millisecond unit tests inherit a
+# multi-minute runtime, and then time out.
+sat_add_test(control
+    SOURCES control/test_stage10.cpp
     DEPS    sat_core sat_plant sat_control sat_engine sat_perception sat_scenario
 )
+math(EXPR SAT_CONTROL_TIMEOUT "${SAT_TEST_TIMEOUT} * 3")
+set_tests_properties(control PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
 
 # --- CP 3.3-3.5: the motion algebra and its analytic derivatives ------------
 sat_add_test(motion

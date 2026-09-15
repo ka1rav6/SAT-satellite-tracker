@@ -1,4 +1,10 @@
-// tests/loop/test_feedforward.cpp — Stage 10's control checkpoints.
+// tests/control/test_stage10.cpp — Stage 10's control checkpoints.
+//
+// It is its own CTest suite rather than part of `loop` because every case here
+// drives the WHOLE engine for several simulated seconds — see the note below
+// on why that is the only honest way to test a feedforward whose input is a
+// Kalman estimate. That costs minutes, and mixing it into a suite of
+// millisecond unit tests just means the unit tests inherit its timeout.
 //
 // CP 10.1  Velocity feedforward.
 //          "On a 200 px/s target, tracking error drops from ~11 px to under
@@ -146,7 +152,9 @@ RunResult run(const Scenario& sc, double from_s, double to_s = 1e9) {
 // CP 10.1
 // ===========================================================================
 TEST_CASE("CP 10.1: velocity feedforward removes the tracking lag") {
-    Scenario off = fast_target(6.0);
+    // 3 s: the window scored is 0.5-2.5 s, and simulating past it only costs
+    // wall-clock time in CI.
+    Scenario off = fast_target(3.0);
     off.control.k_ff = 0.0;
     Scenario on = off;
     on.control.k_ff = 1.0;
@@ -199,7 +207,7 @@ TEST_CASE("CP 10.1: the feedforward gain is not a tuned constant") {
     // With the double lead removed, 1.0 is correct on its own terms and
     // over-feeding must make things WORSE. If a future change reintroduces a
     // lead anywhere in the setpoint path, this is what catches it.
-    Scenario s = fast_target(6.0);
+    Scenario s = fast_target(3.0);
     s.control.k_ff = 1.0;
     const RunResult unity = run(s, 0.5, 2.5);
     s.control.k_ff = 1.5;
@@ -500,12 +508,12 @@ Scenario fast_target_with_drift(double duration_s, double vx, double vy) {
 }  // namespace
 
 TEST_CASE("CP 10.3: platform drift is already cancelled by the measurement frame") {
-    const RunResult none = run(fast_target(8.0), 0.5, 2.5);
+    const RunResult none = run(fast_target(3.0), 0.5, 2.5);
     // Spec row 25's baseline drift is (15, -8) px/s. 60 px/s is a deliberate
     // exaggeration — four times the specification — so that "no effect" is a
     // claim about the mechanism and not about a disturbance too small to see.
-    const RunResult spec = run(fast_target_with_drift(8.0,  15.0,  -8.0), 0.5, 2.5);
-    const RunResult hard = run(fast_target_with_drift(8.0,  60.0, -30.0), 0.5, 2.5);
+    const RunResult spec = run(fast_target_with_drift(3.0,  15.0,  -8.0), 0.5, 2.5);
+    const RunResult hard = run(fast_target_with_drift(3.0,  60.0, -30.0), 0.5, 2.5);
 
     REQUIRE(none.scored > 45);
     REQUIRE(spec.scored > 45);
@@ -531,7 +539,7 @@ TEST_CASE("CP 10.3: cancelling the drift a second time makes it worse") {
     // the result. It does the opposite, by exactly the amount the premise is
     // wrong by.
     constexpr double kDriftX = 60.0, kDriftY = -30.0;
-    const Scenario sc = fast_target_with_drift(8.0, kDriftX, kDriftY);
+    const Scenario sc = fast_target_with_drift(3.0, kDriftX, kDriftY);
 
     const double ifov = sc.camera_geometry().ifov_urad();
     const Rate2 perfect{kDriftX * ifov, kDriftY * ifov};
@@ -578,7 +586,7 @@ TEST_CASE("CP 10.6: the mount saturates where the geometry says it will") {
     //
     // Below it the plant must never be at its stops; above it, it must be.
     auto saturation_at = [](double drift_px_s) {
-        Scenario sc = fast_target_with_drift(8.0,
+        Scenario sc = fast_target_with_drift(4.0,
                                              -drift_px_s / std::sqrt(2.0),
                                              -drift_px_s / std::sqrt(2.0));
         Pipeline p;
