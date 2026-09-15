@@ -404,7 +404,20 @@ sanitize:
     ctest --test-dir "{{build_dir}}-asan" --output-on-failure --parallel {{jobs}}
 
 # Run every static invariant gate.
-gates: gate-source gate-inv1-selftest
+gates: gate-source gate-inv1-selftest gate-docs
+
+# Check that the documentation's own references resolve: every `just` recipe it
+# names exists, every repository path it names exists, every link and
+# cross-reference resolves, and no document numbers two sections the same.
+#
+# The docs are a deliverable, not a comment. Three real defects were found by
+# running this by hand before it was a gate — a directory described as holding
+# breaking cases that contained only a .gitkeep, two sections numbered 2.12 one
+# of which was stale, and a recipe pointing at the wrong test binary after a
+# suite was split. None was a typo; each was a statement that had stopped being
+# true.
+gate-docs:
+    ./tools/check_docs.py
 
 # Every gate including the slower reproducibility ones. This is what CI runs.
 gates-full: gates gate-repro gate-repro-opt gate-repro-selftest
