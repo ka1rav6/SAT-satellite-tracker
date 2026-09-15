@@ -195,8 +195,14 @@ TEST_CASE("clutter costs tracking accuracy, and the cost is measured not hidden"
     // The point of this test is not to assert that it works. It is to pin the
     // CURRENT number so that Stage 11 and 12 have a baseline to beat, and so
     // that a regression between here and there is visible.
-    const RunMetrics& clean     = run(spec_scenario(/*clutter=*/false));
-    const RunMetrics& cluttered = run(spec_scenario(/*clutter=*/true));
+    // The scenarios are named rather than passed inline: run() returns a
+    // reference into a static cache, and GCC's -Wdangling-reference cannot
+    // tell that from a reference into the temporary argument. Binding the
+    // arguments to locals removes the ambiguity for the reader too.
+    const Scenario clean_sc     = spec_scenario(/*clutter=*/false);
+    const Scenario cluttered_sc = spec_scenario(/*clutter=*/true);
+    const RunMetrics& clean     = run(clean_sc);
+    const RunMetrics& cluttered = run(cluttered_sc);
 
     MESSAGE("tracking RMS: " << clean.tracking_rms_px << " px clean, "
             << cluttered.tracking_rms_px << " px with 120 clutter + 1 decoy");

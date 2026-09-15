@@ -370,8 +370,11 @@ void Dashboard::draw_controls() {
         chain.noise().poisson_enabled = scenario_.noise_poisson;
         chain.set_defects_enabled(true);
     }
+    // SetItemTooltip is PRINTF-STYLE. "10%" was being read as the conversion
+    // "% i", so this pulled an int argument that was never passed — undefined
+    // behaviour in a tooltip nobody would think to distrust. Escaped as "%%".
     ImGui::SetItemTooltip(
-        "Everything the scenario asks for, including row 21's 10% impulse\n"
+        "Everything the scenario asks for, including row 21's 10%% impulse\n"
         "noise. The straw-man detector does NOT survive this - watch the\n"
         "tracking trace leave the plot. That failure is CP 4.11.");
 

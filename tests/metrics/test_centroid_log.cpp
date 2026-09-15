@@ -226,8 +226,6 @@ TEST_CASE("CP 7.2: an aborted run still leaves a valid file") {
     // cases that matter never flush — a sweep worker hitting its timeout,
     // CP 7.5 runs 500 of them — so the header is flushed immediately and this
     // test reads the file while the log is STILL OPEN.
-    const ScreenGeometry screen =
-        ScreenGeometry::make(2000, 2000, CameraGeometry::make(640, 480, 4.0, 3.0));
     const std::string path = temp_path("cp72_abort.csv");
 
     CentroidLog log;

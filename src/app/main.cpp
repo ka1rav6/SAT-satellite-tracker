@@ -182,10 +182,15 @@ void print_usage() {
     std::printf("  --version            print the version and build hash, then exit\n");
     std::printf("  --gui [--scenario F] open the live dashboard (design §12)\n");
     std::printf("  --headless [--scenario F] [--out DIR] [--seed N] [--duration S]\n");
-    std::printf("             [--no-ai] [--bench] [--quiet]\n");
+    std::printf("             [--no-ai] [--bench] [--quiet] [--set k=v] [--trace]\n");
     std::printf("                       run with no window; writes centroid.csv and\n");
     std::printf("                       run.json to --out and prints the design 13.1\n");
     std::printf("                       metric summary (CP 7.3, CP 7.4)\n");
+    std::printf("                       --set overrides one scenario key, checked by\n");
+    std::printf("                       the same schema as the file itself\n");
+    std::printf("                       --trace also writes trace.csv, the per-frame\n");
+    std::printf("                       CONTROL trace (CP 10.x) - a diagnostic that\n");
+    std::printf("                       contains truth and is never graded\n");
     std::printf("  --video FILE [--truth CSV] [--video-mode screen|direct]\n");
     std::printf("             [--scenario F] [--out DIR]\n");
     std::printf("                       track a supplied clip; mode auto-detected from\n");
