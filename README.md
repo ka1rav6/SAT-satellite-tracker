@@ -30,25 +30,30 @@ just sweep                   # 200 runs -> the requirement compliance matrix
 
 ## Where it stands
 
-Stages 0–9 of the roadmap are complete, plus the performance work at CP 14.2.
+Stages 0–10 of the roadmap are complete, plus the performance work at CP 14.2.
 All five ★ gates pass. Machine learning (Stage 11) is deliberately out of
 scope — INV-7 requires the system to run fully without it, and it does.
+
+On clear air with nothing else in the frame — 200 runs, `just sweep`:
 
 | Graded requirement | Spec | Measured |
 |---|---|---|
 | Acquisition, beacon in view (row 16) | ≤ 2 s | **0.067 s** |
 | Target loss (row 18) | < 5 % | **1.67 %** |
-| Re-acquisition (row 19) | ≤ 1 s | **0.094 s** |
+| Re-acquisition (row 19) | ≤ 1 s | **0.090 s** (over all 200 runs) |
 | Processing speed (row 20) | ≥ 20 FPS | **21.5 / 30.8 FPS** |
-| Centroiding accuracy (60 % of the marks) | — | **0.217 px RMSE** |
+| Centroiding accuracy (60 % of the marks) | — | **0.141 px RMSE** |
 
 Two specification rows are internally inconsistent and are reported as derived
 bounds rather than pass or fail — cold acquisition cannot meet 2 s by geometry,
 and tracking error cannot go below 16.33 px while row 23's jitter is applied.
 Both derivations are in [`docs/RESULTS.md`](docs/RESULTS.md).
 
-Known gaps are recorded with measurements, not descriptions:
-[`RESULTS.md` §8](docs/RESULTS.md).
+The harder conditions in that sweep do **not** all pass. 120 clutter sources
+cost two orders of magnitude of tracking accuracy, and in `lowlight` target
+loss reaches 86 %. Those are the honest edge of what is built, and they are
+recorded with measurements rather than descriptions:
+[`RESULTS.md` §9](docs/RESULTS.md).
 
 ---
 

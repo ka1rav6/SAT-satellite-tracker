@@ -17,18 +17,42 @@ to `logs/sweep/compliance.txt`.
 
 | Row | Requirement | Spec | Measured | Status |
 |---|---|---|---|---|
-| 16 | Acquisition (in view) | ≤ 2 s | **0.067 s** | PASS |
+| 16 | Acquisition (in view) | ≤ 2 s | **0.067 s** (p95 0.067) | PASS |
 | 16 | Acquisition (cold) | ≤ 2 s | 0.067 s | bound derived — §10.5 |
-| 17 | Tracking error | ≤ 10 px | 17.60 px | bound derived — floor 16.33 px |
-| 18 | Target loss | < 5 % | **1.67 %** | PASS |
-| 19 | Re-acquisition | ≤ 1 s | **0.094 s** | PASS |
-| 20 | Processing speed | ≥ 20 FPS | **21.5 / 30.8 FPS** | PASS |
-| — | Centroiding (image) | graded, 60 % | **0.217 px RMSE** | PASS |
-| — | Centroiding (screen) | graded | 43.1 px | carries pointing error (INV-6) |
+| 17 | Tracking error | ≤ 10 px | 17.64 px (p95 29.07) | bound derived — floor 16.33 px |
+| 18 | Target loss | < 5 % | **1.67 %** (p95 1.67) | PASS |
+| 19 | Re-acquisition | ≤ 1 s | *no episodes in this arm* | — |
+| 20 | Processing speed | ≥ 20 FPS | 32.24 FPS, **p5 13.70** | MARGINAL |
+| — | Centroiding (image) | graded, 60 % | **0.141 px RMSE** (p95 0.150) | PASS |
+| — | Centroiding (screen) | graded | 43.14 px | carries pointing error (INV-6) |
+
+Two rows in that table cannot be answered from this arm alone.
+
+**Row 19 records no episodes here** — the loop never loses lock on clear air
+with nothing in the frame, so there is nothing to re-acquire. Across all 200
+runs, where harder conditions do produce dropouts, re-acquisition is
+**0.090 s** (p95 0.633), comfortably inside the 1 s budget. An earlier version
+of this table printed that aggregate figure in the clean row, which read as a
+measurement of a condition that never occurs in it.
+
+**Row 20 is MARGINAL, not PASS.** The verdict rule is deliberately strict —
+`PASS` requires the *tail* inside the limit, not just the central figure,
+because "a requirement met on average and missed one run in twenty is not met"
+(§13.3). The median is 32.24 FPS and the 5th percentile is 13.70. The
+dedicated frame-budget measurement in §7, which times the shipped binary rather
+than a sweep worker sharing eight cores with seven others, gives 21.5 FPS
+synthetic and 30.8 FPS on video — that is the figure to quote for the
+requirement, and the sweep's low tail is contention, not the tracker.
 
 Two rows are marked **bound derived** rather than PASS or FAIL. Both are cases
 where the specification is internally inconsistent, and both are reported the
 way §10.5 prescribes for the first of them.
+
+The figures above are the `clear / no noise / no clutter / no decoy` row of the
+matrix. The other 39 conditions are in `logs/sweep/compliance.txt` and several
+of them FAIL — with 120 clutter sources target loss reaches 4.4 %, and in
+`lowlight` it reaches 86 %. Those are recorded in §9 rather than hidden: they
+are what Stage 12's supervisor and Stage 13's acquisition strategy exist for.
 
 ### Row 16 (cold acquisition) — a geometric bound
 
@@ -448,7 +472,8 @@ improved against.
 
 | Gap | Measured | Owner |
 |---|---|---|
-| **Clutter and decoy discrimination** | tracking 17.60 px clean → **176.50 px** with 120 clutter + 1 decoy; centroiding 0.201 px → 180.49 px | Stage 11 `CandidateNet`, Stage 12 priority policy |
+| **Clutter and decoy discrimination** | over 200 runs: tracking 17.64 px clean → 44.57 px with one decoy → **205.20 px** with 120 clutter + decoy; centroiding 0.141 → 198.33 px | Stage 11 `CandidateNet`, Stage 12 priority policy |
+| **Low light** | target loss reaches **86 %** in `lowlight` — the beacon is below the detector's floor, not mis-associated | Stage 11 `CandidateNet`, Stage 13 acquisition strategy |
 | **Low-SNR centroiding** | 3.64× the bound at SNR 13 against CP 9.6's 1.5× | Stage 11 `Learned`, `MatchedPeak` via Stage 12 |
 | **§15's 0.85 ms frame budget** | 46.6 ms synthetic, 32.5 ms video | a different processing strategy, not faster arithmetic |
 | **CP 7.3's 2 s for a 120 s scenario** | ~5 minutes | same as above |
