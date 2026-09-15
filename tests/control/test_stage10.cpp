@@ -874,3 +874,200 @@ TEST_CASE("CP 10.7: spec row 23's jitter makes handover unachievable, and says s
     // wide.
     CHECK(reached(rough, TrackMode::Track));
 }
+
+// ===========================================================================
+// CP 10.5 — the IMM
+//
+// "IMM (CV/CA/CT) + mode probability panel. On the figure-8, crossing
+//  overshoot visibly reduces; the mode plot shows the shift."
+// ===========================================================================
+namespace {
+
+/// scenarios/control/figure8.toml in code. Spec row 12's mandatory figure-8,
+/// which is a 2:1 Lissajous — x traces one period while y traces two.
+Scenario figure8(double duration_s, bool imm) {
+    Scenario sc;
+    sc.duration_s = duration_s;
+    sc.seed       = 42;
+    sc.static_sources      = 0;
+    sc.decoy_beacons       = 0;
+    sc.jitter_px_per_frame = 0.0;
+    sc.tracking_imm        = imm;
+    sc.initial_pos_px[0] = 999.5;
+    sc.initial_pos_px[1] = 999.5;
+
+    TargetSpec t;
+    t.size_px        = 10;
+    t.intensity      = 120.0;
+    t.random_initial = false;
+    t.initial_px[0]  = 999.5;
+    t.initial_px[1]  = 999.5;
+    MotionSpec m;
+    m.kind            = "lissajous";
+    m.amplitude_px[0] = 400.0;
+    m.amplitude_px[1] = 250.0;
+    m.freq_ratio      = 2.0;
+    m.period_s        = 8.0;
+    t.motion.push_back(m);
+    sc.targets.push_back(t);
+    return sc;
+}
+
+}  // namespace
+
+TEST_CASE("CP 10.5: the IMM beats a single CV filter on the figure-8") {
+    // Scored from 4 s, after one full lap, so the comparison is about steady
+    // lap behaviour rather than about who acquires faster.
+    const RunResult cv  = run(figure8(20.0, /*imm=*/false), 4.0);
+    const RunResult imm = run(figure8(20.0, /*imm=*/true),  4.0);
+    REQUIRE(cv.scored  > 400);
+    REQUIRE(imm.scored > 400);
+
+    MESSAGE("figure-8, two laps scored: single CV " << cv.rms_px
+            << " px RMS (peak " << cv.max_px << "), IMM " << imm.rms_px
+            << " px RMS (peak " << imm.max_px << ")");
+
+    // Measured 21.76 -> 17.16 px RMS and 30.30 -> 22.52 px peak. The peak is
+    // the number the checkpoint is really about — "overshoot visibly reduces"
+    // is a statement about the worst moment of the lap, not the average.
+    CHECK(imm.rms_px < 0.85 * cv.rms_px);
+    CHECK(imm.max_px < 0.85 * cv.max_px);
+}
+
+TEST_CASE("CP 10.5: the worst error is at the LOBES, not at the crossing") {
+    // A correction to §10.2, which says "at the figure-8 crossing, acceleration
+    // reverses sign and single-model filters overshoot every lap". The first
+    // half is true and the conclusion does not follow from it.
+    //
+    // For x = A sin(2*pi*t/T) and y = B sin(4*pi*t/T), the curve self-
+    // intersects where both are zero: t = 0 and t = T/2. At those instants
+    // BOTH second derivatives are proportional to sin(0) = 0 — the
+    // acceleration is not merely reversing, it is ZERO, and the path is locally
+    // straight. That is precisely where a constant-velocity model is RIGHT.
+    //
+    // The acceleration peaks a quarter-lap away, at the ends of the lobes,
+    // where the curvature is tightest. Total pointing error per phase bin over
+    // an 8 s lap, as `just cp105` reports it:
+    //
+    //   0-1 s  13.55 px   2-3 s  17.95 px   4-5 s  13.45 px   6-7 s  18.04 px
+    //   1-2 s  26.06 px   3-4 s  26.51 px   5-6 s  26.07 px   7-8 s  26.61 px
+    //
+    // The error is smallest at the crossing and roughly double at the lobes.
+    // The check below uses the AZIMUTH component alone, which is what the run
+    // records per frame, and the contrast is starker there — 2.85 px at the
+    // crossing against 8.39 px at the lobes — because the x lobes are where
+    // the azimuth axis turns around.
+    // The checkpoint's EFFECT is real and the IMM does reduce it; the location
+    // in the design's sentence is not where it happens.
+    const RunResult cv = run(figure8(20.0, /*imm=*/false), 4.0);
+    REQUIRE(cv.signed_x.size() > 500);
+
+    auto rms_in_phase = [&](double lo, double hi) {
+        double sum_sq = 0.0; int n = 0;
+        for (size_t i = 0; i < cv.t_s.size(); ++i) {
+            if (cv.t_s[i] < 4.0) continue;
+            const double ph = std::fmod(cv.t_s[i], 8.0);
+            if (ph < lo || ph >= hi) continue;
+            sum_sq += cv.signed_x[i] * cv.signed_x[i];
+            ++n;
+        }
+        REQUIRE(n > 20);
+        return std::sqrt(sum_sq / n);
+    };
+
+    // t = 0 and t = 4 are the self-intersections; t = 1.5 and t = 3.5 are the
+    // lobe ends.
+    const double at_crossing = 0.5 * (rms_in_phase(0.0, 1.0) + rms_in_phase(4.0, 5.0));
+    const double at_lobe     = 0.5 * (rms_in_phase(1.0, 2.0) + rms_in_phase(5.0, 6.0));
+
+    MESSAGE("single CV filter: " << at_crossing << " px at the crossing, "
+            << at_lobe << " px at the lobes");
+    CHECK(at_lobe > 1.5 * at_crossing);
+}
+
+TEST_CASE("CP 10.5: the mode probabilities move, and stay a probability") {
+    // "The mode plot shows the shift." Two things have to hold for that plot to
+    // mean anything, and the second is the one an IMM gets wrong quietly.
+    Scenario sc = figure8(20.0, /*imm=*/true);
+    Pipeline p;
+    p.build_from_scenario(sc);
+
+    double lo[3] = {2.0, 2.0, 2.0}, hi[3] = {-1.0, -1.0, -1.0};
+    double worst_sum_err = 0.0;
+    int    samples = 0;
+
+    while (p.step()) {
+        const FrameRecord& r = p.last();
+        if (r.track_state != TrackState::Confirmed || r.time_s < 4.0) continue;
+        double sum = 0.0;
+        for (int k = 0; k < 3; ++k) {
+            const double v = r.imm_mode_prob[k];
+            lo[k] = std::min(lo[k], v);
+            hi[k] = std::max(hi[k], v);
+            sum  += v;
+        }
+        worst_sum_err = std::max(worst_sum_err, std::fabs(sum - 1.0));
+        ++samples;
+    }
+    REQUIRE(samples > 400);
+
+    MESSAGE("mode probability ranges over two laps: CV [" << lo[0] << ", " << hi[0]
+            << "]  CA [" << lo[1] << ", " << hi[1]
+            << "]  CT [" << lo[2] << ", " << hi[2] << "]");
+
+    // They are a probability distribution. If this drifts the panel is a lie
+    // and so is the combined estimate, which is a probability-weighted mean.
+    //
+    // The tolerance is float epsilon, not double: FrameRecord stores the three
+    // probabilities as floats, because the record is copied into a snapshot
+    // every frame and the panel needs three significant figures, not sixteen.
+    // The filter's own arithmetic is double throughout; this is checking the
+    // published copy.
+    CHECK(worst_sum_err < 1e-6);
+
+    // And they MOVE. A panel of three flat lines at a third each would mean the
+    // likelihood update is not reaching the mode probabilities at all — which
+    // is exactly what a sign error or an underflow in the log-likelihood
+    // produces, and it looks perfectly healthy otherwise.
+    bool any_moved = false;
+    for (int k = 0; k < 3; ++k) if (hi[k] - lo[k] > 0.05) any_moved = true;
+    CHECK(any_moved);
+
+    // No mode is ever driven to zero. Zero is absorbing — the update multiplies
+    // by the prior — so a model that hits it can never come back, and on a
+    // figure-8 the first straight section would permanently kill the turn
+    // model.
+    for (int k = 0; k < 3; ++k) CHECK(lo[k] > 0.0);
+}
+
+TEST_CASE("CP 10.5: the CT model is what makes the covariance anisotropic") {
+    // §10.2 notes that the 4-state filter's predicted covariance is EXACTLY
+    // isotropic — with CWNA Q and R = sigma^2 I the two axes are independent —
+    // and that "anisotropy arrives with the coordinate-turn model at CP 10.5,
+    // which is why the filter is written in full 4x4 form rather than as two
+    // decoupled 2x2 filters".
+    //
+    // This is that claim, measured. It also guards something real: if the CT
+    // model's F were written without the cross terms, every other test here
+    // would still pass — the IMM would just be two velocity models — and this
+    // is the one that would not.
+    Scenario sc = figure8(20.0, /*imm=*/true);
+    Pipeline p;
+    p.build_from_scenario(sc);
+
+    double worst_off_diag = 0.0;
+    while (p.step()) {
+        const FrameRecord& r = p.last();
+        if (r.track_state != TrackState::Confirmed || r.time_s < 4.0) continue;
+        const auto& P = p.tracker().track().imm().covariance();
+        // Normalised off-diagonal: the correlation between the two position
+        // axes. Exactly zero for the decoupled filter, non-zero once the
+        // velocity vector is being rotated.
+        const double denom = std::sqrt(P(0, 0) * P(1, 1));
+        if (denom > 0.0) {
+            worst_off_diag = std::max(worst_off_diag, std::fabs(P(0, 1)) / denom);
+        }
+    }
+    MESSAGE("largest position-axis correlation under the IMM: " << worst_off_diag);
+    CHECK(worst_off_diag > 0.01);
+}

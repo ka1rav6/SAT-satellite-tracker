@@ -246,10 +246,16 @@ def main(argv):
         # ("k_ff = 0"), whereas paths almost never do. Splitting on the first
         # one truncated every label at its first equals sign.
         label, path = spec.rsplit("=", 1)
+        # `path#column` overrides --column for this series. CP 10.5's mode
+        # probability panel needs three DIFFERENT columns from ONE file, which
+        # is the opposite of every other plot here (one column, several files).
+        column = a.column
+        if "#" in path:
+            path, column = path.rsplit("#", 1)
         _, rows = read_trace(path)
-        pts = series(rows, a.column)
+        pts = series(rows, column)
         if not pts:
-            print(f"warning: '{a.column}' had no values in {path}", file=sys.stderr)
+            print(f"warning: '{column}' had no values in {path}", file=sys.stderr)
         datasets.append((label, pts))
 
     render(datasets, a.column, a.title or a.column, a.subtitle,

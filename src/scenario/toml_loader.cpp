@@ -437,6 +437,9 @@ Result<Scenario> parse_scenario(std::string_view toml_text, std::string_view nam
     get_bool  (root, "control.smith",       sc.control.smith,       v);
     get_double(root, "control.smith_rate_blend", sc.control.smith_rate_blend, v);
 
+    // --- [tracking] — design §10.2 -----------------------------------------
+    get_bool  (root, "tracking.imm", sc.tracking_imm, v);
+
     // --- [requirements] — rows 16-20 ---------------------------------------
     get_double(root, "requirements.acquisition_s",     sc.acquisition_s,     v);
     get_double(root, "requirements.tracking_error_px", sc.tracking_error_px, v);

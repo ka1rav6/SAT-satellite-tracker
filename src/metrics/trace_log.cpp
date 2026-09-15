@@ -23,7 +23,8 @@ std::string TraceLog::header_text(const TraceLogHeader& h) {
 
     out += "frame,t,mode,err_px,err_x_px,err_y_px,"
            "cmd_rate_x,cmd_rate_y,gimbal_rate_x,gimbal_rate_y,"
-           "integ_x,integ_y,est_rate_x,est_rate_y,saturated\n";
+           "integ_x,integ_y,est_rate_x,est_rate_y,saturated,"
+           "imm_cv,imm_ca,imm_ct,imm_turn_rate\n";
     return out;
 }
 
@@ -53,10 +54,12 @@ void TraceLog::write(const TraceSample& s) {
         std::fprintf(f_, "%lld,%.4f,%s,,,,",
                      static_cast<long long>(s.frame), s.time_s, s.mode);
     }
-    std::fprintf(f_, "%.3f,%.3f,%.3f,%.3f,%.4f,%.4f,%.3f,%.3f,%d\n",
+    std::fprintf(f_, "%.3f,%.3f,%.3f,%.3f,%.4f,%.4f,%.3f,%.3f,%d,"
+                     "%.4f,%.4f,%.4f,%.5f\n",
                  s.cmd_rate_x, s.cmd_rate_y, s.gimbal_rate_x, s.gimbal_rate_y,
                  s.integ_x, s.integ_y, s.est_rate_x, s.est_rate_y,
-                 s.saturated ? 1 : 0);
+                 s.saturated ? 1 : 0,
+                 s.imm_cv, s.imm_ca, s.imm_ct, s.imm_turn_rate);
     ++rows_;
 }
 

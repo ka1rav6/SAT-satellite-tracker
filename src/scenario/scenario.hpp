@@ -210,6 +210,11 @@ struct Scenario {
     // --- [control] — design §10.4 ------------------------------------------
     ControlSpec control{};
 
+    // --- [tracking] — design §10.2 -----------------------------------------
+    /// CP 10.5: run the IMM (CV/CA/CT) instead of the single constant-velocity
+    /// filter. Opt-in — see TrackParams::imm for why the default matters.
+    bool tracking_imm = false;
+
     // --- [atmosphere] — row 24 --------------------------------------------
     Atmosphere atmosphere = Atmosphere::Clear;
 

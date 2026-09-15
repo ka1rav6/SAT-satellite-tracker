@@ -36,6 +36,7 @@
 #pragma once
 
 #include "core/units.hpp"
+#include "tracking/imm.hpp"
 #include "tracking/kalman.hpp"
 #include "tracking/measurement.hpp"
 
@@ -62,6 +63,23 @@ enum class TrackState : uint8_t {
 // ---------------------------------------------------------------------------
 struct TrackParams {
     KalmanParams kf{};
+
+    // -----------------------------------------------------------------------
+    // CP 10.5: run the IMM (tracking/imm.hpp) instead of the plain filter.
+    //
+    // OPT-IN rather than the default, and the reason is not caution about the
+    // IMM. Every reproducibility fingerprint in this project is a hash of the
+    // simulation state, and the tracker's estimate feeds the controller, which
+    // moves the mount, which changes every frame that follows. Making a
+    // six-state filter the default would churn every one of them, so the switch
+    // is a scenario key and the fingerprints stay meaningful on both settings.
+    //
+    // It is also an honest reflection of what CP 10.5 measures: the IMM earns
+    // its place on MANOEUVRING motion (the figure-8, spec row 12) and costs a
+    // little on a straight line, which is the ablation, not a defect.
+    // -----------------------------------------------------------------------
+    bool      imm = false;
+    ImmParams imm_params{};
 
     /// Gate threshold, chi^2(2, 0.99). Kept as data rather than a constant
     /// because §10.6's supervisor widens it in poor conditions.
@@ -217,10 +235,26 @@ public:
     }
 
     [[nodiscard]] const KalmanFilter& filter() const noexcept { return kf_; }
-    [[nodiscard]] Angle2 position() const noexcept { return kf_.position(); }
-    [[nodiscard]] Rate2  rate()     const noexcept { return kf_.rate(); }
+
+    // --- CP 10.5 ----------------------------------------------------------
+    /// The IMM, valid only when TrackParams::imm is set. Exposed for the mode
+    /// probability panel (§12) and for the tests that measure the switch.
+    [[nodiscard]] const ImmFilter& imm() const noexcept { return imm_; }
+    [[nodiscard]] bool uses_imm() const noexcept { return p_.imm; }
+
+    /// The estimate's uncertainty, from whichever filter is running.
+    [[nodiscard]] double position_sigma_urad() const noexcept {
+        return p_.imm ? imm_.position_sigma_urad() : kf_.position_sigma_urad();
+    }
+
+    [[nodiscard]] Angle2 position() const noexcept {
+        return p_.imm ? imm_.position() : kf_.position();
+    }
+    [[nodiscard]] Rate2  rate()     const noexcept {
+        return p_.imm ? imm_.rate() : kf_.rate();
+    }
     [[nodiscard]] Angle2 predict_position(double dt) const noexcept {
-        return kf_.predict_position(dt);
+        return p_.imm ? imm_.predict_position(dt) : kf_.predict_position(dt);
     }
 
     [[nodiscard]] int  age_frames()          const noexcept { return age_; }
@@ -243,6 +277,7 @@ private:
     [[nodiscard]] int hits_in_window() const noexcept;
 
     KalmanFilter kf_{};
+    ImmFilter    imm_{};
     TrackParams  p_{};
     TrackState   state_ = TrackState::Deleted;
 

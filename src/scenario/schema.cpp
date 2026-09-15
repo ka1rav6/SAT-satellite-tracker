@@ -132,6 +132,11 @@ const std::vector<FieldSpec>& schema() {
          "integrator clamp in urad*s; caps how much history the integral term "
          "can hold, independently of the anti-windup"},
 
+        // --- [tracking] — design §10.2 -------------------------------------
+        {"tracking.imm", ValueKind::Bool, false, 0.0, 0.0, "",
+         "CP 10.5's interacting multiple model filter (CV/CA/CT); earns its "
+         "place on manoeuvring motion and costs a little on a straight line"},
+
         // --- [requirements] — rows 16-20 -----------------------------------
         {"requirements.acquisition_s",     ValueKind::Float, false, 0.0, kInf, "row 16",
          "the specification requires acquisition within 2 s"},

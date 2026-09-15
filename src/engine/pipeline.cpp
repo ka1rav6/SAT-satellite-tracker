@@ -97,6 +97,14 @@ void Pipeline::build_stage6() {
     cfg_.tracking.gate_pad_urad =
         (cfg_.pointing_sigma_px * 3.0 + 2.0) * cam.ifov_urad();
 
+    // CP 10.5: the IMM's parameters, derived from the same bound as the plain
+    // filter's q so the two are answering the same question about the target.
+    // Done here rather than in build_from_scenario because the bound is only
+    // resolved at this point — and because the IMM must pick up the same
+    // corrected velocity prior the paragraphs above exist to justify.
+    cfg_.tracking.imm_params = ImmParams::from_max_accel(a_max, dt);
+    cfg_.tracking.imm_params.kf = cfg_.tracking.kf;
+
     tracker_.reset(cfg_.tracking);
 
     cfg_.mode.ifov_urad = cam.ifov_urad();
@@ -202,6 +210,7 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     cfg.gains.anti_windup = sc.control.anti_windup;
     cfg.gains.smith       = sc.control.smith;
     cfg.gains.smith_rate_blend = sc.control.smith_rate_blend;
+    cfg.tracking.imm      = sc.tracking_imm;
 
     // §7.2's closed forms turned into the filter's q. The largest acceleration
     // over every target, because the tracker does not know which one it will
@@ -525,7 +534,13 @@ bool Pipeline::step() {
     rec.has_lock            = trk.drivable();
     rec.estimate            = trk.position();
     rec.estimate_rate       = trk.rate();
-    rec.estimate_sigma_urad = trk.filter().position_sigma_urad();
+    rec.estimate_sigma_urad = trk.position_sigma_urad();
+    if (trk.uses_imm()) {
+        rec.imm_mode_prob[0] = static_cast<float>(trk.imm().mode_prob(ImmMode::CV));
+        rec.imm_mode_prob[1] = static_cast<float>(trk.imm().mode_prob(ImmMode::CA));
+        rec.imm_mode_prob[2] = static_cast<float>(trk.imm().mode_prob(ImmMode::CT));
+        rec.imm_turn_rate    = static_cast<float>(trk.imm().turn_rate_rad_s());
+    }
 
     // -----------------------------------------------------------------------
     // B24: mode FSM.

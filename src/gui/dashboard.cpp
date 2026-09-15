@@ -745,13 +745,14 @@ void Dashboard::draw_tracking_panel() {
             trk.rate().x / ifov, trk.rate().y / ifov);
         // The gate's radius, in the units a person can check against the camera
         // view. sqrt(chi2) sigmas is what "d^2 < 9.21" means geometrically.
-        row("position sigma", "%.2f px", trk.filter().position_sigma_urad() / ifov);
+        row("position sigma", "%.2f px", trk.position_sigma_urad() / ifov);
         row("gate radius", "%.2f px",
             std::sqrt(kGateChi2_2dof_99)
-                * std::sqrt(trk.filter().position_sigma_urad()
-                            * trk.filter().position_sigma_urad()
+                * std::sqrt(trk.position_sigma_urad()
+                            * trk.position_sigma_urad()
                           + trk.last_sigma_urad() * trk.last_sigma_urad()) / ifov);
-        row("NIS (want ~2)", "%.2f", trk.filter().last_nis());
+        row("NIS (want ~2)", "%.2f",
+            trk.uses_imm() ? trk.imm().last_nis() : trk.filter().last_nis());
         row("hits / age",  "%d / %d", trk.hits(), trk.age_frames());
         row("misses",      "%d", trk.consecutive_misses());
         ImGui::EndTable();

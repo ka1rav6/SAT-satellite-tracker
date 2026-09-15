@@ -248,6 +248,10 @@ int run_headless(const HeadlessOptions& opt) {
                         && (std::fabs(gr.x) >= gp.max_rate_urad_s * 0.999
                          || std::fabs(gr.y) >= pipe.gimbal().el().params()
                                                    .max_rate_urad_s * 0.999);
+            ts.imm_cv = r.imm_mode_prob[0];
+            ts.imm_ca = r.imm_mode_prob[1];
+            ts.imm_ct = r.imm_mode_prob[2];
+            ts.imm_turn_rate = r.imm_turn_rate;
             trace_log.write(ts);
         }
         if (opt.write_report) {

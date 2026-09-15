@@ -66,6 +66,11 @@ struct TraceSample {
     double  integ_x = 0.0, integ_y = 0.0;
     double  est_rate_x = 0.0, est_rate_y = 0.0;
     bool    saturated = false;
+
+    // CP 10.5. Zero when the IMM is not running — which is distinguishable
+    // from a running IMM, whose three probabilities always sum to one.
+    double  imm_cv = 0.0, imm_ca = 0.0, imm_ct = 0.0;
+    double  imm_turn_rate = 0.0;
 };
 
 // ---------------------------------------------------------------------------

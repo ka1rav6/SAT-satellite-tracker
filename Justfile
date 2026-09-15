@@ -225,6 +225,28 @@ cp102: build
     python3 tools/plot_control.py -o "$out/cp102.svg" --column err_x_px         --title "CP 10.2 — a saturating 375 px slew, with and without anti-windup"         --subtitle "scenarios/control/slew.toml — kp=8, ki=2, kd=0.15; the loop asks for 3.75x the rate ceiling"         --ylabel "pointing error (azimuth), px"         "anti-windup on=$out/awtrue/trace.csv"         "anti-windup off=$out/awfalse/trace.csv"
     python3 tools/plot_control.py -o "$out/cp102_integrator.svg" --column integ_x         --title "CP 10.2 — what the integrator does during the slew"         --subtitle "conditional integration freezes it while the plant is against its stops"         --ylabel "integrator, urad*s"         "anti-windup on=$out/awtrue/trace.csv"         "anti-windup off=$out/awfalse/trace.csv"
 
+# CP 10.5 ablation — the IMM against a single constant-velocity filter, on
+# spec row 12's mandatory figure-8, with the mode probability panel.
+#
+# Writes logs/control/cp105.svg and cp105_modes.svg.
+cp105: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="logs/control"
+    mkdir -p "$out"
+    for m in false true; do
+        "{{build_dir}}/sat-tracker" --headless             --scenario scenarios/control/figure8.toml             --set "tracking.imm=$m" --trace --no-csv --no-report --quiet             --out "$out/imm$m"
+        printf "  imm = %-5s  " "$m"
+        python3 - "$out/imm$m/run.json" <<'PY'
+    import json, sys
+    m = json.load(open(sys.argv[1]))["metrics"]["tracking"]
+    print("tracking RMS %7.2f px   p95 %7.2f   max %7.2f" % (
+        m["rms_px"], m["p95_px"], m["max_px"]))
+    PY
+    done
+    python3 tools/plot_control.py -o "$out/cp105.svg" --column err_px         --title "CP 10.5 — the IMM on spec row 12's figure-8"         --subtitle "scenarios/control/figure8.toml — 8 s lap, peak 617 px/s^2"         --ylabel "pointing error, px"         "single CV filter=$out/immfalse/trace.csv"         "IMM (CV/CA/CT)=$out/immtrue/trace.csv"
+    python3 tools/plot_control.py -o "$out/cp105_modes.svg" --column imm_cv         --title "CP 10.5 — mode probabilities around the lap"         --subtitle "the three models' posterior probability, which must sum to 1"         --ylabel "mode probability"         "CV=$out/immtrue/trace.csv#imm_cv"         "CA=$out/immtrue/trace.csv#imm_ca"         "CT=$out/immtrue/trace.csv#imm_ct"
+
 # CP 10.6 — error and saturation against disturbance level.
 #
 # Design §1.3's central claim is that the disturbance can exceed the actuator's

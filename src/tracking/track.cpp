@@ -41,18 +41,22 @@ void Track::start(const Measurement& m, const TrackParams& p, int64_t frame) noe
 
     Measurement seed = m;
     seed.sigma_urad  = last_sigma_;
-    kf_.init(seed, p_.kf);
+    if (p_.imm) imm_.init(seed, p_.imm_params);
+    else        kf_.init(seed, p_.kf);
 }
 
 void Track::predict(double dt) noexcept {
     if (state_ == TrackState::Deleted) return;
     dt_ = dt;
-    kf_.predict(dt);
+    if (p_.imm) imm_.predict(dt);
+    else        kf_.predict(dt);
 }
 
 double Track::distance2(const Measurement& m) const noexcept {
     if (state_ == TrackState::Deleted) return std::numeric_limits<double>::max();
-    return kf_.mahalanobis2(m.angle, sigma_for(m));
+    const double sigma = sigma_for(m);
+    return p_.imm ? imm_.mahalanobis2(m.angle, sigma)
+                  : kf_.mahalanobis2(m.angle, sigma);
 }
 
 double Track::reach_urad() const noexcept {
@@ -67,20 +71,23 @@ double Track::reach_urad() const noexcept {
 
 bool Track::within_reach(const Measurement& m) const noexcept {
     if (p_.max_target_speed_urad_s <= 0.0) return true;
-    const Angle2 d{m.angle.x - kf_.position().x, m.angle.y - kf_.position().y};
+    const Angle2 pos = position();
+    const Angle2 d{m.angle.x - pos.x, m.angle.y - pos.y};
     return d.norm() <= reach_urad();
 }
 
 double Track::assoc_score(const Measurement& m) const noexcept {
     if (state_ == TrackState::Deleted) return std::numeric_limits<double>::max();
     const double sigma = sigma_for(m);
-    const auto   S     = kf_.innovation_cov(sigma);
+    const auto   S     = p_.imm ? imm_.innovation_cov(sigma)
+                                : kf_.innovation_cov(sigma);
     const double det   = S.determinant();
     // det > 0 for any covariance plus a positive diagonal; the guard is for the
     // pathological case where P has been corrupted, and returning "worst
     // possible score" is the right failure mode — never select this.
     if (!(det > 0.0)) return std::numeric_limits<double>::max();
-    return kf_.mahalanobis2(m.angle, sigma) + std::log(det);
+    return (p_.imm ? imm_.mahalanobis2(m.angle, sigma)
+                   : kf_.mahalanobis2(m.angle, sigma)) + std::log(det);
 }
 
 int Track::hits_in_window() const noexcept {
@@ -104,7 +111,8 @@ void Track::update(const Measurement& m) noexcept {
     if (state_ == TrackState::Deleted) return;
 
     const double sigma = sigma_for(m);
-    kf_.update(m.angle, sigma);
+    if (p_.imm) imm_.update(m.angle, sigma);
+    else        kf_.update(m.angle, sigma);
     last_sigma_ = sigma;
     record_hit(true);
 

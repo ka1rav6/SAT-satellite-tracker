@@ -1,0 +1,129 @@
+# scenarios/control/figure8.toml — CP 10.5's ablation scenario.
+#
+# ---------------------------------------------------------------------------
+# WHY A FIGURE-8 SPECIFICALLY
+# ---------------------------------------------------------------------------
+# §10.2: "At the figure-8 crossing, acceleration reverses sign and single-model
+# filters overshoot every lap. Figure-8 is a MANDATORY spec motion, so this is a
+# before/after demo on graded functionality."
+#
+# That is the whole argument, and the word doing the work is "reverses". A
+# constant-velocity filter is not wrong about a figure-8 in general — it tracks
+# the straight-ish sections perfectly well. It is wrong precisely where the
+# motion changes character, and a figure-8 changes character twice a lap by
+# construction. Any smooth closed curve would exercise a turn model; only this
+# one exercises the SWITCH, which is what an IMM is and what the mode
+# probability panel shows.
+#
+# A Lissajous figure with a 2:1 frequency ratio IS a figure-8 — x traces one
+# period while y traces two — which is why spec row 12's "figure-8" and the
+# motion library's `lissajous` are the same component.
+#
+# ---------------------------------------------------------------------------
+# THE NUMBERS, SO THE DIFFICULTY IS CHECKABLE
+# ---------------------------------------------------------------------------
+#   amplitude        (400, 250) px
+#   period           8 s for the slow axis
+#   peak speed       2*pi*400/8 = 314 px/s on x, 2*pi*2*250/8 = 393 px/s on y
+#   peak accel       (2*pi/8)^2 * 400 = 247 px/s^2 on x,
+#                    (2*pi*2/8)^2 * 250 = 617 px/s^2 on y
+#
+# So the target accelerates hard enough to matter — 617 px/s^2 against a loop
+# bandwidth of 8 rad/s leaves a/kp^2 = 9.6 px of acceleration lag that velocity
+# feedforward cannot touch (CP 10.1's manoeuvring test says the same thing from
+# the other side).
+#
+# Jitter and clutter are off for the same reason as in the other
+# scenarios/control files: an effect worth a few pixels cannot be measured
+# underneath a 16.33 px disturbance floor. These files are instruments, not
+# compliance claims, and no row of the compliance matrix is measured on them.
+
+[meta]
+name        = "figure8"
+description = "CP 10.5: spec row 12's figure-8, for the IMM ablation"
+
+[input]
+mode = "synthetic"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 24                     # three laps
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+exposure_ms    = 5.0
+blur_substeps  = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+kind       = "target"
+intensity  = 120.0
+size_px    = 10
+initial_px = [999.5, 999.5]         # the centre of the 8 is the crossing
+shape.type = "square"
+
+[[target.motion]]                   # row 12's figure-8
+kind          = "lissajous"
+amplitude_px  = [400.0, 250.0]
+freq_ratio    = 2.0                 # y twice per x: the 8
+period_s      = 8.0
+phase_deg     = 0.0
+
+[gimbal]
+max_pan_dps      = 5.0
+max_tilt_dps     = 5.0
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 20.0
+salt_pepper    = 0.10
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons  = 0
+
+[control]
+kp   = 8.0
+ki   = 2.0
+kd   = 0.15
+k_ff = 1.0
+
+[tracking]
+imm = true                          # CP 10.5 varies this
+
+[ai]
+enabled          = true
+fallback_on_fail = true
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

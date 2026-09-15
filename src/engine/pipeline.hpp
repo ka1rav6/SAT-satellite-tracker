@@ -122,6 +122,16 @@ struct FrameRecord {
     Rate2      estimate_rate{};       ///< and its velocity — the feedforward input
     double     estimate_sigma_urad = 0.0;
 
+    // --- CP 10.5: IMM mode probabilities ----------------------------------
+    /// Probability of each of §10.2's three models, in ImmMode order
+    /// (CV, CA, CT). All zero when the IMM is not running. This is §12's
+    /// stacked-area "mode probability panel", and the quantity the checkpoint
+    /// asks to see shift at the figure-8 crossing.
+    float      imm_mode_prob[3] = {0.0f, 0.0f, 0.0f};
+    /// The CT model's turn-rate estimate, rad/s. Signed, so the sign flip at
+    /// the crossing is visible.
+    float      imm_turn_rate = 0.0f;
+
     // --- CP 10.7: handover ------------------------------------------------
     /// The beacon's offset from the boresight as a co-boresighted quadrant
     /// cell would see it, microradians. Observable: the frame is rendered at
