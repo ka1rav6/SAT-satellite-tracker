@@ -49,20 +49,61 @@ namespace sat {
 // has units of 1/s and is literally the loop bandwidth in radians per second.
 // kp = 8.0 means a ~1.3 Hz closed-loop bandwidth, which is a sane starting point
 // for a mount with a 20 ms lag and a 10 ms transport delay.
+//
+// ---------------------------------------------------------------------------
+// WHERE ki = 2.0 COMES FROM (CP 10.2)
+// ---------------------------------------------------------------------------
+// It was 0.5, which was a guess. Integral gain buys steady-state accuracy and
+// pays for it in overshoot, and both sides are measurable, so the number is
+// chosen by a criterion instead:
+//
+//   ki = the largest integral gain whose FULL-FIELD SLEW overshoot stays
+//        inside spec row 17's 10 px budget.
+//
+// Measured on scenarios/control/slew.toml, a saturating 375 px acquisition
+// slew, with the overshoot read off the trace:
+//
+//   ki     slew overshoot     200 px/s residual (p95)
+//   0.5        2.07 px              4.73 px
+//   1.0        3.93 px              4.48 px
+//   2.0        6.88 px              4.04 px      <- shipped
+//   3.0       10.02 px              3.57 px      <- at the budget
+//   4.0       12.93 px              3.04 px
+//   8.0       23.80 px              1.50 px
+//
+// The temptation is ki = 8: it drives the steady-state residual to 1.5 px and
+// the slew still settles in one lobe. But a 23.8 px overshoot blows row 17's
+// budget on EVERY acquisition, and the overshoot is scored — the metric starts
+// counting at the first confirmed frame, which is before the settle.
+//
+// At specification-representative speeds ki barely matters at all: on
+// compliance.toml the target's apparent rate is 7.6 px/s and the tracking RMS
+// moves from 17.20 to 17.27 px across the whole range above, because row 23's
+// jitter floor swamps it. The gain is only visible on a fast target, which is
+// the regime CP 10.1's scenario exists to expose.
 // ---------------------------------------------------------------------------
 struct ControlGains {
     double kp      = 8.0;
-    double ki      = 0.5;
+    double ki      = 2.0;
     double kd      = 0.15;
     double k_ff    = 1.0;    ///< velocity feedforward; 1.0 = full, 0.0 = off
     double i_limit = 2.0e5;  ///< integrator clamp, urad*s
+
+    /// Conditional integration (CP 10.2). Defaults ON, and turning it off is
+    /// not an option anybody should exercise in a real run — it exists so the
+    /// checkpoint can MEASURE what anti-windup is worth instead of asserting
+    /// it, and so §13.3's ablation table has a row for it. A claim that a
+    /// safeguard matters is only worth as much as the run without it.
+    bool   anti_windup = true;
 
     /// A pure proportional controller — CP 1.7's "cmd = kp * (detection −
     /// boresight)". Kept as a named factory because the demo switches between
     /// P, PID and PID+FF live (CP 15.2) and the report's ablation table needs
     /// each configuration to be nameable.
     [[nodiscard]] static ControlGains proportional(double kp_) noexcept {
-        return ControlGains{kp_, 0.0, 0.0, 0.0, 0.0};
+        ControlGains g;
+        g.kp = kp_; g.ki = 0.0; g.kd = 0.0; g.k_ff = 0.0; g.i_limit = 0.0;
+        return g;
     }
     [[nodiscard]] static ControlGains pid(double kp_, double ki_, double kd_) noexcept {
         ControlGains g; g.kp = kp_; g.ki = ki_; g.kd = kd_; g.k_ff = 0.0; return g;
@@ -154,7 +195,13 @@ public:
         //
         // Integral action exists to remove a STEADY-STATE bias against a
         // steady setpoint. Search has neither, so it gets no integrator.
-        if (!saturated && integral_enabled) {
+        //
+        // g_.anti_windup gates only the SATURATION freeze, not integral_enabled:
+        // the Search freeze above is not a safeguard that can be traded away,
+        // it is a statement about what an integral term means, and a run with
+        // it disabled would be measuring a different controller rather than
+        // this one without a safeguard.
+        if ((!saturated || !g_.anti_windup) && integral_enabled) {
             integ_ += error * dt;
             integ_ = clamp_abs(integ_, g_.i_limit);
         }

@@ -127,10 +127,15 @@ struct TargetSpec {
 // ---------------------------------------------------------------------------
 struct ControlSpec {
     double kp      = 8.0;     ///< 1/s; the closed-loop bandwidth in rad/s
-    double ki      = 0.5;     ///< 1/s^2
+    double ki      = 2.0;     ///< 1/s^2; see controller.hpp for where 2.0 comes from
     double kd      = 0.15;    ///< dimensionless
     double k_ff    = 1.0;     ///< velocity feedforward: 1 = full, 0 = off (CP 10.1)
     double i_limit = 2.0e5;   ///< integrator clamp, urad*s
+
+    /// CP 10.2's conditional integration. A scenario key only so the
+    /// checkpoint's counterfactual is a run rather than a rebuild; leaving it
+    /// false in a compliance scenario would be misconfiguring the system.
+    bool   anti_windup = true;
 };
 
 // ---------------------------------------------------------------------------

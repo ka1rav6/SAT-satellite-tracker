@@ -208,6 +208,23 @@ cp101: build
     done
     python3 tools/plot_control.py -o "$out/cp101.svg" --column err_px         --title "CP 10.1 — velocity feedforward on a 200 px/s target"         --subtitle "scenarios/control/fast_linear.toml — kp=8, ki=0.5, kd=0.15"         --ylabel "pointing error, px"         "k_ff = 0 (feedback only)=$out/ff0/trace.csv"         "k_ff = 1 (feedforward)=$out/ff1/trace.csv"
 
+# CP 10.2 ablation — a saturating 375 px slew, with and without anti-windup.
+#
+# Writes logs/control/cp102.svg. The criterion is "settles cleanly with no
+# ringing": one overshoot lobe and then quiet. The counterfactual is the point —
+# design §10.4 calls anti-windup "essential", and that claim is worth what the
+# run without it says it is worth.
+cp102: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="logs/control"
+    mkdir -p "$out"
+    for aw in true false; do
+        "{{build_dir}}/sat-tracker" --headless             --scenario scenarios/control/slew.toml             --set "control.anti_windup=$aw" --trace --no-csv --no-report --quiet             --out "$out/aw$aw"
+    done
+    python3 tools/plot_control.py -o "$out/cp102.svg" --column err_x_px         --title "CP 10.2 — a saturating 375 px slew, with and without anti-windup"         --subtitle "scenarios/control/slew.toml — kp=8, ki=2, kd=0.15; the loop asks for 3.75x the rate ceiling"         --ylabel "pointing error (azimuth), px"         "anti-windup on=$out/awtrue/trace.csv"         "anti-windup off=$out/awfalse/trace.csv"
+    python3 tools/plot_control.py -o "$out/cp102_integrator.svg" --column integ_x         --title "CP 10.2 — what the integrator does during the slew"         --subtitle "conditional integration freezes it while the plant is against its stops"         --ylabel "integrator, urad*s"         "anti-windup on=$out/awtrue/trace.csv"         "anti-windup off=$out/awfalse/trace.csv"
+
 # The Stage 10 control checkpoints, verbose — the numbers ARE the checkpoints.
 test-control: build
     "{{build_dir}}/test_loop" -tc="*CP 10.*" --success --no-skipped-summary 2>&1         | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true

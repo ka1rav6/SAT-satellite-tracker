@@ -1,0 +1,124 @@
+# scenarios/control/slew.toml — CP 10.2's full-field slew.
+#
+# ---------------------------------------------------------------------------
+# WHAT A "FULL-FIELD SLEW" HAS TO CONTAIN TO TEST ANYTHING
+# ---------------------------------------------------------------------------
+# CP 10.2's criterion is "a full-field slew settles cleanly with no ringing",
+# and the only thing that makes that a test of ANTI-WINDUP rather than of
+# damping is that the mount must SATURATE on the way.
+#
+# The arithmetic, so the numbers here are checkable rather than chosen:
+#
+#   error to command the rate ceiling   87266 urad/s / kp 8 = 10908 urad
+#                                       / 109.08 urad per px = 100 px
+#   beacon offset here                  (300, 225) px = 375 px
+#
+# So the loop asks for 3.75x the rate the motor can deliver and stays saturated
+# for most of the slew. That is the regime where an integrator accumulates a
+# demand it cannot spend: by the time the error reverses it has banked a large
+# commanded rate that takes just as long to unwind, and the mount sails past
+# the target. Conditional integration is what stops it.
+#
+# 375 px is a little over half a field (the camera sees 640 x 480 screen px),
+# placed so the beacon stays inside the frame the whole time. A slew that puts
+# the beacon OUTSIDE the field would also exercise the search pattern and the
+# track lifecycle, which is a different test with a different failure mode.
+#
+# The target is STATIONARY. A moving one would mix the feedforward's
+# contribution into the settling behaviour, and CP 10.1 already measures that
+# separately. Here the feedforward input is zero by construction and what is
+# left is the feedback path and its integrator.
+#
+# Row 23's jitter is off for the same reason as in fast_linear.toml: ringing is
+# a question about the shape of the error trace, and +/- 20 px per frame of
+# noise on top of an overshoot makes the shape unreadable.
+
+[meta]
+name        = "slew"
+description = "CP 10.2: a saturating 375 px acquisition slew onto a stationary beacon"
+
+[input]
+mode = "synthetic"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 8
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+exposure_ms    = 5.0
+blur_substeps  = 8
+initial_pos_px = [999.5, 999.5]      # row 6: the centre of the screen
+
+[target]
+kind       = "target"
+intensity  = 120.0
+size_px    = 10
+initial_px = [1299.5, 1224.5]        # +300, +225 px: 375 px away, still in frame
+shape.type = "square"
+
+# Stationary. Expressed as `linear` at zero velocity rather than as `constant`,
+# which is NOT the same thing: world_builder.cpp treats a stack containing a
+# `constant` component as expressing an ABSOLUTE position and bases it at the
+# origin, so `constant` discards initial_px. Writing it the other way put the
+# beacon at (0, 0) and the mount ran 1848 px off the screen chasing nothing.
+[[target.motion]]
+kind          = "linear"
+velocity_px_s = [0.0, 0.0]
+
+[gimbal]
+max_pan_dps      = 5.0
+max_tilt_dps     = 5.0
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 20.0
+salt_pepper    = 0.10
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons  = 0
+
+[control]
+kp   = 8.0
+ki   = 2.0
+kd   = 0.15
+k_ff = 1.0
+anti_windup = true                   # CP 10.2 varies this
+
+[ai]
+enabled          = true
+fallback_on_fail = true
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

@@ -120,6 +120,8 @@ const std::vector<FieldSpec>& schema() {
         {"control.k_ff",    ValueKind::Float, false, 0.0, 2.0,  "",
          "velocity feedforward gain; 0 disables it (CP 10.1's ablation), 1 is "
          "full cancellation of the tracking lag"},
+        {"control.anti_windup", ValueKind::Bool, false, 0.0, 0.0, "",
+         "conditional integration (CP 10.2); off is for the ablation only"},
         {"control.i_limit", ValueKind::Float, false, 0.0, kInf, "",
          "integrator clamp in urad*s; caps how much history the integral term "
          "can hold, independently of the anti-windup"},

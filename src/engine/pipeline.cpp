@@ -169,6 +169,7 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     cfg.gains.kd      = sc.control.kd;
     cfg.gains.k_ff    = sc.control.k_ff;
     cfg.gains.i_limit = sc.control.i_limit;
+    cfg.gains.anti_windup = sc.control.anti_windup;
 
     // §7.2's closed forms turned into the filter's q. The largest acceleration
     // over every target, because the tracker does not know which one it will

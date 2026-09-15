@@ -118,7 +118,7 @@ decoy_beacons  = 0
 
 [control]                           # design §10.4 — CP 10.1 varies k_ff
 kp   = 8.0
-ki   = 0.5
+ki   = 2.0
 kd   = 0.15
 k_ff = 1.0
 
