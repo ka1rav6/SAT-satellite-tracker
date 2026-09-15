@@ -352,6 +352,33 @@ public:
     /// is diagnosed — CP 10.2's "settles cleanly with no ringing" is a
     /// statement about this state, not about the output.
     [[nodiscard]] const Controller&  controller() const noexcept { return control_; }
+
+    // -----------------------------------------------------------------------
+    // CP 10.3's platform-drift cancellation input, urad/s. IT MUST BE ZERO,
+    // and it exists so that a test can demonstrate why rather than a comment
+    // asserting it.
+    //
+    // §10.4 subtracts an estimated platform rate from the controller's output,
+    // on the premise that platform drift is a disturbance the loop cannot see.
+    // In this architecture it is already cancelled:
+    //
+    //   the platform displaces the TRUE boresight   B_true = B_cmd + D
+    //   the beacon lands on the sensor at           T - B_true
+    //   measurement.hpp reconstructs through the
+    //   COMMANDED boresight — all we know           z = T - D
+    //
+    // So the filter sees the target at T - D moving at v - D', and driving
+    // B_cmd there puts B_true exactly on the beacon. Subtracting a second
+    // estimate removes the drift twice. tests/loop/test_feedforward.cpp
+    // measures both directions: sweeping the drift to four times the
+    // specification leaves the residual flat, and feeding the controller the
+    // TRUE drift rate — a perfect estimator — more than doubles the error.
+    //
+    // It would be needed if the measurement were reconstructed through the
+    // true boresight, as an IMU-stabilised mount reporting real attitude would
+    // give. That is the case the argument is kept alive for.
+    // -----------------------------------------------------------------------
+    void set_platform_rate_est(Rate2 r) noexcept { platform_rate_est_ = r; }
     [[nodiscard]] SyntheticSource&   source()         noexcept { return source_; }
     [[nodiscard]] const StageTimers& timers()   const noexcept { return timers_; }
 
@@ -408,6 +435,7 @@ private:
     bool                perception_ready_ = false;
 
     Rate2       cmd_rate_{};      ///< the value that closes the loop (INV-2)
+    Rate2       platform_rate_est_{};   ///< CP 10.3: zero; see set_platform_rate_est
     FrameRecord last_{};
     int64_t     frame_ = 0;
 

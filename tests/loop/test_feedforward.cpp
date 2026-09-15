@@ -440,3 +440,123 @@ TEST_CASE("CP 10.2: anti-windup is worth measuring, not just asserting") {
     // statement of what the safeguard buys.
     CHECK(sb.overshoot_px > 10.0);
 }
+
+// ===========================================================================
+// CP 10.3 — platform drift
+//
+// The checkpoint asks for "platform drift estimation and cancellation", with
+// the criterion "with linear platform motion, residual error drops measurably".
+//
+// IT DOES NOT, AND IT SHOULD NOT, AND THAT IS A RESULT RATHER THAN A GAP.
+//
+// The design's premise is that platform drift is a disturbance the loop cannot
+// see, so it has to be estimated and subtracted. In this architecture it is
+// already cancelled, structurally, and adding the subtraction makes things
+// worse. The argument is four lines of algebra:
+//
+//   the platform displaces the TRUE boresight      B_true = B_cmd + D
+//   the beacon lands on the sensor at              T - B_true
+//   tracking/measurement.hpp reconstructs the
+//   angle through the COMMANDED boresight, which
+//   is all the system knows                        z = B_cmd + (T - B_true)
+//                                                    = T - D
+//
+// So the tracker does not see the target at T. It sees it at T - D, moving at
+// v - D'. Driving B_cmd to T - D puts B_true = B_cmd + D at T — exactly on the
+// beacon. The drift is indistinguishable from target motion, the Kalman
+// velocity state absorbs it, and CP 10.1's feedforward carries it.
+//
+// Subtracting a SECOND estimate of D' would remove it twice.
+//
+// Measured on the 200 px/s target, sweeping the drift from nothing to nearly
+// the target's own speed:
+//
+//   platform drift      0        17       67      170 px/s
+//   tracking RMS     3.03      2.99     2.96     3.78 px
+//
+// The residual is flat. Nothing is being left on the table for an estimator to
+// pick up.
+//
+// WHERE THE DESIGN'S PREMISE WOULD HOLD. If the measurement were reconstructed
+// through the true boresight — an IMU-stabilised mount reporting its real
+// attitude, say — then z = T, the filter would see only the target's own
+// motion, and D' would have to be supplied separately. The platform_rate_est
+// argument is kept in the controller's signature for exactly that case, and
+// these tests pin the fact that today it must be zero.
+// ===========================================================================
+namespace {
+
+/// fast_target(), plus spec row 25's linear platform motion at a chosen rate.
+Scenario fast_target_with_drift(double duration_s, double vx, double vy) {
+    Scenario sc = fast_target(duration_s);
+    MotionSpec m;
+    m.kind = "linear";
+    m.velocity_px_s[0] = vx;
+    m.velocity_px_s[1] = vy;
+    sc.platform.push_back(m);
+    return sc;
+}
+
+}  // namespace
+
+TEST_CASE("CP 10.3: platform drift is already cancelled by the measurement frame") {
+    const RunResult none = run(fast_target(8.0), 0.5, 2.5);
+    // Spec row 25's baseline drift is (15, -8) px/s. 60 px/s is a deliberate
+    // exaggeration — four times the specification — so that "no effect" is a
+    // claim about the mechanism and not about a disturbance too small to see.
+    const RunResult spec = run(fast_target_with_drift(8.0,  15.0,  -8.0), 0.5, 2.5);
+    const RunResult hard = run(fast_target_with_drift(8.0,  60.0, -30.0), 0.5, 2.5);
+
+    REQUIRE(none.scored > 45);
+    REQUIRE(spec.scored > 45);
+    REQUIRE(hard.scored > 45);
+
+    MESSAGE("tracking RMS with platform drift 0 / 17 / 67 px/s: "
+            << none.rms_px << " / " << spec.rms_px << " / " << hard.rms_px << " px");
+
+    // Within 40% of the drift-free run at four times the specified drift. This
+    // is the whole CP 10.3 finding: there is no residual for an estimator to
+    // remove.
+    CHECK(hard.rms_px < 1.4 * none.rms_px);
+    CHECK(spec.rms_px < 1.4 * none.rms_px);
+}
+
+TEST_CASE("CP 10.3: cancelling the drift a second time makes it worse") {
+    // The direct test of the double-count, and the reason the checkpoint is
+    // reported as a finding rather than implemented as written.
+    //
+    // AxisController subtracts platform_rate_est from its output. Feeding it
+    // the platform's true rate — a PERFECT estimator, better than anything an
+    // estimator could achieve — should, if the design's premise held, improve
+    // the result. It does the opposite, by exactly the amount the premise is
+    // wrong by.
+    constexpr double kDriftX = 60.0, kDriftY = -30.0;
+    const Scenario sc = fast_target_with_drift(8.0, kDriftX, kDriftY);
+
+    const double ifov = sc.camera_geometry().ifov_urad();
+    const Rate2 perfect{kDriftX * ifov, kDriftY * ifov};
+
+    Pipeline zero;  zero.build_from_scenario(sc);
+    Pipeline dbl;   dbl.build_from_scenario(sc);
+    dbl.set_platform_rate_est(perfect);
+
+    auto score = [&](Pipeline& p) {
+        double sum_sq = 0.0; int n = 0;
+        while (p.step()) {
+            const FrameRecord& r = p.last();
+            if (!r.truth_valid || r.time_s < 0.5 || r.time_s >= 2.5) continue;
+            if (r.track_state != TrackState::Confirmed) continue;
+            sum_sq += r.tracking_error_px * r.tracking_error_px;
+            ++n;
+        }
+        REQUIRE(n > 45);
+        return std::sqrt(sum_sq / n);
+    };
+
+    const double a = score(zero);
+    const double b = score(dbl);
+    MESSAGE("platform_rate_est = 0 -> " << a << " px RMS;  "
+            "fed the TRUE drift -> " << b << " px RMS");
+
+    CHECK(b > 2.0 * a);
+}

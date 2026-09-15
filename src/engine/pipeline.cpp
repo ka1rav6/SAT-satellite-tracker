@@ -604,7 +604,7 @@ bool Pipeline::step() {
         // missing. Nothing noticed because ki was zero in every run.
         if (fsm_.changed_this_frame() && !integral_ok) control_.clear_state();
 
-        cmd_rate_ = control_.compute(aim, measured, ff, Rate2{},
+        cmd_rate_ = control_.compute(aim, measured, ff, platform_rate_est_,
                                      source_.clock().control_dt(),
                                      az_sat, el_sat, integral_ok);
     }
