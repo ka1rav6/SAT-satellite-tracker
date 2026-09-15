@@ -111,12 +111,47 @@ how long the *system* takes, not how lucky it was.
 An episode is recorded on the transition, so a run that ends mid-episode
 contributes no sample at all. A half-finished re-acquisition is not a fast one.
 
-### 2.6 `lock_retention_rate` is clamped, and its denominator is printed
+### 2.6 `lock_retention_rate` — the numerator intersects the denominator
 
-`frames Confirmed ÷ frames in FOV` can exceed 1: the filter coasts correctly
-through a brief occlusion, staying Confirmed on frames where the beacon is not
-visible. Unclamped, that reports retention above 100 % and a **negative** target
-loss. It is clamped to 1.
+§13.1 says "frames Confirmed ÷ frames beacon in view". The numerator is frames
+Confirmed **and in view**, not every Confirmed frame.
+
+This section previously described a clamp, and the clamp was a bug. Confirmed
+frames can exceed in-FOV frames for a benign reason — the filter coasts
+correctly through a brief occlusion — and clamping the ratio to 1 handled that
+while silently absorbing the catastrophic case. A 60 s `compliance.toml` run
+ends with the tracker holding a clutter source after the beacon has left the
+field, and it printed:
+
+```
+retention           100.00 %   (1798 confirmed / 727 in-FOV frames)
+target loss           0.00 %   (row 18, < 5 %)
+false tracks       1073.60 /min (1073 frames confirmed with no beacon in view)
+```
+
+Every number there is computed correctly and together they are a contradiction.
+The raw ratio was 2.47. **Spec row 18's graded metric read perfect on a run
+that had lost the target.**
+
+Intersecting the numerator with the denominator's condition handles the
+occlusion properly rather than papering over it: a frame with the beacon out of
+view is in neither, so it can neither inflate the ratio nor penalise it. The
+ratio then cannot exceed 1 by construction and there is nothing to clamp. The
+same run now reads:
+
+```
+retention            99.72 %   (725 held / 727 in-FOV frames)
+target loss           0.28 %   (row 18, < 5 %)
+                            1073 further Confirmed frames with the beacon out of view
+false tracks       1073.60 /min
+```
+
+The third line prints only when the two counts differ. The gap **is** the
+false-track count, and putting it between them is what makes the two numbers
+legible together.
+
+Nothing changes on a healthy run: the clean arm still reports 99.67 % on 598 of
+600 frames, because there the two numerators are the same number.
 
 When the beacon is never in view the ratio is 0/0. It is reported as zero with
 `frames_in_fov = 0` printed beside it, so a reader can see the ratio is
@@ -327,14 +362,41 @@ requirement is met; the internal budget is not, and closing it would need a
 different processing strategy (a decimated response grid, or a region of
 interest around the track) rather than faster arithmetic.
 
-### 2.14 Not yet implemented
+### 2.14 `handover` (CP 10.7)
+
+Not one of §13.1's metrics — it is added because coarse alignment's deliverable
+is the handover, and a coarse tracker with no such moment has no definition of
+success beyond "the error looks small".
+
+```
+reached       bool     the FSM entered Handover at least once
+time_s        double   when, from run start; 0 if never
+best_rms_urad double    the closest the loop ever got, sustained
+```
+
+The criterion is §10.4's: RMS offset below `capture_range / 3` for 30
+consecutive frames, where capture range is the quadrant cell's ~1 mrad.
+
+**The quantity fed in is observable, not truth-derived.** The obvious input is
+the tracking error the metrics already compute, and that would be wrong — a
+mode FSM deciding on information the real system does not have is the
+conflation INV-6 exists to prevent. What is used is the beacon's offset from
+the boresight *in the image*: the frame is rendered at the true boresight, so
+`detection − image centre` is exactly what a co-boresighted quad cell sees.
+
+`reached` is per run; a sweep turns it into the success **rate**, the same way
+per-run acquisition times become a distribution. See
+[`RESULTS.md` §7](RESULTS.md) for what row 23's jitter does to it.
+
+### 2.15 Not yet implemented
 
 | Metric | Status |
 |---|---|
-| `handover_success` | The mode FSM's `Track → Handover` transition exists and is tested, but is **disabled by default** until CP 10.7 builds the quadrant detector. Entering the state would claim a capability the system does not have. |
-| `fps` with the GUI on | §13.1 asks for it "reported separately". The headless figure is produced now; the GUI-on figure arrives with CP 14.4's measurement from the shipped binary. |
+| `handover_success` as a single figure | Per run it is a bool and a time (§2.14); the *rate* is a sweep aggregate, produced by `just cp107` rather than stored in `run.json`. Putting a rate in a single run's artifact would be a number with one sample behind it. |
+| `fps` with the GUI on | §13.1 asks for it "reported separately". The headless figure is produced now; the GUI-on figure arrives with the Stage 15 packaging work. |
+| `saturation_frac` broken out per axis | Reported as the worse of the two, which is what a single compliance row can carry. The per-axis figures exist on `GimbalAxis` and are plotted by `just cp106`. |
 
-### 2.12 Where these numbers come from
+### 2.16 Where these numbers come from
 
 | Artifact | Produced by | Contains |
 |---|---|---|

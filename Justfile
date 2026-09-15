@@ -281,8 +281,17 @@ cp107: build
         --scenario scenarios/control/fast_linear.toml --out logs/control
 
 # The Stage 10 control checkpoints, verbose — the numbers ARE the checkpoints.
+#
+# Two binaries: test_control holds the integration cases (the whole engine,
+# several simulated seconds each) and test_loop holds the controller's own unit
+# tests, one of which is CP 10.1's closed-form steady-state lag.
 test-control: build
-    "{{build_dir}}/test_loop" -tc="*CP 10.*" --success --no-skipped-summary 2>&1         | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for t in test_control test_loop; do
+        "{{build_dir}}/$t" -tc="*CP 10.*" --success --no-skipped-summary 2>&1 \
+            | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true
+    done
 
 # ---------------------------------------------------------------------------
 # Video (design §8 — Benchmark Performance-2, 30% of marks)

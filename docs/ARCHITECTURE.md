@@ -36,9 +36,9 @@ over-powered, and every design decision downstream follows from that.
   ╔═══════════════════ INV-1 BOUNDARY: nothing below sees truth ═══════════╗
   ║  perception ──▶ tracking ──▶ search ──▶ control ──▶ plant              ║
   ║  median, top-hat,  Kalman,    spiral,    PID+FF,    gimbal model       ║
-  ║  SAT, matched,     gate,      predicted  mode FSM                      ║
-  ║  CFAR, grouping,   lifecycle  region                                   ║
-  ║  centroid + bias                                                       ║
+  ║  SAT, matched,     IMM,       predicted  anti-windup                   ║
+  ║  CFAR, grouping,   gate,      region     mode FSM,                     ║
+  ║  centroid + bias   lifecycle             handover                      ║
   ╚═══════════════════════════════════════╤════════════════════════════════╝
                                           │  commanded rate
                       ┌───────────────────┴─────────────────────────────┐
@@ -58,19 +58,19 @@ one mode evidence about the other.
 |---|---:|---|
 | `core` | 2,079 | units, frames, clock, RNG, arena, ring, hashing, timers |
 | `world` | 901 | emitters, the motion algebra |
-| `scenario` | 1,681 | TOML loading, schema validation, sweep specs, overlays |
+| `scenario` | 1,779 | TOML loading, schema validation, sweep specs, overlays |
 | `camera` | 444 | exact-coverage splatting |
 | `degrade` | 629 | atmosphere, noise, jitter, platform motion |
-| `perception` | 2,825 | the §9.4 detection pipeline and the centroid estimators |
-| `tracking` | 1,055 | measurement, Kalman, gating, lifecycle |
+| `perception` | 2,865 | the §9.4 detection pipeline and the centroid estimators |
+| `tracking` | 1,716 | measurement, Kalman, the IMM, gating, lifecycle |
 | `search` | 421 | spiral / raster acquisition patterns |
 | `plant` | 247 | the gimbal model |
-| `control` | 545 | PID + feedforward, mode FSM |
-| `engine` | 3,136 | the per-frame orchestrator, frame sources, video |
-| `metrics` | 2,439 | §13.1 definitions, logs, reports, compliance, calibration |
-| `gui` | 1,340 | the live dashboard |
-| `app` | 1,704 | the commands behind `main` |
-| **total** | **19,446** | plus 11,332 lines of tests |
+| `control` | 1,148 | PID + feedforward, anti-windup, Smith predictor, mode FSM, handover |
+| `engine` | 3,330 | the per-frame orchestrator, frame sources, video |
+| `metrics` | 2,719 | §13.1 definitions, logs, traces, reports, compliance, calibration |
+| `gui` | 1,341 | the live dashboard |
+| `app` | 1,830 | the commands behind `main` |
+| **total** | **21,449** | plus 12,478 lines of tests |
 
 ---
 
@@ -256,6 +256,33 @@ analytic 230, bilinear reports 210.
 integer crop offset is an exact identity, so the crop contributes nothing at
 all where it need not.
 
+**The setpoint and the measurement move together, or neither does.** The aim
+point used to be the filter's prediction one frame ahead, which is a velocity
+feedforward implemented in the setpoint. Adding an explicit `k_ff` fed the
+velocity twice and put the mount 6.7 px *ahead* of the beacon; the k_ff sweep's
+optimum sat at 1 − kp·dt, which is what identified it as structural rather than
+a tuning fact. CP 10.4's Smith predictor is the same statement from the other
+side: advancing only the measurement biases the loop by exactly the horizon,
+with the sign flipped.
+
+**Integral action requires a live track.** Conditional integration assumes the
+only way to bank an unspendable demand is to hit the rate limit. In Search the
+setpoint is a scanning pattern that steps and reverses — large, persistent,
+sign-flipping error with the plant never saturating — and the integrator wound
+up hard enough to smear a streak the detector correctly called a candidate. An
+integral term that manufactures targets is doing something it is not for.
+
+**The controller's plant model is a copy, never a handle on the plant.** A
+Smith predictor's entire risk is that model and plant disagree, and a version
+that cannot disagree demonstrates nothing.
+
+**The handover criterion is fed an observable quantity.** The obvious input is
+the tracking error the metrics already compute, and it is truth-derived — a
+mode FSM deciding on information the real system does not have is the
+conflation INV-6 exists to prevent. What is used is the detection's distance
+from the image centre, which is exactly what a co-boresighted quadrant cell
+sees.
+
 **Reports are generated in C++, not Jinja.** §14 specifies Jinja, which is
 Python. The checkpoint's criterion is "zero manual steps", and a Python
 post-process is a manual step unless the binary invokes it — at which point the
@@ -288,7 +315,7 @@ every CI platform failed.
 
 ## 7. Status
 
-Stages 0–9 complete, plus CP 14.2 and CP 14.4. All five ★ gates passed.
+Stages 0–10 complete, plus CP 14.2 and CP 14.4. All five ★ gates passed.
 
 | Stage | | |
 |---|---|---|
@@ -302,12 +329,18 @@ Stages 0–9 complete, plus CP 14.2 and CP 14.4. All five ★ gates passed.
 | 7 | Metrics, logs, batch ★ | ✅ |
 | 8 | Video ingest ★ | ✅ |
 | 9 | Centroid accuracy | ✅ |
-| 10 | Control refinement | not started |
+| 10 | Control refinement | ✅ — 10.4 built, measured, and left **off** on purpose |
 | 11 | Machine learning | **out of scope** |
 | 12 | SAT supervisor | not started |
 | 13 | Acquisition strategy | not started |
 | 14 | Robustness and performance | CP 14.2, 14.4 done |
 | 15 | GUI, demo, deliverables | dashboard exists; packaging not started |
 
+Three Stage 10 checkpoints did not land the way the design expected them to,
+and each is recorded as a measured result rather than quietly implemented as
+written: CP 10.3 (the platform drift is already cancelled), CP 10.4 (the loop is
+not delay-limited, so the Smith predictor costs rather than buys) and CP 10.5
+(the figure-8's worst error is at the lobes, not at the crossing).
+
 Known gaps are recorded with measurements rather than described: see
-[`RESULTS.md` §5](RESULTS.md).
+[`RESULTS.md` §9](RESULTS.md).

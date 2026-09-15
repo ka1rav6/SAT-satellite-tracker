@@ -19,7 +19,7 @@ to `logs/sweep/compliance.txt`.
 |---|---|---|---|---|
 | 16 | Acquisition (in view) | ≤ 2 s | **0.067 s** | PASS |
 | 16 | Acquisition (cold) | ≤ 2 s | 0.067 s | bound derived — §10.5 |
-| 17 | Tracking error | ≤ 10 px | 17.5 px | bound derived — floor 16.33 px |
+| 17 | Tracking error | ≤ 10 px | 17.60 px | bound derived — floor 16.33 px |
 | 18 | Target loss | < 5 % | **1.67 %** | PASS |
 | 19 | Re-acquisition | ≤ 1 s | **0.094 s** | PASS |
 | 20 | Processing speed | ≥ 20 FPS | **21.5 / 30.8 FPS** | PASS |
@@ -55,8 +55,8 @@ RMS floor = sqrt(2 · 400/3) = 16.33 px
 ```
 
 No controller can go below that — the disturbance displaces the boresight
-*after* the command is issued. Measured **17.14 px**, so the loop contributes
-0.8 px of its own; with the disturbance removed it is **2.86 px**, comfortably
+*after* the command is issued. Measured **17.60 px**, so the loop contributes
+0.7 px of its own; with the disturbance removed it is **3.75 px**, comfortably
 inside row 17.
 
 ```
@@ -95,24 +95,29 @@ just cp67          # the ★ end-to-end reacquisition checkpoint
 
 | Checkpoint | Measured |
 |---|---|
-| 6.2 speed estimate vs the analytic velocity | **0.02 %** error (checkpoint allows 2 %) |
+| 6.2 speed estimate vs the analytic velocity | **0.01 %** error (checkpoint allows 2 %) |
 | 6.2 noise suppression | 300 → **160 µrad** RMS |
 | 6.2 filter consistency (NIS, want 2.0) | **2.0** over 2,000 frames |
 | 6.3 gate acceptance vs nominal 99 % | **98.8 %** over 20,000 draws |
 | 6.3 decoy 60 px away | d² = **2,446**; tracker holds the beacon for 110 frames, final error 7 × 10⁻¹⁴ px |
-| 6.4 eight blanked frames | lock retained, **0.0002 px** prediction error |
+| 6.4 eight blanked frames | lock retained through 7 of 8 on the prediction |
 | 6.4 gate widening while coasting | σ **75 → 451 µrad**, no special case |
 | 6.5 adaptive vs fixed R, in fog | **25.5 → 3.78 px** RMS, same seed |
-| ★ 6.7 hide 2 s then reveal | reacquired in **3 frames** (0.1 s); checkpoint allows 15 |
+| ★ 6.7 hide 2 s then reveal | reacquired in **5 frames** (0.17 s); checkpoint allows 15 |
 | 6.7 cold sweep bound | 18.7 s at 5 °/s, 10.6 s at 10 °/s |
 
-End to end on `scenarios/compliance.toml`, spec-row-23 jitter included:
+End to end, spec-row-23 jitter included, on the synthetic scenario
+`tests/metrics/test_spec_run.cpp` builds — **not** on `compliance.toml`, which
+an earlier version of this table mislabelled. The difference matters:
+`compliance.toml` carries §9.1's 120 clutter sources, and those cost two orders
+of magnitude (see §8).
 
 | | Measured |
 |---|---|
-| lock retention | **99.3 %** |
+| lock retention | **98.3 %** (118 of 120 in-FOV frames) |
 | acquisition (in view) | **0.067 s** |
-| centroiding RMSE (image) | **0.273 px** |
+| tracking error | **17.60 px** with row-23 jitter, **3.75 px** without |
+| centroiding RMSE (image) | **0.201 px** |
 
 ---
 
@@ -182,7 +187,220 @@ maximum noise integrates to about SNR 60.
 
 ---
 
-## 6. Performance (CP 14.2)
+## 6. Control refinement (Stage 10)
+
+```
+just test-control          # every number below, as an assertion
+just cp101                 # feedforward on/off, with the plot
+just cp102                 # the slew, with and without anti-windup
+just cp105                 # the IMM on the figure-8, with the mode panel
+just cp106                 # error and saturation against disturbance
+just cp107                 # handover success rate over 20 seeds per arm
+```
+
+`scenarios/control/*.toml` are **instruments, not compliance claims**. Each one
+removes whatever is larger than the effect under test — usually row 23's
+jitter, whose 16.33 px floor buries anything smaller — and says so at length in
+its own header. No row of the compliance matrix is measured on them.
+
+### CP 10.1 — velocity feedforward
+
+200 px/s target, scored over the two seconds after acquisition:
+
+| | RMS | signed (azimuth) |
+|---|---|---|
+| `k_ff = 0` | 21.60 px | −15.20 px (lagging) |
+| `k_ff = 1` | **2.53 px** | −1.81 px |
+
+The checkpoint asks for "under 4 px". The design quotes ~11 px for the *before*
+case on a 3 Hz loop; ours is kp = 8 rad/s = 1.27 Hz, so the predicted lag is
+v/kp = 25 px and the test checks against the formula rather than the literal
+number.
+
+**The k_ff sweep found a defect, not a tuning.** The optimum sat at 0.75, and
+1 − kp·dt = 1 − 8·0.0333 = 0.733 predicts that exactly. The aim point was the
+filter's prediction *one frame ahead*, which is itself a velocity feedforward
+implemented in the setpoint — so with `k_ff = 1` the velocity was fed twice and
+the mount pointed 6.7 px *ahead* of the beacon. Tuning k_ff to 0.75 would have
+produced a fine number and left a gain that silently depended on kp and the
+frame rate. The aim is now the estimate at the current frame; `k_ff = 1` is
+correct for the reason it is supposed to be.
+
+**The lag is a transient, not a steady state.** With integral action a PI loop
+nulls a constant-velocity lag in about kp/ki = 4 s:
+
+| `k_ff = 0` | 0.5–1.5 s | 1.5–3 s | 3–5 s | 5–8 s | 8–11 s |
+|---|---|---|---|---|---|
+| RMS | 24.3 px | 17.5 px | 11.2 px | 6.0 px | 2.8 px |
+
+So a whole-run RMS is largely a statement about run length. On a *manoeuvring*
+target the integrator never arrives: a 200 px/s sinusoid scored from 4 s
+onwards gives 25.64 px against feedforward's **16.56 px**. The 16.56 px
+remainder is acceleration lag, which velocity feedforward cannot touch — that
+is CP 10.5's job.
+
+### CP 10.2 — anti-windup, and where `ki` comes from
+
+A saturating 375 px slew (the loop demands 3.75× the mount's rate ceiling):
+
+| | overshoot | lobes | settled |
+|---|---|---|---|
+| anti-windup on | **7.50 px** | 1 | 2.44 px RMS |
+| anti-windup off | 12.06 px | 1 | — |
+
+`ki` was 0.5, which was a guess, and it showed: the integral term was 3 % of
+the slew rate, so "anti-windup is essential" was unfalsifiable. It is now
+chosen by a criterion — *the largest integral gain whose full-field-slew
+overshoot stays inside row 17's 10 px budget*:
+
+| `ki` | slew overshoot | 200 px/s residual (p95) |
+|---|---|---|
+| 0.5 | 2.07 px | 4.73 px |
+| **2.0** | **6.88 px** | **4.04 px** |
+| 3.0 | 10.02 px | 3.57 px |
+| 8.0 | 23.80 px | 1.50 px |
+
+`ki = 8` is refused despite its residual: a 23.8 px overshoot leaves row 17's
+budget on every acquisition, and the overshoot is scored.
+
+**Counting zero crossings is the wrong ringing test.** At `ki = 8` the loop
+holds the error to 0.12 px RMS, so noise flips the sign constantly and a
+crossing counter reports violent ringing on the best-regulated run in the set.
+A lobe only counts if its peak clears a floor.
+
+### CP 10.3 — the design is wrong here
+
+The checkpoint asks for platform drift estimation and cancellation. **The drift
+is already cancelled, and implementing the checkpoint as written makes it
+worse.**
+
+`measurement.hpp` reconstructs the target's angle through the *commanded*
+boresight, which is all the system knows. With the platform displacing the true
+boresight by D:
+
+```
+B_true = B_cmd + D        beacon lands at  T − B_true
+z = B_cmd + (T − B_true) = T − D
+```
+
+The filter sees the target at T − D moving at v − D′, so driving B_cmd there
+puts B_true exactly on the beacon. The drift is indistinguishable from target
+motion and CP 10.1's feedforward carries it.
+
+| platform drift | 0 | 17 px/s | 67 px/s |
+|---|---|---|---|
+| tracking RMS | 2.53 px | 2.46 px | 2.29 px |
+
+Flat to four times spec row 25's value. And feeding the controller the **true**
+drift — a perfect estimator — triples the error, 2.29 px → **6.79 px**.
+
+`platform_rate_est` stays in the signature, reachable from a test, because it
+would be needed if the measurement came through the *true* boresight (an
+IMU-stabilised mount). The tests pin that today it must be zero.
+
+### CP 10.4 — the Smith predictor, built and left off
+
+| demand | 200 px/s | 600 px/s | 800 px/s |
+|---|---|---|---|
+| off | 3.55 / p95 6.15 | 11.48 / 18.55 | 16.10 / 25.90 px |
+| on | 3.88 / p95 8.26 | 12.41 / 25.66 | 16.96 / 34.78 px |
+
+Worse everywhere, worse at p95 than at RMS — the harm is in transients. **This
+loop is not delay-limited**: the horizon is 43 ms and the crossover is
+kp = 8 rad/s, so the delay costs 8 × 0.043 = 0.34 rad = **19.9°** of phase out
+of a margin starting near 90°. A Smith predictor buys bandwidth when delay is
+binding; here the binding constraints are the acceleration limit during
+acquisition and the rate ceiling at high demand.
+
+§10.4 anticipated this: *"if it destabilises, leave it off — optional"*. The
+test asserts the **threshold** (45° of delay phase) rather than the verdict, so
+a future plant with a slower camera or a longer bus turns it red.
+
+Three things were found while building it, all kept in the code:
+
+- Advancing the measurement alone is CP 10.1's bias with the sign flipped.
+  Both sides of the error move or neither does.
+- `round(10 ms / 33 ms)` is **zero**. The delay that matters is the loop's
+  sampling period, not the mount's transport delay.
+- `build()` set the controller's plant model and `build_from_scenario()` did
+  not, so every scenario run used a model with no rate ceiling. In both cases
+  the tell was *identical numbers after a change that should have mattered*.
+
+### CP 10.5 — the IMM
+
+Spec row 12's mandatory figure-8, two laps scored after the first:
+
+| | RMS | peak |
+|---|---|---|
+| single CV filter | 21.75 px | 30.30 px |
+| **IMM (CV/CA/CT)** | **17.15 px** | **22.52 px** |
+
+Six states, `[az, el, ȧz, ėl, äz, ël]`, because a constant-acceleration model
+needs somewhere to keep the acceleration and the IMM's mixing step needs one
+shared state space. Opt-in (`tracking.imm`) so the reproducibility fingerprints
+stay meaningful on both settings; it costs nothing to leave off — slightly
+*better* on a straight line (3.03 → 2.81 px), neutral on `compliance.toml`.
+
+**§10.2 is wrong about where the error is.** It says the overshoot is "at the
+figure-8 crossing". For x = A sin(2πt/T), y = B sin(4πt/T), the curve
+self-intersects where both are zero, and there both second derivatives are
+proportional to sin(0) — the acceleration is not reversing, it is **zero**, and
+the path is locally straight. That is exactly where a CV model is right:
+
+| phase in the 8 s lap | 0–1 | 1–2 | 2–3 | 3–4 | 4–5 | 5–6 | 6–7 | 7–8 |
+|---|---|---|---|---|---|---|---|---|
+| single CV, px | 13.55 | **26.06** | 17.95 | **26.51** | 13.45 | **26.07** | 18.04 | **26.61** |
+
+Smallest at the crossing (t = 0, 4), roughly double at the **lobe ends** a
+quarter-lap away. The effect is real and the IMM reduces it; the location in
+the design's sentence is not where it happens.
+
+Mode probabilities over two laps: CV [0.32, 0.43], CA [0.08, 0.18],
+CT [0.44, 0.53] — they sum to 1 to float epsilon, they move, and none reaches
+zero (zero is absorbing). Peak cross-axis position correlation **0.041**,
+which is §10.2's predicted anisotropy arriving with the coordinate-turn model.
+
+### CP 10.6 — where the loop breaks down
+
+200 px/s target, row 25's platform motion scaled up and opposing it:
+
+| drift, px/s | 0 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 |
+|---|---|---|---|---|---|---|---|---|---|
+| demand, px/s | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900 | 1000 |
+| RMS, px | 3.55 | 5.47 | 7.45 | 9.47 | **11.48** | 13.57 | 16.10 | 20.69 | 29.43 |
+| saturation, % | 0 | 0 | 0 | 0 | 0 | 0 | **0.37** | 2.90 | 8.34 |
+
+Two numbers, and they are not the same one:
+
+- **The mount saturates at 600 px/s of drift**, exactly where the geometry
+  says: the ceiling is 5 °/s = 800 px/s per axis and the demand is 200 + d.
+- **Row 17 is lost at 400 px/s** — three quarters of the actuator's authority,
+  with the plant never once at its stops.
+
+Saturation is not what breaks it. The error is proportional to demand and
+decays within each run, which is transport lag plus a 4 s integrator, not a
+rate limit.
+
+### CP 10.7 — handover
+
+| | success | time |
+|---|---|---|
+| clean, 20 seeds | **20/20 (100 %)** | median 2.43 s |
+| spec row 23 jitter, 20 seeds | **0/20 (0 %)** | best sustained offset 1467–1606 µrad |
+
+The criterion is RMS offset below `capture/3` = 333 µrad for 30 consecutive
+frames. Row 23 allows ±20 px/frame on the **true** boresight — the encoder sees
+none of it, a co-boresighted quadrant cell sees all of it — and
+√(2·400/3) = 16.33 px = **1781 µrad**. The criterion is five times out of
+reach, by the same arithmetic that already puts a floor under row 17.
+
+The system does not hand over, and reports the number it got to. Claiming an
+alignment a real fine sensor would immediately lose is the failure worth
+avoiding.
+
+---
+
+## 7. Performance (CP 14.2)
 
 ```
 just stages        # per-stage p50/p95/p99 from the shipped binary
@@ -211,7 +429,7 @@ budget is **not** met and is not reachable by these means — see
 
 ---
 
-## 7. Reproducibility (INV-3)
+## 8. Reproducibility (INV-3)
 
 ```
 just gate-repro           # every scenario twice, fingerprints compared
@@ -223,20 +441,22 @@ including video modes and with the whole Stage 6–9 apparatus in the loop.
 
 ---
 
-## 8. Known gaps
+## 9. Known gaps
 
 Recorded with measurements rather than described, so each has something to be
 improved against.
 
 | Gap | Measured | Owner |
 |---|---|---|
-| **Clutter and decoy discrimination** | 0.217 px clean → ~31 px with a decoy → ~123 px with 120 clutter sources | Stage 11 `CandidateNet`, Stage 12 priority policy |
+| **Clutter and decoy discrimination** | tracking 17.60 px clean → **176.50 px** with 120 clutter + 1 decoy; centroiding 0.201 px → 180.49 px | Stage 11 `CandidateNet`, Stage 12 priority policy |
 | **Low-SNR centroiding** | 3.64× the bound at SNR 13 against CP 9.6's 1.5× | Stage 11 `Learned`, `MatchedPeak` via Stage 12 |
 | **§15's 0.85 ms frame budget** | 46.6 ms synthetic, 32.5 ms video | a different processing strategy, not faster arithmetic |
 | **CP 7.3's 2 s for a 120 s scenario** | ~5 minutes | same as above |
 | **CP 7.5's 500 runs in 3 minutes** | ~13 minutes | same as above |
-| **Velocity feedforward** | plumbed, `k_ff` still 0 | CP 10.1, a one-line change plus tuning |
-| **Handover** | transition implemented and tested, disabled | CP 10.7's quadrant detector |
+| **Handover under spec row 23** | 100 % clean, **0 %** at ±20 px/frame of jitter | nothing in the control law; row 23 is 5× the criterion (§6) |
+| **Figure-8 acceleration lag** | 16.56 px residual with feedforward on a 200 px/s sinusoid | Stage 11 `MotionNet` priors into the IMM |
+| **§15's 0.85 ms budget, IMM included** | IMM adds ~0.01 ms; the frame is still 46.6 ms | same as the row above it |
 | **Adversarial scenarios** | `scenarios/adversarial/` is empty | not yet written; the awkward *video* cases exist and are exercised (CP 8.8) |
 | **`--fuzz-scenarios`** | not implemented | CP 14.1 — 5,000 random scenarios, no crash, no hang, no NaN |
-| **Test suite** | 16 suites, 1.84 M assertions, all green | — |
+| **Stage 12 supervisor, Stage 13 strategy** | not started | the clutter row above is what they are for |
+| **Test suite** | 18 suites, all green | — |

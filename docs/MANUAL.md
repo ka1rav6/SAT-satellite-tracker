@@ -71,6 +71,21 @@ just headless "--scenario scenarios/compliance.toml --duration 20"
 | `--no-report` | skip `report.html` |
 | `--bench` | no artifacts, no snapshots — a pure speed run |
 | `--quiet` | no stdout summary |
+| `--set k=v` | override one scenario key — see below |
+| `--trace` | write `trace.csv`, the per-frame **control** trace (CP 10.x) |
+
+`--set` takes a dotted key and a TOML value, and goes through the same schema
+and the same validation as the file, so `--set control.kp=400` produces §7.5's
+error rather than a run. It can be repeated.
+
+```bash
+just headless "--scenario scenarios/control/fast_linear.toml --set control.k_ff=0 --trace"
+```
+
+`--trace` writes a **diagnostic**, not a deliverable: it contains truth, it is
+never graded, and its own header line says so. `centroid.csv` deliberately does
+not, because a graded artifact containing the answer key is worthless as
+evidence. `tools/plot_control.py` renders a trace as a standalone SVG.
 
 ### Video — Benchmark Performance-2
 
@@ -114,6 +129,22 @@ just calibrate                 # re-run to see the gain
 Measures §10.1.3's S-curve over 200 sub-pixel offsets × 6 sizes × 8 SNR bins ×
 3 estimators and regenerates
 `src/perception/centroid/bias_table_generated.inc`.
+
+### Control checkpoints (Stage 10)
+
+```bash
+just test-control          # every Stage 10 number, as an assertion
+just cp101                 # velocity feedforward on/off, with the plot
+just cp102                 # a saturating slew, with and without anti-windup
+just cp105                 # the IMM on the figure-8, with the mode panel
+just cp106                 # error and saturation against disturbance level
+just cp107                 # handover success rate, 20 seeds per arm
+```
+
+Each writes into `logs/control/`. The scenarios under `scenarios/control/` are
+**instruments, not compliance claims** — each removes whatever is larger than
+the effect it measures, and says so in its own header. No row of the compliance
+matrix is measured on them.
 
 ### Gates
 
@@ -203,9 +234,17 @@ scenarios/bad.toml:41: gimbal.max_pan_dps = 14.0 is outside the permitted
 [atmosphere]  mode = clear|haze|fog|rain|lowlight (row 24)
 [disturbance] jitter_px_per_frame (row 23); [[disturbance.platform]] (row 25)
 [clutter] static_sources, decoy_beacons
+[control] kp, ki, kd, k_ff, i_limit, anti_windup, smith    (design §10.4)
+[tracking] imm            (CP 10.5's CV/CA/CT filter; off by default)
 [requirements] acquisition_s, tracking_error_px, target_loss_frac,
                reacquisition_s, min_fps (rows 16-20)
 ```
+
+`[control]` defaults are `kp = 8` (the loop bandwidth in rad/s — kp *is* the
+bandwidth), `ki = 2`, `kd = 0.15`, `k_ff = 1`. `smith` defaults **off**: it was
+built and measured and does not help on this plant, because the loop is not
+delay-limited. See [`RESULTS.md` §6](RESULTS.md) for where each number comes
+from.
 
 Motion components **stack**: several `[[target.motion]]` blocks add, so a
 figure-of-eight drifting on a linear trend is two entries.
@@ -226,6 +265,17 @@ marked *bound derived* rather than FAIL.
 influence — jitter and platform drift move the true boresight and the encoder
 does not see them. Reporting only the screen number would let a disturbance
 dominate the 60 %-weighted metric (INV-6).
+
+**Retention counts frames the beacon was in view for.** `retention` is
+Confirmed *and* in-view frames over in-view frames. When the tracker holds a
+confirmed track while the beacon is elsewhere, those frames appear on their own
+line and in `false tracks`, not in the retention ratio — an earlier version
+divided by the wrong numerator and reported 100 % on a run that had lost the
+target entirely.
+
+**Handover is a claim about a downstream system.** `not reached` is the correct
+answer under spec row 23's jitter, which is five times the criterion; the line
+prints the best sustained offset so the gap is visible rather than implied.
 
 **`n/a` is not zero.** A metric with no samples behind it — no truth supplied,
 the beacon never in view, the track never confirmed — prints `n/a` and carries
