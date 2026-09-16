@@ -12,7 +12,9 @@
 #include <doctest/doctest.h>
 
 #include "camera/splat.hpp"
+#include "camera/coverage.hpp"
 #include "core/frames.hpp"
+#include "core/rng.hpp"
 
 #include <cmath>
 #include <initializer_list>
@@ -351,4 +353,103 @@ TEST_CASE("query_visible finds emitters that straddle the viewport edge") {
     // Order is index order, always. Design §9.4.6 depends on a fixed visit
     // order for deterministic blob labelling, and INV-3 forbids any that vary.
     CHECK(visible[0] < visible[1]);
+}
+
+// ---------------------------------------------------------------------------
+// The factorised splat must be BIT-IDENTICAL to the per-pixel coverage
+// functions, not merely close.
+//
+// splat_emitter no longer calls square_coverage / gaussian_coverage /
+// circle_coverage in its fast paths: it factorises the footprint into 1-D
+// tables (the separable shapes) or shares grid corners between neighbouring
+// pixels (the circle). That is only a legitimate optimisation if the result is
+// the same double, for two reasons:
+//
+//   INV-3   a run must reproduce bit for bit, and the rendered frame feeds the
+//           snapshot hash;
+//   CP 14.2 states the criterion for a faster kernel as "bit-identical to
+//           scalar on random inputs", which is the standard this holds itself
+//           to even though these are not SIMD kernels.
+//
+// So the check is exact equality of floats, with no tolerance at all.
+// ---------------------------------------------------------------------------
+TEST_CASE("splat is bit-identical to the per-pixel coverage functions") {
+    using namespace sat;
+
+    constexpr int W = 96, H = 96;
+
+    // A reference splat written the obvious way: one 2-D coverage call per
+    // pixel, exactly as splat_emitter used to be.
+    auto reference = [](std::vector<float>& dst, Pixel2 c, double size,
+                        ShapeKind shape, float intensity, double weight) {
+        double reach = 0.5 * size;
+        if (shape == ShapeKind::Gaussian) {
+            constexpr double kFwhmToSigma = 1.0 / 2.3548200450309493;
+            reach = 6.0 * size * kFwhmToSigma;
+        }
+        const int i0 = std::max(0,     static_cast<int>(std::floor(c.x - reach)) - 1);
+        const int i1 = std::min(W - 1, static_cast<int>(std::ceil (c.x + reach)) + 1);
+        const int j0 = std::max(0,     static_cast<int>(std::floor(c.y - reach)) - 1);
+        const int j1 = std::min(H - 1, static_cast<int>(std::ceil (c.y + reach)) + 1);
+        if (i0 > i1 || j0 > j1) return;
+        const double scale = static_cast<double>(intensity) * weight;
+        for (int j = j0; j <= j1; ++j) {
+            for (int i = i0; i <= i1; ++i) {
+                double cov = 0.0;
+                switch (shape) {
+                    case ShapeKind::Square:
+                    case ShapeKind::Mask:
+                        cov = square_coverage(i, j, c.x, c.y, size); break;
+                    case ShapeKind::Circle:
+                        cov = circle_coverage(i, j, c.x, c.y, size); break;
+                    case ShapeKind::Gaussian:
+                        cov = gaussian_coverage(i, j, c.x, c.y, size); break;
+                }
+                if (cov > 0.0) {
+                    dst[static_cast<size_t>(j) * W + static_cast<size_t>(i)] +=
+                        static_cast<float>(cov * scale);
+                }
+            }
+        }
+    };
+
+    // Deterministic pseudo-random cases, including sub-pixel offsets, emitters
+    // hanging off every edge, and sizes from sub-pixel to larger than the frame.
+    Pcg32 rng{20260917u};
+
+    const ShapeKind shapes[] = {ShapeKind::Square, ShapeKind::Circle,
+                                ShapeKind::Gaussian, ShapeKind::Mask};
+
+    int compared = 0;
+    for (int trial = 0; trial < 400; ++trial) {
+        const ShapeKind shape = shapes[rng.next_below(4)];
+        // Deliberately spills past the edges: -20 .. W+20.
+        const Pixel2 c{rng.next_range(-20.0, W + 20.0), rng.next_range(-20.0, H + 20.0)};
+        const double size      = rng.next_range(0.3, 40.0);
+        const float  intensity = static_cast<float>(rng.next_range(1.0, 200.0));
+        const double weight    = rng.next_range(0.05, 1.0);
+
+        std::vector<float> a(W * H, 0.0f), b(W * H, 0.0f);
+        splat_emitter(a, W, H, c, size, shape, intensity, weight);
+        reference(b, c, size, shape, intensity, weight);
+
+        // Exact equality. A single ulp of difference is a failure. Counted
+        // rather than REQUIREd per pixel: 400 trials x 9,216 pixels would be
+        // 3.7 million assertions in the doctest summary, which drowns out every
+        // other number in the suite.
+        size_t mismatches = 0;
+        size_t first_bad  = 0;
+        for (size_t i = 0; i < a.size(); ++i) {
+            if (a[i] != b[i]) {
+                if (mismatches == 0) first_bad = i;
+                ++mismatches;
+            }
+        }
+        INFO("trial ", trial, " shape ", static_cast<int>(shape),
+             " size ", size, " at (", c.x, ",", c.y, ")"
+             " first bad pixel ", first_bad);
+        REQUIRE(mismatches == 0);
+        ++compared;
+    }
+    CHECK(compared == 400);
 }
