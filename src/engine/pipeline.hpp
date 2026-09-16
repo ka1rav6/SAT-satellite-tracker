@@ -32,7 +32,10 @@
 #pragma once
 
 #include "control/controller.hpp"
+#include "core/strategy.hpp"
 #include "control/handover.hpp"
+#include "control/supervisor.hpp"
+#include "engine/events.hpp"
 #include "control/mode_fsm.hpp"
 #include "core/arena.hpp"
 #include "core/profile.hpp"
@@ -122,6 +125,20 @@ struct FrameRecord {
     Rate2      estimate_rate{};       ///< and its velocity — the feedforward input
     double     estimate_sigma_urad = 0.0;
 
+    // --- Stage 12: the SAT supervisor --------------------------------------
+    /// Which detector the supervisor has selected, and whether it switched
+    /// this frame. Recorded per frame because §10.6's deliverable is a
+    /// TIMELINE — "that turns 'adaptive' from a claim into data" — and a
+    /// timeline cannot be reconstructed from an end-of-run summary.
+    DetectorKind sup_detector = DetectorKind::Classical;
+    CentroidKind sup_centroider = CentroidKind::WindowedCoM;
+    float        sup_cfar_k = 0.0f;
+    float        sup_q_scale = 1.0f;
+    bool         sup_switched = false;
+    /// The smoothed integrated SNR the supervisor is deciding on. One of
+    /// §10.6's twelve features, and the one every rule keys off.
+    float        sup_snr = 0.0f;
+
     // --- CP 10.5: IMM mode probabilities ----------------------------------
     /// Probability of each of §10.2's three models, in ImmMode order
     /// (CV, CA, CT). All zero when the IMM is not running. This is §12's
@@ -193,18 +210,22 @@ struct PipelineConfig {
     // -----------------------------------------------------------------------
     // Which detector actually runs.
     //
-    // Classical is the default and §9.4 is explicit that the straw man "must
-    // never be the default". BrightestPixel is kept selectable because CP 4.11
-    // grades a real result — "with 120 clutter sources, the brightest-pixel
-    // detector demonstrably locks onto the wrong thing" — and that ablation
-    // needs the straw man to be runnable through the whole engine, not just in
-    // a unit test.
+    // The enum moved to core/strategy.hpp at Stage 12: the SAT supervisor
+    // SELECTS a detector and lives in sat_control, which cannot include this
+    // header — sat_engine links sat_world and INV-1 fails the configure. The
+    // alias keeps every existing `PipelineConfig::Detector` spelling working.
     // -----------------------------------------------------------------------
-    enum class Detector { Classical, BrightestPixel };
-    Detector detector = Detector::Classical;
+    using Detector = DetectorKind;
+    DetectorKind detector = DetectorKind::Classical;
 
     PerceptionParams perception{};
     TrackParams      tracking{};
+
+    /// Stage 12. Off by default: the supervisor CHANGES the configuration a
+    /// run uses, so a run with it on and one with it off are different claims
+    /// and must be distinguishable — the same argument INV-7 makes for
+    /// --no-ai. Every artifact records which.
+    SupervisorParams supervisor{};
 
     // -----------------------------------------------------------------------
     // The largest angular acceleration the TARGET can produce, urad/s^2.
@@ -373,6 +394,8 @@ public:
     /// is diagnosed — CP 10.2's "settles cleanly with no ringing" is a
     /// statement about this state, not about the output.
     [[nodiscard]] const Controller&  controller() const noexcept { return control_; }
+    [[nodiscard]] const SatSupervisor& supervisor() const noexcept { return supervisor_; }
+    [[nodiscard]] const EventTimeline&  timeline()   const noexcept { return events_; }
 
     // -----------------------------------------------------------------------
     // CP 10.3's platform-drift cancellation input, urad/s. IT MUST BE ZERO,
@@ -466,6 +489,20 @@ private:
 
     QuadrantDetector quad_{};       ///< CP 10.7's fine sensor model
     HandoverMonitor  handover_{};
+    SatSupervisor    supervisor_{};
+
+    // --- design §7.4's timeline ------------------------------------------
+    EventTimeline    events_{};
+    /// The target's configured brightness, so occlude_target can restore it.
+    /// Kept rather than re-read because the emitter array is the only copy and
+    /// the event overwrites it.
+    float            target_intensity_ = 0.0f;
+    size_t           target_index_ = 0;
+    bool             have_target_index_ = false;
+    /// The filter's process noise as configured, before any q_scale. Kept so
+    /// the supervisor's multiplier applies to the SCENARIO's value every frame
+    /// rather than compounding on the previous frame's scaled one.
+    double           base_accel_psd_ = 0.0;
 
     Rate2       cmd_rate_{};      ///< the value that closes the loop (INV-2)
     Rate2       platform_rate_est_{};   ///< CP 10.3: zero; see set_platform_rate_est

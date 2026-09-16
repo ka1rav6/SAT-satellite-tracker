@@ -1,0 +1,160 @@
+# scenarios/supervisor/weather_change.toml — Stage 12's ablation scenario.
+#
+# ---------------------------------------------------------------------------
+# A SUPERVISOR CANNOT BE DEMONSTRATED ON A SCENARIO THAT NEVER CHANGES
+# ---------------------------------------------------------------------------
+# §10.6's supervisor adapts the configuration to the conditions. Every scenario
+# in this repository before this one holds its conditions fixed for the whole
+# run, and on those the supervisor is measurably a no-op — which is the correct
+# behaviour and proves nothing. Measured on compliance.toml: tracking RMS
+# 143.78 px with the supervisor on and 143.78 px with it off, to the digit.
+#
+# So this scenario changes the weather underneath the tracker, using design
+# §7.4's event timeline:
+#
+#   t =  0 s   clear air, the beacon at full contrast
+#   t = 10 s   fog rolls in — contrast collapses, the integrated SNR falls
+#              through §10.6's low-SNR threshold of 8
+#   t = 25 s   it clears again
+#
+# The supervisor should lower the CFAR threshold and widen the filter's process
+# noise on the way in, and put both back on the way out, once each, a second
+# apart at the closest. What it must NOT do is chatter across the boundary,
+# which is what §10.6's dwell timer and EMA exist to prevent and what
+# `just cp122` plots.
+#
+# THE EVENTS THEMSELVES DID NOT WORK UNTIL STAGE 12. §7.4's timeline was
+# parsed, validated and echoed into run.json, and no code read it: a scenario
+# could ask for fog, be told the request was valid, and run in clear air. The
+# scheduler is engine/events.hpp.
+#
+# Clutter is off. Not to flatter the result — the clutter gap is measured
+# honestly elsewhere and is Stage 12's OTHER problem — but because a run that
+# spends its time locked onto a clutter source measures the association
+# policy, not the adaptation, and the two need separating before either can be
+# improved.
+
+[meta]
+name        = "weather_change"
+description = "Stage 12: fog arrives at 10 s and clears at 25 s"
+
+[input]
+mode = "synthetic"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 40
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+exposure_ms    = 5.0
+blur_substeps  = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+kind       = "target"
+# 40, not spec row 7's nominal 120, and this is the difference between a
+# scenario that demonstrates something and one that does not.
+#
+# At 120 the beacon integrates to SNR 40 in clear air and about 12 in fog. 12
+# is inside §10.6's MIDDLE band (8 to 15), where the rule table deliberately
+# does nothing — neither rule's evidence applies. The supervisor then toggles
+# only the high-SNR clause and the loop tracks at 0.1 px either way: correct
+# behaviour, and a demonstration of nothing.
+#
+# At 40 the fog takes the integrated SNR through the low-SNR threshold, the
+# base configuration starts losing frames, and the adaptation has something to
+# recover. Measured over this run, supervisor off -> on:
+#
+#   intensity 60   retention 93.8% -> 97.6%    centroid 64.2 -> 39.3 px
+#   intensity 40   retention 77.4% -> 86.3%    centroid 125.7 -> 97.5 px
+#   intensity 30   retention 64.7% -> 80.1%    tracking 16.42 -> 5.42 px
+#
+# The gain grows as the conditions worsen, which is what an adaptive system is
+# supposed to do and is the strongest form the claim can take.
+intensity  = 40.0
+size_px    = 10
+initial_px = [1040.0, 1020.0]
+shape.type = "square"
+
+[[target.motion]]
+kind          = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[gimbal]
+max_pan_dps      = 5.0
+max_tilt_dps     = 5.0
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 20.0               # row 22's maximum
+salt_pepper    = 0.10               # row 21
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"                      # row 24; the events change it
+
+[disturbance]
+jitter_px_per_frame = 0.0           # see the other scenarios/ notes: a 16.33 px
+                                    # floor would bury the effect under test
+
+[[disturbance.platform]]
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]        # row 25 stays
+
+[clutter]
+static_sources = 0
+decoy_beacons  = 0
+
+[control]
+kp   = 8.0
+ki   = 2.0
+kd   = 0.15
+k_ff = 1.0
+
+[supervisor]                        # §10.6 — the ablation varies `enabled`
+enabled          = true
+min_dwell_frames = 30               # kMinDwell: one second at row 5's minimum
+ema_tau_frames   = 15.0
+
+[[event]]                           # §7.4
+t_s    = 10.0
+action = "set_atmosphere"
+mode   = "fog"
+ramp_s = 1.0
+
+[[event]]
+t_s    = 25.0
+action = "set_atmosphere"
+mode   = "clear"
+ramp_s = 1.0
+
+[ai]
+enabled          = true
+fallback_on_fail = true
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

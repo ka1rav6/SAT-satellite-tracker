@@ -71,6 +71,16 @@ struct TraceSample {
     // from a running IMM, whose three probabilities always sum to one.
     double  imm_cv = 0.0, imm_ca = 0.0, imm_ct = 0.0;
     double  imm_turn_rate = 0.0;
+
+    // Stage 12. §10.6: "the GUI shows a strategy timeline". This is that
+    // timeline's data, and the report's strategy-occupancy table reads the
+    // same columns.
+    const char* sup_detector   = "";
+    const char* sup_centroider = "";
+    double      sup_cfar_k  = 0.0;
+    double      sup_q_scale = 0.0;
+    double      sup_snr     = 0.0;
+    bool        sup_switched = false;
 };
 
 // ---------------------------------------------------------------------------

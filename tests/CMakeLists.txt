@@ -140,6 +140,19 @@ sat_add_test(control
 math(EXPR SAT_CONTROL_TIMEOUT "${SAT_TEST_TIMEOUT} * 3")
 set_tests_properties(control PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
 
+# --- Stage 12: the SAT supervisor ------------------------------------------
+#
+# Mostly pure-function tests of SatSupervisor, which is why they are fast: the
+# question "does this chatter" is about a SEQUENCE OF DECISIONS, and answering
+# it by running a simulation would answer the much weaker question of whether
+# it chattered on one scenario's conditions. Two cases do need the engine and
+# carry the suite's runtime.
+sat_add_test(supervisor
+    SOURCES supervisor/test_supervisor.cpp
+    DEPS    sat_core sat_control sat_engine sat_scenario sat_perception sat_tracking
+)
+set_tests_properties(supervisor PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
+
 # --- CP 3.3-3.5: the motion algebra and its analytic derivatives ------------
 sat_add_test(motion
     SOURCES motion/test_motion.cpp

@@ -24,7 +24,8 @@ std::string TraceLog::header_text(const TraceLogHeader& h) {
     out += "frame,t,mode,err_px,err_x_px,err_y_px,"
            "cmd_rate_x,cmd_rate_y,gimbal_rate_x,gimbal_rate_y,"
            "integ_x,integ_y,est_rate_x,est_rate_y,saturated,"
-           "imm_cv,imm_ca,imm_ct,imm_turn_rate\n";
+           "imm_cv,imm_ca,imm_ct,imm_turn_rate,"
+           "sup_detector,sup_centroider,sup_cfar_k,sup_q_scale,sup_snr,sup_switched\n";
     return out;
 }
 
@@ -55,11 +56,15 @@ void TraceLog::write(const TraceSample& s) {
                      static_cast<long long>(s.frame), s.time_s, s.mode);
     }
     std::fprintf(f_, "%.3f,%.3f,%.3f,%.3f,%.4f,%.4f,%.3f,%.3f,%d,"
-                     "%.4f,%.4f,%.4f,%.5f\n",
+                     "%.4f,%.4f,%.4f,%.5f",
                  s.cmd_rate_x, s.cmd_rate_y, s.gimbal_rate_x, s.gimbal_rate_y,
                  s.integ_x, s.integ_y, s.est_rate_x, s.est_rate_y,
                  s.saturated ? 1 : 0,
                  s.imm_cv, s.imm_ca, s.imm_ct, s.imm_turn_rate);
+    std::fprintf(f_, ",%s,%s,%.3f,%.3f,%.3f,%d\n",
+                 s.sup_detector, s.sup_centroider,
+                 s.sup_cfar_k, s.sup_q_scale, s.sup_snr,
+                 s.sup_switched ? 1 : 0);
     ++rows_;
 }
 

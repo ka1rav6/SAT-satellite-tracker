@@ -280,6 +280,43 @@ cp107: build
     @python3 tools/cp107_sweep.py --binary "{{build_dir}}/sat-tracker" \
         --scenario scenarios/control/fast_linear.toml --out logs/control
 
+# ---------------------------------------------------------------------------
+# Stage 12 — the SAT supervisor (design §10.6)
+# ---------------------------------------------------------------------------
+
+# CP 12.2 ablation — the supervisor on and off through a weather change, with
+# the strategy timeline.
+#
+# Writes logs/supervisor/cp122.svg (the CFAR threshold the supervisor chose,
+# against time) and cp122_snr.svg (the smoothed SNR it chose it from).
+cp122: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="logs/supervisor"
+    mkdir -p "$out"
+    for e in false true; do
+        "{{build_dir}}/sat-tracker" --headless             --scenario scenarios/supervisor/weather_change.toml             --set "supervisor.enabled=$e" --trace --no-csv --no-report --quiet             --out "$out/sup$e"
+        printf "  supervisor %-5s  " "$e"
+        python3 - "$out/sup$e/run.json" <<'PY'
+    import json, sys
+    m = json.load(open(sys.argv[1]))["metrics"]
+    print("retention %6.2f %%   tracking RMS %7.2f px   centroid %8.3f px" % (
+        100.0 * m["lock"]["retention_rate"], m["tracking"]["rms_px"],
+        m["centroiding"]["rmse_image_px"]))
+    PY
+    done
+    python3 tools/plot_control.py -o "$out/cp122.svg" --column sup_cfar_k         --title "CP 12.2 — the strategy timeline through a weather change"         --subtitle "fog at 10 s, clear at 25 s; at most one switch per second by construction"         --ylabel "CFAR threshold k, sigma"         "supervisor on=$out/suptrue/trace.csv#sup_cfar_k"         "supervisor off=$out/supfalse/trace.csv#sup_cfar_k"
+    python3 tools/plot_control.py -o "$out/cp122_snr.svg" --column sup_snr         --title "CP 12.2 — the smoothed integrated SNR the switches are made on"         --subtitle "EMA over 15 frames; the thresholds are 8 and 15"         --ylabel "integrated SNR"         "smoothed SNR=$out/suptrue/trace.csv#sup_snr"
+
+# CP 12.3 — per-condition Monte Carlo: which strategy wins where.
+cp123: build
+    @python3 tools/cp123_sweep.py --binary "{{build_dir}}/sat-tracker" \
+        --scenario scenarios/supervisor/weather_change.toml --out logs/supervisor
+
+# The Stage 12 checkpoints, verbose — the numbers ARE the checkpoints.
+test-supervisor: build
+    "{{build_dir}}/test_supervisor" --success --no-skipped-summary 2>&1         | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true
+
 # The Stage 10 control checkpoints, verbose — the numbers ARE the checkpoints.
 #
 # Two binaries: test_control holds the integration cases (the whole engine,

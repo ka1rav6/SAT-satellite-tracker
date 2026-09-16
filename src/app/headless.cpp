@@ -252,6 +252,12 @@ int run_headless(const HeadlessOptions& opt) {
             ts.imm_ca = r.imm_mode_prob[1];
             ts.imm_ct = r.imm_mode_prob[2];
             ts.imm_turn_rate = r.imm_turn_rate;
+            ts.sup_detector   = detector_kind_name(r.sup_detector);
+            ts.sup_centroider = centroid_kind_name(r.sup_centroider);
+            ts.sup_cfar_k     = r.sup_cfar_k;
+            ts.sup_q_scale    = r.sup_q_scale;
+            ts.sup_snr        = r.sup_snr;
+            ts.sup_switched   = r.sup_switched;
             trace_log.write(ts);
         }
         if (opt.write_report) {

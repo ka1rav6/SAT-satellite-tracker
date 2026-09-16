@@ -210,6 +210,13 @@ struct Scenario {
     // --- [control] — design §10.4 ------------------------------------------
     ControlSpec control{};
 
+    // --- [supervisor] — design §10.6 ---------------------------------------
+    /// Stage 12. Off by default: a run with the supervisor on and one with it
+    /// off use different configurations and are therefore different claims.
+    bool   supervisor_enabled   = false;
+    int    supervisor_dwell     = 30;    ///< §10.6's kMinDwell, frames
+    double supervisor_ema_tau   = 15.0;  ///< EMA time constant, frames
+
     // --- [tracking] — design §10.2 -----------------------------------------
     /// CP 10.5: run the IMM (CV/CA/CT) instead of the single constant-velocity
     /// filter. Opt-in — see TrackParams::imm for why the default matters.

@@ -68,6 +68,7 @@ sat_add_module(sat_core
         src/core/image.cpp
         src/core/arena.cpp
         src/core/mode.cpp
+        src/core/strategy.cpp
         src/core/profile.cpp
 )
 
@@ -172,6 +173,7 @@ sat_add_module(sat_plant
 sat_add_module(sat_control
     SOURCES
         src/control/mode_fsm.cpp
+        src/control/supervisor.cpp
     PUBLIC_DEPS sat_core sat_tracking sat_search sat_plant
 )
 
@@ -189,6 +191,7 @@ sat_add_module(sat_engine
         src/engine/decode_thread.cpp
         src/engine/video_source.cpp
         src/engine/truth_csv.cpp
+        src/engine/events.cpp
         src/engine/synthetic_source.cpp
         src/engine/pipeline.cpp
         src/engine/snapshot.cpp

@@ -107,6 +107,27 @@ void Pipeline::build_stage6() {
 
     tracker_.reset(cfg_.tracking);
 
+    // -----------------------------------------------------------------------
+    // Stage 12: the supervisor's BASE strategy is the configuration this run
+    // would use with no supervisor at all.
+    //
+    // Every rule in §10.6's table is expressed as a modification of this rather
+    // than as an absolute, so that switching the supervisor on cannot silently
+    // discard a deliberate scenario setting — a scenario that asks for the IMM
+    // and a middle-band SNR must still get the IMM.
+    // -----------------------------------------------------------------------
+    base_accel_psd_ = cfg_.tracking.kf.accel_psd_urad2_s3;
+    Strategy base;
+    base.perception = cfg_.detector;
+    base.centroider = cfg_.perception.centroid_kind;
+    base.cfar_k     = cfg_.perception.cfar.k;
+    base.filter     = cfg_.tracking.imm ? FilterKind::Imm : FilterKind::Cv;
+    base.predictor  = cfg_.gains.smith ? PredictorKind::Smith : PredictorKind::None;
+    base.gains      = cfg_.gains;
+    base.search     = cfg_.search.strategy;
+    base.q_scale    = 1.0;
+    supervisor_.reset(cfg_.supervisor, base);
+
     cfg_.mode.ifov_urad = cam.ifov_urad();
     fsm_.reset(cfg_.mode);
 
@@ -211,6 +232,9 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     cfg.gains.smith       = sc.control.smith;
     cfg.gains.smith_rate_blend = sc.control.smith_rate_blend;
     cfg.tracking.imm      = sc.tracking_imm;
+    cfg.supervisor.enabled          = sc.supervisor_enabled;
+    cfg.supervisor.min_dwell_frames = sc.supervisor_dwell;
+    cfg.supervisor.ema_tau_frames   = sc.supervisor_ema_tau;
 
     // §7.2's closed forms turned into the filter's q. The largest acceleration
     // over every target, because the tracker does not know which one it will
@@ -232,6 +256,26 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
 
     cfg_ = cfg;
     source_.build_from_scenario(sc);
+
+    // -----------------------------------------------------------------------
+    // Design §7.4's timeline. Built from the SCENARIO, which is why it is here
+    // and not in build_stage6: the PipelineConfig path has no scenario to take
+    // events from, and a timeline is a property of the run's description
+    // rather than of its resolved configuration.
+    // -----------------------------------------------------------------------
+    events_.build(sc);
+    have_target_index_ = false;
+    {
+        const EmitterSoA& em = source_.emitters();
+        for (size_t i = 0; i < em.n; ++i) {
+            if (em.kind_of(i) == EmitterKind::Target) {
+                target_index_      = i;
+                target_intensity_  = em.intensity[i];
+                have_target_index_ = true;
+                break;
+            }
+        }
+    }
     gimbal_.reset(cfg_.pan, cfg_.tilt, cfg_.initial_boresight);
     reset_controller();
     cmd_rate_ = Rate2{};
@@ -380,6 +424,78 @@ bool Pipeline::step() {
     }
 
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // B3a: design §7.4's timeline.
+    //
+    // Fired BEFORE the frame is rendered, so an event scheduled at t takes
+    // effect in the frame timestamped t rather than the one after it. The
+    // alternative reads the same in a config file and is off by one frame in
+    // the artifact, which is exactly the kind of discrepancy that makes a
+    // measured "reaction time" wrong by a fixed amount nobody can find.
+    //
+    // Video modes are excluded: INV-8 forbids adding damage in a video mode,
+    // and set_atmosphere is damage. A clip's weather is whatever was in front
+    // of the camera.
+    // -----------------------------------------------------------------------
+    if (!video_) {
+        const double t_now = static_cast<double>(frame_)
+                           / std::max(1.0, static_cast<double>(cfg_.synthetic.camera_hz));
+        for (const ScheduledEvent* e : events_.due(t_now)) {
+            switch (e->action) {
+                case EventAction::SetAtmosphere:
+                    // ramp_s is accepted and applied as a step at t_s + ramp/2,
+                    // which is where a linear ramp crosses its own midpoint.
+                    // Atmosphere is an ENUM in degrade/, not a severity, so
+                    // there is nothing continuous to interpolate; pretending
+                    // otherwise would be a ramp in name only. Recorded here
+                    // rather than silently dropping the field.
+                    source_.sensor().set_atmosphere(e->atmosphere);
+                    break;
+
+                case EventAction::OccludeTarget:
+                    // Handled below as an INTERVAL, not here as an edge. An
+                    // edge-triggered occlusion never ends.
+                    break;
+
+                case EventAction::SpawnDecoy: {
+                    // A second near-identical target, at the stated offset from
+                    // the real one. §9.1's decoys are placed at build time;
+                    // this is the same thing arriving mid-run, which is the
+                    // harder case for the tracker because the association gate
+                    // is already narrow around a confirmed track.
+                    if (have_target_index_) {
+                        EmitterSoA& em = source_.emitters();
+                        const Pixel2 p0 = em.position(target_index_);
+                        em.add(p0.x + e->offset_px[0], p0.y + e->offset_px[1],
+                               target_intensity_, em.size_px[target_index_],
+                               em.shape_of(target_index_), EmitterKind::Decoy);
+                    }
+                    break;
+                }
+
+                case EventAction::PlatformGust:
+                case EventAction::Unknown:
+                    // Gusts are intervals too; see below.
+                    break;
+            }
+        }
+
+        // The interval-valued events, evaluated every frame rather than fired.
+        //
+        // Guarded on the timeline actually CONTAINING an occlusion. Writing the
+        // intensity unconditionally — "not occluded, so restore it" — makes
+        // the timeline the owner of that field for the whole run and
+        // overwrites anything else that sets it. CP 6.7's dropout tests blank
+        // the beacon by zeroing exactly this field, and they stopped seeing a
+        // dropout: the timeline handed the beacon back every frame. A
+        // component must not write what it does not own.
+        if (have_target_index_ && events_.has_occlusions()) {
+            const bool hidden = events_.target_occluded(t_now);
+            source_.emitters().intensity[target_index_] =
+                hidden ? 0.0f : target_intensity_;
+        }
+    }
+
     // B4: acquire. The source renders at the true boresight; we hand it the
     // commanded one and it adds the disturbance itself.
     // -----------------------------------------------------------------------
@@ -540,6 +656,91 @@ bool Pipeline::step() {
         rec.imm_mode_prob[1] = static_cast<float>(trk.imm().mode_prob(ImmMode::CA));
         rec.imm_mode_prob[2] = static_cast<float>(trk.imm().mode_prob(ImmMode::CT));
         rec.imm_turn_rate    = static_cast<float>(trk.imm().turn_rate_rad_s());
+    }
+
+    // -----------------------------------------------------------------------
+    // B23a: the SAT supervisor (design §10.6, Stage 12).
+    //
+    // Runs AFTER tracking and BEFORE control, and the position is the whole
+    // design. It needs this frame's detection quality and the filter's own
+    // consistency, which do not exist until tracking has run; and what it
+    // decides has to reach the controller this frame, not next.
+    //
+    // Everything handed to it is OBSERVABLE. There is no truth in an
+    // Observation, which is not an accident of what happened to be nearby: the
+    // supervisor is part of the shipped loop, and a supervisor that consulted
+    // truth would make every result it produced meaningless.
+    // -----------------------------------------------------------------------
+    {
+        Observation obs;
+        obs.detected = rec.detected;
+        if (rec.detected) {
+            obs.integrated_snr    = rec.detection_snr;
+            obs.centroid_sigma_px = rec.centroid_sigma_px;
+            // Contrast above the local background, in grey levels. The
+            // top-hat has already removed the pedestal, so the peak IS the
+            // contrast; bg_sigma is recovered from the pair the detector
+            // reports, because SNR is contrast over sigma by construction.
+            obs.target_contrast = rec.detection_peak;
+            obs.bg_sigma = (rec.detection_snr > 0.0f)
+                         ? rec.detection_peak / rec.detection_snr : 0.0f;
+        }
+        obs.have_track = trk.drivable();
+        if (obs.have_track) {
+            obs.innovation_nis = static_cast<float>(
+                trk.uses_imm() ? trk.imm().last_nis() : trk.filter().last_nis());
+            obs.track_age_s = static_cast<float>(trk.age_frames())
+                            * static_cast<float>(frame_dt);
+            // How much of the gate the accepted innovation used. Near 1 means
+            // the filter is only just explaining what it sees.
+            obs.gate_utilisation = static_cast<float>(
+                std::min(1.0, obs.innovation_nis / cfg_.tracking.gate_chi2));
+            obs.imm_mode_ca = rec.imm_mode_prob[1];
+            obs.imm_mode_ct = rec.imm_mode_prob[2];
+        }
+        obs.saturation_frac = static_cast<float>(gimbal_.saturation_frac());
+
+        const Strategy& st = supervisor_.update(obs, frame_, frame.timestamp_s);
+        rec.sup_detector   = st.perception;
+        rec.sup_centroider = st.centroider;
+        rec.sup_cfar_k     = st.cfar_k;
+        rec.sup_q_scale    = st.q_scale;
+        rec.sup_switched   = supervisor_.changed_this_frame();
+        rec.sup_snr        = supervisor_.conditions().integrated_snr;
+
+        if (cfg_.supervisor.enabled && supervisor_.changed_this_frame()) {
+            // -------------------------------------------------------------
+            // Applying a switch. Three of these are ordinary and one is not.
+            // -------------------------------------------------------------
+            cfg_.detector = st.perception;
+            cfg_.perception.centroid_kind = st.centroider;
+            cfg_.perception.cfar.k        = st.cfar_k;
+            perception_.configure(cfg_.perception);
+
+            // §10.6's property 2, BUMPLESS SWITCHING: "carry the integrator
+            // across a gain change, or the switch kicks the loop".
+            // set_gains rescales the integrator by the ki ratio so the
+            // CONTRIBUTED TERM stays continuous — which is what the plant
+            // feels — rather than carrying the raw accumulator, which would
+            // step the output by the ratio of the gains. reset() here would
+            // zero it and the mount would jump.
+            control_.set_gains(st.gains);
+            cfg_.gains = st.gains;
+
+            // q_scale multiplies the SCENARIO's process noise, not the
+            // previous frame's scaled value. Compounding a 1.4x every switch
+            // would walk q away by orders of magnitude over a long run, and
+            // nothing downstream would look wrong until the gate was metres
+            // wide.
+            tracker_.params().kf.accel_psd_urad2_s3 = base_accel_psd_ * st.q_scale;
+
+            // The filter selection reaches only NEW tracks. Swapping a live
+            // four-state filter for a six-state one mid-track would have to
+            // invent two states, and INV-9's principle applies to a state
+            // estimate as much as to a centroid: an invented value that looks
+            // like a measurement is worse than an admitted gap.
+            tracker_.params().imm = (st.filter == FilterKind::Imm);
+        }
     }
 
     // -----------------------------------------------------------------------

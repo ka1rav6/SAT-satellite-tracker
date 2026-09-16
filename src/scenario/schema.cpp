@@ -132,6 +132,17 @@ const std::vector<FieldSpec>& schema() {
          "integrator clamp in urad*s; caps how much history the integral term "
          "can hold, independently of the anti-windup"},
 
+        // --- [supervisor] — design §10.6 -----------------------------------
+        {"supervisor.enabled", ValueKind::Bool, false, 0.0, 0.0, "",
+         "the SAT supervisor (§10.6); changes the configuration at runtime, so "
+         "a run with it on is a different claim from one without"},
+        {"supervisor.min_dwell_frames", ValueKind::Int, false, 1, 100000, "",
+         "§10.6's kMinDwell: frames between switches. 30 is one second at spec "
+         "row 5's minimum frame rate; below ~10 the loop chatters"},
+        {"supervisor.ema_tau_frames", ValueKind::Float, false, 0.0, 100000.0, "",
+         "EMA time constant in frames; should stay well under min_dwell_frames "
+         "or every switch is decided on a belief still moving"},
+
         // --- [tracking] — design §10.2 -------------------------------------
         {"tracking.imm", ValueKind::Bool, false, 0.0, 0.0, "",
          "CP 10.5's interacting multiple model filter (CV/CA/CT); earns its "
