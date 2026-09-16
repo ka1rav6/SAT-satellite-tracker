@@ -424,7 +424,63 @@ avoiding.
 
 ---
 
-## 7. Performance (CP 14.2)
+## 7. The SAT supervisor (Stage 12)
+
+```
+just test-supervisor
+just cp122          # the strategy timeline through a weather change
+just cp123          # per-condition Monte Carlo: where adapting pays
+```
+
+The claim in the project's name: the system picks its configuration at runtime
+from what it can observe. §10.6's standard for it is *"log every switch with
+its trigger … that turns 'adaptive' from a claim into data."*
+
+### It is worth nothing where the fixed configuration copes
+
+`scenarios/supervisor/weather_change.toml` — fog at 10 s, clear at 25 s — with
+the supervisor off and on:
+
+| Beacon | Retention (fixed → supervised) | Best metric moved |
+|---|---|---|
+| intensity 120 | 99.8 % → 99.8 % | nothing; fogged SNR lands in the middle band |
+| intensity 60 | 93.8 % → **97.6 %** | centroiding 64.2 → 39.3 px |
+| intensity 40 | 77.4 % → **86.3 %** | centroiding 125.7 → 97.5 px |
+| intensity 30 | 64.7 % → **80.1 %** | tracking 16.42 → **5.42 px** |
+
+The gain grows as conditions worsen and is **zero** where they do not. That is
+the correct behaviour, not a disappointing result: a supervisor that adapts
+when there is nothing to adapt to would be a worse system.
+
+At spec row 7's nominal brightness the fogged SNR is ≈ 12, inside §10.6's
+middle band (8–15) where the rule table deliberately does nothing — neither
+rule's evidence applies.
+
+### The three mandatory properties (§10.6)
+
+| Property | Measured |
+|---|---|
+| never react to one frame | an SNR flipping across a threshold **every frame** for 10 s produces **1** switch |
+| at most one switch per second | over 30 s of a sweeping signal, closest pair **30 frames** apart |
+| bumpless gain switching | integral term continuous to **2 %** across a 2× ki change; `reset()` instead kicks by half the term |
+| every switch has a trigger | e.g. `integrated SNR below 8` |
+
+### Design §7.4's events did not exist
+
+Found while looking for a scenario whose conditions change. The timeline was
+parsed, validated and echoed into `run.json`, and **nothing read
+`sc.events`** — a scenario could ask for fog at 8 s, be told the request was
+valid, and run in clear air. All four actions now execute.
+
+```
+just test-supervisor   # "design 7.4's events actually happen"
+```
+
+Measured: detection SNR **40.76 before** the fog event, **12.09 after**.
+
+---
+
+## 8. Performance (CP 14.2)
 
 ```
 just stages        # per-stage p50/p95/p99 from the shipped binary
@@ -453,7 +509,7 @@ budget is **not** met and is not reachable by these means — see
 
 ---
 
-## 8. Reproducibility (INV-3)
+## 9. Reproducibility (INV-3)
 
 ```
 just gate-repro           # every scenario twice, fingerprints compared
@@ -465,7 +521,7 @@ including video modes and with the whole Stage 6–9 apparatus in the loop.
 
 ---
 
-## 9. Known gaps
+## 10. Known gaps
 
 Recorded with measurements rather than described, so each has something to be
 improved against.
@@ -483,5 +539,7 @@ improved against.
 | **§15's 0.85 ms budget, IMM included** | IMM adds ~0.01 ms; the frame is still 46.6 ms | same as the row above it |
 | **Adversarial scenarios** | `scenarios/adversarial/` is empty | not yet written; the awkward *video* cases exist and are exercised (CP 8.8) |
 | **`--fuzz-scenarios`** | not implemented | CP 14.1 — 5,000 random scenarios, no crash, no hang, no NaN |
-| **Stage 12 supervisor, Stage 13 strategy** | not started | the clutter row above is what they are for |
-| **Test suite** | 18 suites, all green | — |
+| **Supervisor on clutter** | the adaptation recovers **+15 points** of retention in fog and **0** against clutter — it varies thresholds, not the association policy | §10.2's `priority_score` with hysteresis; not yet built |
+| **Stage 13 acquisition strategy** | not started | the low-light row above is what it is for |
+| **CP 12.4 learned `StrategyPolicy`** | not started (ML) | Stage 11 |
+| **Test suite** | 19 suites, all green | — |

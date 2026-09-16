@@ -146,6 +146,23 @@ Each writes into `logs/control/`. The scenarios under `scenarios/control/` are
 the effect it measures, and says so in its own header. No row of the compliance
 matrix is measured on them.
 
+### Supervisor checkpoints (Stage 12)
+
+```bash
+just test-supervisor       # every Stage 12 number, as an assertion
+just cp122                 # the strategy timeline through a weather change
+just cp123                 # per-condition Monte Carlo: where adapting pays
+```
+
+The supervisor is **off by default**. It changes the configuration a run uses,
+so a run with it on and a run with it off are different claims — the same
+argument INV-7 makes for `--no-ai` — and every artifact records which.
+
+It is worth nothing where the fixed configuration already copes and up to
+**+15 points of lock retention** where it does not; see
+[`RESULTS.md` §7](RESULTS.md). That is the correct behaviour, not a
+disappointing result.
+
 ### Gates
 
 ```bash
@@ -236,6 +253,10 @@ scenarios/bad.toml:41: gimbal.max_pan_dps = 14.0 is outside the permitted
 [clutter] static_sources, decoy_beacons
 [control] kp, ki, kd, k_ff, i_limit, anti_windup, smith    (design §10.4)
 [tracking] imm            (CP 10.5's CV/CA/CT filter; off by default)
+[supervisor] enabled, min_dwell_frames, ema_tau_frames   (design §10.6)
+[[event]] t_s, action = set_atmosphere|occlude_target|spawn_decoy|platform_gust
+                          (design §7.4; mode, ramp_s, duration_s, offset_px,
+                           magnitude_px as the action requires)
 [requirements] acquisition_s, tracking_error_px, target_loss_frac,
                reacquisition_s, min_fps (rows 16-20)
 ```
@@ -248,6 +269,18 @@ from.
 
 Motion components **stack**: several `[[target.motion]]` blocks add, so a
 figure-of-eight drifting on a linear trend is two entries.
+
+`[[event]]` blocks change the world mid-run — this is how a scenario makes the
+conditions move, which is the only way to exercise the supervisor:
+
+```toml
+[[event]]
+t_s = 10.0 ; action = "set_atmosphere" ; mode = "fog" ; ramp_s = 1.0
+```
+
+`ramp_s` is accepted and applied as a step at its own midpoint: `Atmosphere` is
+an enum, not a severity, so there is nothing continuous to interpolate.
+Pretending otherwise would be a ramp in name only.
 
 ---
 
