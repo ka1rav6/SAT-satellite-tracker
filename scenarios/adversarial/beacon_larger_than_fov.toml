@@ -1,0 +1,82 @@
+# The beacon fills the frame.
+#
+# A 20 px beacon (spec row 10's maximum) on a camera with a 0.2 x 0.15 degree
+# field of view. At 2000 px over 12.5 degrees the screen is 160 px/deg, so the
+# camera sees 32 x 24 screen pixels — and the beacon is 20 of them across.
+#
+# WHY THIS SHOULD BREAK SOMETHING. §9.4.2's top-hat estimates the background
+# from a structuring element larger than the target, and §9.4.5's CFAR
+# estimates noise statistics from a training window that EXCLUDES the target
+# via a guard band. Both assume the target is small relative to the frame.
+# Here it is not, so the background estimate is contaminated by the target
+# itself and the CFAR training cells contain the thing they are supposed to
+# detect against.
+#
+# The requirement is that it fails CLEANLY: no crash, no NaN, and a reported
+# detection rate that honestly says it could not see anything, rather than a
+# confident centroid on a background it mistook for a target.
+
+[meta]
+name        = "adversarial_beacon_larger_than_fov"
+description = "a 20 px beacon on a 32x24 px field of view"
+
+[sim]
+truth_hz = 300
+camera_hz = 30
+control_hz = 30
+duration_s = 20
+seed = 42
+
+[world]
+canvas_px = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type = "mono"
+resolution = [640, 480]
+fov_deg = [0.2, 0.15]               # 32 x 24 screen px
+exposure_ms = 5.0
+blur_substeps = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+kind = "target"
+intensity = 120.0
+size_px = 20                        # row 10's maximum
+initial_px = [1000.0, 1000.0]
+shape.type = "square"
+
+[[target.motion]]
+kind = "linear"
+velocity_px_s = [2.0, -1.0]
+
+[gimbal]
+max_pan_dps = 5.0
+max_tilt_dps = 5.0
+max_accel_dps2 = 50.0
+time_constant_s = 0.020
+latency_s = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson = true
+gaussian_sigma = 20.0
+salt_pepper = 0.10
+hot_pixels = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons = 0
+
+[requirements]
+acquisition_s = 2.0
+tracking_error_px = 10.0
+target_loss_frac = 0.05
+reacquisition_s = 1.0
+min_fps = 20.0

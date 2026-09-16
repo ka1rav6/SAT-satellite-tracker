@@ -1,0 +1,83 @@
+# The target outruns the mount.
+#
+# 1,500 px/s against a 5 deg/s ceiling, which at 160 px/deg is 800 px/s. The
+# target is moving at 1.9x the fastest the mount can go.
+#
+# WHY THIS IS THE PROJECT'S CENTRAL CASE, NOT A CURIOSITY. §1.3 says the
+# disturbance can exceed the actuator's authority outright, and CP 10.6
+# measured where that starts: row 17's budget is lost at a 600 px/s demand,
+# three quarters of the ceiling, with the plant never once at its stops. This
+# scenario is past the ceiling, so the loop CANNOT hold the target by any
+# control law — the question is whether it degrades or falls over.
+#
+# Expected: the mount saturates, the target crosses the field and exits, the
+# track coasts its 15 frames and is deleted, the FSM returns to Search, and the
+# search pattern runs. Every one of those is correct behaviour under an
+# impossible demand. What would be a defect is a wound-up integrator sending
+# the mount somewhere unrelated (CP 10.2), a NaN in a metric, or a track kept
+# alive on noise after the target is long gone (the q-sizing bug from Stage 6).
+
+[meta]
+name        = "adversarial_target_faster_than_mount"
+description = "1500 px/s target against an 800 px/s mount"
+
+[sim]
+truth_hz = 300
+camera_hz = 30
+control_hz = 30
+duration_s = 20
+seed = 42
+
+[world]
+canvas_px = [4000, 4000]            # room to run
+edge_behaviour = "bounce"
+
+[camera]
+type = "mono"
+resolution = [640, 480]
+fov_deg = [4.0, 3.0]
+exposure_ms = 5.0
+blur_substeps = 8
+initial_pos_px = [2000.0, 2000.0]
+
+[target]
+kind = "target"
+intensity = 120.0
+size_px = 10
+initial_px = [2000.0, 2000.0]
+shape.type = "square"
+
+[[target.motion]]
+kind = "linear"
+velocity_px_s = [1060.66, 1060.66]  # |v| = 1500.0 px/s
+
+[gimbal]
+max_pan_dps = 5.0
+max_tilt_dps = 5.0
+max_accel_dps2 = 50.0
+time_constant_s = 0.020
+latency_s = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson = true
+gaussian_sigma = 20.0
+salt_pepper = 0.10
+hot_pixels = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons = 0
+
+[requirements]
+acquisition_s = 2.0
+tracking_error_px = 10.0
+target_loss_frac = 0.05
+reacquisition_s = 1.0
+min_fps = 20.0

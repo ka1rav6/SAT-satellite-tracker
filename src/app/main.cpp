@@ -11,6 +11,7 @@
 #include "core/frames.hpp"
 #include "core/units.hpp"
 #include "app/calibrate.hpp"
+#include "app/fuzz.hpp"
 #include "app/headless.hpp"
 #include "app/sweep.hpp"
 #include "app/verify_repro.hpp"
@@ -201,13 +202,18 @@ void print_usage() {
     std::printf("  --calibrate-centroid [--offsets N] [--out DIR]\n");
     std::printf("                       measure the centroid S-curve and write the\n");
     std::printf("                       compiled-in bias table (CP 9.2, CP 9.3)\n");
+    std::printf("  --fuzz-scenarios N [--seed S] [--duration S] [--verbose]\n");
+    std::printf("                       run N random scenarios across every\n");
+    std::printf("                       parameter's legal range, corners\n");
+    std::printf("                       included; fails on a crash, a hang or\n");
+    std::printf("                       a NaN in any reported metric (CP 14.1)\n");
     std::printf("  --probe-video FILE   open FILE and report resolution/fps/frames (CP 0.7)\n");
     std::printf("  --has-video          exit 0 if this build can decode video, 1 if not\n");
     std::printf("  --verify-reproducibility [--seeds N] [--duration S]\n");
     std::printf("                       run every built-in scenario twice and compare\n");
     std::printf("                       frame fingerprints (CP 2.6, INV-3)\n");
     std::printf("  --help               print this message\n");
-    std::printf("\nStill to come from design 13.4: --gen-dataset, --fuzz-scenarios.\n");
+    std::printf("\nStill to come from design 13.4: --gen-dataset.\n");
 }
 
 }  // namespace
@@ -237,6 +243,9 @@ int main(int argc, char* argv[]) {
         }
         if (std::strcmp(argv[i], "--sweep") == 0) {
             return sat::sweep_command(argc, argv, i);
+        }
+        if (std::strcmp(argv[i], "--fuzz-scenarios") == 0) {
+            return sat::fuzz_command(argc, argv, i);
         }
         if (std::strcmp(argv[i], "--verify-reproducibility") == 0) {
             return verify_reproducibility_command(argc, argv, i);

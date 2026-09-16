@@ -1,0 +1,142 @@
+# The beacon blinks for the whole run.
+#
+# Occluded for 1 s, visible for 1 s, fifteen times over. Design §7.4's
+# occlude_target event, used as a metronome rather than as a single incident.
+#
+# WHY THIS SHOULD BREAK SOMETHING. §10.2's lifecycle is tuned for ONE dropout:
+# 3-of-5 hits to confirm, 15 consecutive misses to delete. A 1 s gap at 30 Hz
+# is 30 misses — twice the coast budget — so every gap deletes the track and
+# every reappearance has to acquire from scratch. Fifteen full acquire-and-lose
+# cycles in one run exercises every transition in the mode FSM repeatedly,
+# which is where state that is not properly reset shows up.
+#
+# The specific things this is watching for: an integrator carried across a
+# Search transition (CP 10.1 found clear_state was never called), a handover
+# window filled with evidence from before a dropout (CP 10.7), a supervisor
+# whose detection_rate never recovers, and reacquisition times that grow run
+# over run because something is accumulating.
+#
+# Expected: 15 clean reacquisitions, each inside spec row 19's 1 s, with the
+# LAST one no slower than the first.
+
+[meta]
+name        = "adversarial_strobing_target"
+description = "1 s on, 1 s off, for 30 s — fifteen acquire-and-lose cycles"
+
+[sim]
+truth_hz = 300
+camera_hz = 30
+control_hz = 30
+duration_s = 30
+seed = 42
+
+[world]
+canvas_px = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type = "mono"
+resolution = [640, 480]
+fov_deg = [4.0, 3.0]
+exposure_ms = 5.0
+blur_substeps = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+kind = "target"
+intensity = 120.0
+size_px = 10
+initial_px = [1020.0, 1010.0]
+shape.type = "square"
+
+[[target.motion]]
+kind = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[gimbal]
+max_pan_dps = 5.0
+max_tilt_dps = 5.0
+max_accel_dps2 = 50.0
+time_constant_s = 0.020
+latency_s = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson = true
+gaussian_sigma = 20.0
+salt_pepper = 0.10
+hot_pixels = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons = 0
+
+[[event]]
+t_s = 2.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 4.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 6.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 8.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 10.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 12.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 14.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 16.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 18.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 20.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 22.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 24.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 26.0
+action = "occlude_target"
+duration_s = 1.0
+[[event]]
+t_s = 28.0
+action = "occlude_target"
+duration_s = 1.0
+
+[requirements]
+acquisition_s = 2.0
+tracking_error_px = 10.0
+target_loss_frac = 0.05
+reacquisition_s = 1.0
+min_fps = 20.0

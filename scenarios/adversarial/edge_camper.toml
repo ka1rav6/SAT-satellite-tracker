@@ -1,0 +1,84 @@
+# The target lives on the boundary.
+#
+# A beacon that starts 2 px from the canvas edge, moving into it at 400 px/s,
+# with edge_behaviour = "bounce". At 30 Hz it crosses 13 px per frame, so it
+# reverses roughly every frame for the whole run.
+#
+# WHY THIS SHOULD BREAK SOMETHING. §7.2's motion algebra is analytic — position
+# AND velocity have closed forms, which is what lets the Kalman filter be
+# checked against truth (CP 6.2 measures the velocity estimate to 0.02%). A
+# bounce is a DISCONTINUITY in that closed form, and one per frame is the
+# worst case for anything that differentiates the trajectory: the exposure
+# blur model, the truth reported at the exposure midpoint, and the filter's
+# constant-velocity assumption, which is wrong twice a frame here.
+#
+# Expected: the filter's velocity estimate is garbage — it should be, the
+# target has no meaningful velocity at this timescale — and the interesting
+# question is whether the track SURVIVES that. The reachability gate
+# (TrackParams::max_target_speed_urad_s) should hold it: the target never
+# moves far, only fast, so every measurement stays within reach.
+
+[meta]
+name        = "adversarial_edge_camper"
+description = "a target bouncing off the canvas edge roughly once per frame"
+
+[sim]
+truth_hz = 300
+camera_hz = 30
+control_hz = 30
+duration_s = 20
+seed = 42
+
+[world]
+canvas_px = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type = "mono"
+resolution = [640, 480]
+fov_deg = [4.0, 3.0]
+exposure_ms = 5.0
+blur_substeps = 8
+initial_pos_px = [30.0, 1000.0]     # looking at the edge
+
+[target]
+kind = "target"
+intensity = 120.0
+size_px = 10
+initial_px = [12.0, 1000.0]
+shape.type = "square"
+
+[[target.motion]]
+kind = "linear"
+velocity_px_s = [-400.0, 0.0]
+
+[gimbal]
+max_pan_dps = 5.0
+max_tilt_dps = 5.0
+max_accel_dps2 = 50.0
+time_constant_s = 0.020
+latency_s = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson = true
+gaussian_sigma = 20.0
+salt_pepper = 0.10
+hot_pixels = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons = 0
+
+[requirements]
+acquisition_s = 2.0
+tracking_error_px = 10.0
+target_loss_frac = 0.05
+reacquisition_s = 1.0
+min_fps = 20.0

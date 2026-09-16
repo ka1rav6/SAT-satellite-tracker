@@ -1,0 +1,169 @@
+# The weather never settles.
+#
+# The atmosphere changes every two seconds for a forty-second run: twenty
+# changes, cycling through all five of spec row 24's modes.
+#
+# WHY THIS SHOULD BREAK SOMETHING. §10.6's supervisor is built on the premise
+# that conditions persist long enough to adapt to — kMinDwell is 30 frames and
+# the EMA time constant is 15. Two seconds is 60 frames, so each regime lasts
+# exactly two dwell periods and four time constants. That is the shortest
+# interval at which adapting is still the right thing to do, and one step
+# faster would be the regime where NOT adapting wins.
+#
+# The failure this is looking for is chatter: a supervisor that switches on
+# every change and spends the run in transients, or one whose EMA never
+# converges and so switches on a belief that is always moving. CP 12.2's tests
+# assert the dwell guarantee on synthetic inputs; this asserts it on a running
+# simulation where the conditions are genuinely hostile.
+#
+# Expected: at most one switch per second (20 changes in 40 s cannot produce
+# more than 40 switches, and should produce far fewer), lock retention still
+# well above the fixed configuration's, and no run where the supervisor makes
+# things worse than leaving it off.
+
+[meta]
+name        = "adversarial_all_weather_churn"
+description = "the atmosphere changes every 2 s for 40 s"
+
+[sim]
+truth_hz = 300
+camera_hz = 30
+control_hz = 30
+duration_s = 40
+seed = 42
+
+[world]
+canvas_px = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type = "mono"
+resolution = [640, 480]
+fov_deg = [4.0, 3.0]
+exposure_ms = 5.0
+blur_substeps = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+kind = "target"
+intensity = 40.0                    # dim enough that the weather matters
+size_px = 10
+initial_px = [1040.0, 1020.0]
+shape.type = "square"
+
+[[target.motion]]
+kind = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[gimbal]
+max_pan_dps = 5.0
+max_tilt_dps = 5.0
+max_accel_dps2 = 50.0
+time_constant_s = 0.020
+latency_s = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson = true
+gaussian_sigma = 20.0
+salt_pepper = 0.10
+hot_pixels = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons = 0
+
+[supervisor]
+enabled = true
+min_dwell_frames = 30
+ema_tau_frames = 15.0
+
+[[event]]
+t_s = 2.0
+action = "set_atmosphere"
+mode = "fog"
+[[event]]
+t_s = 4.0
+action = "set_atmosphere"
+mode = "clear"
+[[event]]
+t_s = 6.0
+action = "set_atmosphere"
+mode = "haze"
+[[event]]
+t_s = 8.0
+action = "set_atmosphere"
+mode = "lowlight"
+[[event]]
+t_s = 10.0
+action = "set_atmosphere"
+mode = "clear"
+[[event]]
+t_s = 12.0
+action = "set_atmosphere"
+mode = "rain"
+[[event]]
+t_s = 14.0
+action = "set_atmosphere"
+mode = "fog"
+[[event]]
+t_s = 16.0
+action = "set_atmosphere"
+mode = "clear"
+[[event]]
+t_s = 18.0
+action = "set_atmosphere"
+mode = "haze"
+[[event]]
+t_s = 20.0
+action = "set_atmosphere"
+mode = "fog"
+[[event]]
+t_s = 22.0
+action = "set_atmosphere"
+mode = "clear"
+[[event]]
+t_s = 24.0
+action = "set_atmosphere"
+mode = "lowlight"
+[[event]]
+t_s = 26.0
+action = "set_atmosphere"
+mode = "clear"
+[[event]]
+t_s = 28.0
+action = "set_atmosphere"
+mode = "rain"
+[[event]]
+t_s = 30.0
+action = "set_atmosphere"
+mode = "fog"
+[[event]]
+t_s = 32.0
+action = "set_atmosphere"
+mode = "clear"
+[[event]]
+t_s = 34.0
+action = "set_atmosphere"
+mode = "haze"
+[[event]]
+t_s = 36.0
+action = "set_atmosphere"
+mode = "fog"
+[[event]]
+t_s = 38.0
+action = "set_atmosphere"
+mode = "clear"
+
+[requirements]
+acquisition_s = 2.0
+tracking_error_px = 10.0
+target_loss_frac = 0.05
+reacquisition_s = 1.0
+min_fps = 20.0

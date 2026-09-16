@@ -1,0 +1,84 @@
+# Sixteen near-identical decoys, all inside one field of view.
+#
+# §9.1 calls one decoy "mandatory for credibility" and the association gate
+# (CP 6.3) was measured against exactly that: a single decoy 60 px away, at
+# d^2 = 2446, comfortably outside the gate.
+#
+# WHY THIS SHOULD BREAK SOMETHING. The decoy builder places decoys 60-300 px
+# from the beacon, and the camera sees 640 x 480 screen px — so sixteen of them
+# are all inside the frame at once, several inside the gate at any moment.
+# §10.2's nearest-neighbour association picks ONE, by likelihood score, and
+# has no mechanism for "several candidates are equally plausible". The
+# hysteresis §10.2 calls mandatory for target switching does not exist yet
+# (RESULTS.md records it as a gap).
+#
+# Expected: the track survives — the lifecycle's M-of-N and the physical
+# reachability gate should stop it teleporting between decoys — but the
+# tracking error is poor and the centroiding error is dominated by whichever
+# decoy it settled on. Measuring HOW poor is the point; the number is what
+# §10.2's priority policy would have to improve on.
+
+[meta]
+name        = "adversarial_decoy_swarm"
+description = "16 near-identical decoys competing for one association gate"
+
+[sim]
+truth_hz = 300
+camera_hz = 30
+control_hz = 30
+duration_s = 30
+seed = 42
+
+[world]
+canvas_px = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type = "mono"
+resolution = [640, 480]
+fov_deg = [4.0, 3.0]
+exposure_ms = 5.0
+blur_substeps = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+kind = "target"
+intensity = 120.0
+size_px = 10
+initial_px = [1000.0, 1000.0]
+shape.type = "square"
+
+[[target.motion]]
+kind = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[gimbal]
+max_pan_dps = 5.0
+max_tilt_dps = 5.0
+max_accel_dps2 = 50.0
+time_constant_s = 0.020
+latency_s = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson = true
+gaussian_sigma = 20.0
+salt_pepper = 0.10
+hot_pixels = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons  = 16                 # the schema's maximum
+
+[requirements]
+acquisition_s = 2.0
+tracking_error_px = 10.0
+target_loss_frac = 0.05
+reacquisition_s = 1.0
+min_fps = 20.0

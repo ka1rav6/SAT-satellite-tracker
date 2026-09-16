@@ -161,9 +161,19 @@ set_tests_properties(supervisor PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
 # trusting rather than using.
 sat_add_test(robustness
     SOURCES robustness/test_alloc.cpp
-    DEPS    sat_core sat_engine sat_scenario
+    DEPS    sat_core sat_engine sat_scenario sat_app sat_metrics
 )
-set_tests_properties(robustness PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
+# A longer budget than the control suite: this one runs 40 fuzzed scenarios and
+# six adversarial ones on top of two full runs, and several of the fuzzed
+# configurations are 1920x1080 with a thousand clutter sources.
+math(EXPR SAT_ROBUST_TIMEOUT "${SAT_TEST_TIMEOUT} * 6")
+set_tests_properties(robustness PROPERTIES TIMEOUT ${SAT_ROBUST_TIMEOUT})
+# The adversarial cases are loaded from disk rather than built in code: their
+# whole value is that the committed FILE is what gets exercised, so a file that
+# stops parsing turns this red rather than passing against a copy in a test.
+target_compile_definitions(test_robustness PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+)
 
 # --- CP 3.3-3.5: the motion algebra and its analytic derivatives ------------
 sat_add_test(motion

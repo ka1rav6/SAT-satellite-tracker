@@ -391,6 +391,7 @@ endif()
 # ===========================================================================
 sat_add_module(sat_app
     SOURCES
+        src/app/fuzz.cpp
         src/app/headless.cpp
         src/app/timestamp.cpp
         src/app/sweep.cpp

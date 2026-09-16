@@ -280,6 +280,21 @@ cp107: build
     @python3 tools/cp107_sweep.py --binary "{{build_dir}}/sat-tracker" \
         --scenario scenarios/control/fast_linear.toml --out logs/control
 
+# CP 14.1 ★ — 5,000 random scenarios: no crash, no hang, no NaN.
+#
+# Every parameter across its legal range, with one draw in six taking an
+# ENDPOINT rather than a uniform sample — uniform sampling almost never hits
+# its own bounds, and the bounds are where the bugs are.
+#
+# Takes about ten minutes. `just fuzz-quick` is the 500-scenario version for a
+# pre-commit check.
+fuzz: build
+    "{{build_dir}}/sat-tracker" --fuzz-scenarios 5000 --duration 0.3
+
+# The same, short enough to run before a commit.
+fuzz-quick: build
+    "{{build_dir}}/sat-tracker" --fuzz-scenarios 500 --duration 0.3
+
 # ---------------------------------------------------------------------------
 # Stage 12 — the SAT supervisor (design §10.6)
 # ---------------------------------------------------------------------------
