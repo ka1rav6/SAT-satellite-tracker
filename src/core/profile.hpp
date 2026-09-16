@@ -38,14 +38,18 @@ enum class Stage : uint8_t {
     WorldAdvance = 0,
     Disturbance,
     GimbalStep,
-    FrameAcquire,      ///< render+degrade, or video crop
+    FrameAcquire,      ///< PARENT: render+degrade, or video crop. Not additive.
+    BackgroundRender,  ///< the pedestal fill; §15's "Background render"
+    EmitterSplat,      ///< §15's "Emitter splat, 8 substeps"
+    DamageChain,       ///< §15's "Damage chain" — atmosphere, noise, defects
+    Perception,        ///< PARENT: the whole detector, B6-B13. Not additive.
     Median,
     TopHat,
     SummedArea,
     MatchedFilter,
     Cfar,
     Grouping,
-    Centroid,
+    Centroid,          ///< LEAF: §15's "Centroid + bias correction" only
     AiCandidate,
     AiCentroid,
     AiRecovery,
@@ -180,6 +184,33 @@ private:
     std::chrono::time_point<std::chrono::steady_clock> start_;
 };
 
+/// The same, but tolerant of a null StageTimers*. Used where a component may
+/// or may not have been attached to the engine's profiler — the synthetic
+/// source is built directly by several tests and by the centroid harness, and
+/// none of those want to construct a timer set just to render a frame.
+class OptionalTimer {
+public:
+    OptionalTimer(StageTimers* t, Stage s) noexcept
+        : timers_(t), stage_(s),
+          start_(t ? std::chrono::steady_clock::now()
+                   : std::chrono::time_point<std::chrono::steady_clock>{}) {}
+
+    ~OptionalTimer() {
+        if (!timers_) return;
+        const auto end = std::chrono::steady_clock::now();
+        timers_->record(stage_,
+                        std::chrono::duration<double, std::micro>(end - start_).count());
+    }
+
+    OptionalTimer(const OptionalTimer&)            = delete;
+    OptionalTimer& operator=(const OptionalTimer&) = delete;
+
+private:
+    StageTimers*                                       timers_;
+    Stage                                              stage_;
+    std::chrono::time_point<std::chrono::steady_clock> start_;
+};
+
 }  // namespace sat
 
 // SAT_ZONE(timers, Stage::Median) — one line at the top of a stage function.
@@ -189,3 +220,9 @@ private:
 #define SAT_ZONE_CAT(a, b)  SAT_ZONE_CAT_(a, b)
 #define SAT_ZONE(timers, stage) \
     ::sat::ScopedTimer SAT_ZONE_CAT(sat_zone_, __LINE__)((timers), (stage))
+
+// SAT_ZONE_OPT(timers_ptr, Stage::X) — the same, for code that may or may not
+// have been handed a StageTimers. A null pointer means "not being profiled",
+// which is the normal case in unit tests and in the accuracy harnesses.
+#define SAT_ZONE_OPT(timers_ptr, stage)                         \
+    ::sat::OptionalTimer SAT_ZONE_CAT(sat_zone_, __LINE__)((timers_ptr), (stage))

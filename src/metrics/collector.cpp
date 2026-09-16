@@ -363,7 +363,11 @@ std::string format_stage_timings(const StageTimers& t) {
         {Stage::WorldAdvance,   20.0},   // "World, 10 sub-ticks"
         {Stage::Disturbance,     0.0},
         {Stage::GimbalStep,     10.0},   // part of "Control + plant"
-        {Stage::FrameAcquire,  740.0},   // background + splat + damage chain
+        {Stage::FrameAcquire,  740.0},   // PARENT: background + splat + damage
+        {Stage::BackgroundRender, 150.0},
+        {Stage::EmitterSplat,    40.0},
+        {Stage::DamageChain,    550.0},
+        {Stage::Perception,    1390.0},  // PARENT: the sum of the leaves below
         {Stage::Median,        350.0},
         {Stage::TopHat,        300.0},
         {Stage::SummedArea,    350.0},   // "SAT x2"

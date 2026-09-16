@@ -567,6 +567,7 @@ bool Pipeline::step() {
             // Jitter is excluded on purpose; see SyntheticSource::render_frame.
             const Rate2 gr = gimbal_.rate();
             const Rate2 pr = source_.disturbance().platform_rate(frame_ / 30.0);
+            source_.set_timers(&timers_);
             source_.set_blur_rate(Rate2{gr.x + pr.x, gr.y + pr.y});
             if (!source_.next(commanded, frame)) return false;
         }
@@ -589,7 +590,14 @@ bool Pipeline::step() {
     // cmake/modules.cmake.
     // -----------------------------------------------------------------------
     {
-        SAT_ZONE(timers_, Stage::Centroid);
+        // PARENT zone. This used to be labelled Stage::Centroid, which made the
+        // stage table read "centroid 17,309 us against a 20 us budget" — 865x
+        // over for a stage whose whole job is a weighted mean over a 25-pixel
+        // window. It was never measuring the centroid: every perception
+        // sub-stage nests inside it, so the number was the detector's total.
+        // Stage::Centroid is now the leaf it was always meant to be, timed
+        // around B12/B13 in perception/pipeline.cpp, and this is `perception`.
+        SAT_ZONE(timers_, Stage::Perception);
         if (cfg_.detector == PipelineConfig::Detector::Classical && perception_ready_) {
             perception_.process(frame.pixels, frame.width, frame.height, ws_, dets_,
                                 &timers_);

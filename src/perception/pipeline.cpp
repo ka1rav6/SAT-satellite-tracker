@@ -231,6 +231,11 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
                                      ws.grouping, blobs_); }
 
     // --- B12/B13: gate, then centroid each survivor -----------------------
+    //
+    // §15's "Centroid + bias correction, 0.02 ms" line. The budget is that
+    // small because this loop runs over at most `max_candidates` blobs (24 by
+    // default), not over pixels.
+    SAT_ZONE(t, Stage::Centroid);
     for (const BlobAccum& b : blobs_) {
         if (!passes_gate(b, params_)) continue;
 

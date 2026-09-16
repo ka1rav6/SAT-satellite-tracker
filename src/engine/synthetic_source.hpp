@@ -32,6 +32,7 @@
 #include "camera/splat.hpp"
 #include "core/arena.hpp"
 #include "core/frames.hpp"
+#include "core/profile.hpp"
 #include "core/rng.hpp"
 #include "core/time.hpp"
 #include "degrade/disturbance.hpp"
@@ -106,6 +107,12 @@ public:
     /// analytic rate; it deliberately excludes jitter (see render_frame).
     void set_blur_rate(Rate2 r) noexcept { blur_rate_ = r; }
 
+    /// Attach the engine's stage timers so the render can be broken down the
+    /// way design §15's budget table is written — background, splat and damage
+    /// chain as three separate lines rather than one `frame_acquire` lump.
+    /// Optional: nothing here needs a timer to work, and tests leave it null.
+    void set_timers(StageTimers* t) noexcept { timers_ = t; }
+
     [[nodiscard]] DisturbanceGenerator& disturbance() noexcept { return disturb_; }
     [[nodiscard]] SensorChain&          sensor()      noexcept { return sensor_; }
     [[nodiscard]] const World&          world()  const noexcept { return world_; }
@@ -129,6 +136,7 @@ private:
     void render_frame(Angle2 true_boresight, double t_s);
     void fill_truth(Angle2 true_bore, Angle2 commanded_bore, FrameTruth& t) const;
 
+    StageTimers*    timers_ = nullptr;   ///< not owned; see set_timers()
     SyntheticConfig cfg_{};
     World           world_{};
     SensorChain     sensor_{};

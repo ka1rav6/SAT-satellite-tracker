@@ -31,6 +31,10 @@ const char* stage_name(Stage s) noexcept {
         case Stage::Disturbance:   return "disturbance";
         case Stage::GimbalStep:    return "gimbal_step";
         case Stage::FrameAcquire:  return "frame_acquire";
+        case Stage::BackgroundRender: return "background";
+        case Stage::EmitterSplat:  return "splat";
+        case Stage::DamageChain:   return "damage_chain";
+        case Stage::Perception:    return "perception";
         case Stage::Median:        return "median_3x3";
         case Stage::TopHat:        return "top_hat";
         case Stage::SummedArea:    return "summed_area";

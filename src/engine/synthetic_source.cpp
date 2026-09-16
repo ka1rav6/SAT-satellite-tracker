@@ -85,7 +85,15 @@ void SyntheticSource::build_from_scenario(const Scenario& sc) {
 void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
     // Start from the background pedestal rather than zero. A real sensor always
     // has one, and starting at zero would flatter every detector downstream.
-    std::fill(radiance_.begin(), radiance_.end(), cfg_.background);
+    //
+    // Timed as §15's "Background render" line. It is a fill rather than a
+    // procedural texture because the screen the beacon sits on is specified as
+    // a uniform field (spec rows 1 and 8); a texture would be scenery, not
+    // signal, and every detector downstream would be measured against it.
+    {
+        SAT_ZONE_OPT(timers_, Stage::BackgroundRender);
+        std::fill(radiance_.begin(), radiance_.end(), cfg_.background);
+    }
 
     const int substeps = std::max(1, cfg_.blur_substeps);
     const double w = 1.0 / static_cast<double>(substeps);
@@ -138,6 +146,8 @@ void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
     // -----------------------------------------------------------------------
     const Angle2 bore_rate{blur_rate_.x, blur_rate_.y};
 
+    {
+    SAT_ZONE_OPT(timers_, Stage::EmitterSplat);
     for (int s = 0; s < substeps; ++s) {
         // Substep CENTRES, offset so the samples straddle the timestamp:
         // f runs over (-0.5, +0.5) x exposure. Sampling at the interval edges
@@ -164,11 +174,15 @@ void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
                           world_.emitters.shape_of(i), world_.emitters.intensity[i], w);
         }
     }
+    }
 
     // The full damage chain (design §9.3): atmosphere, shot noise, read noise,
     // fixed pattern, salt and pepper, defects, clip and quantise. In a video
     // mode it degenerates to the quantisation alone (INV-8).
-    sensor_.apply(radiance_, frame_, rng_);
+    {
+        SAT_ZONE_OPT(timers_, Stage::DamageChain);
+        sensor_.apply(radiance_, frame_, rng_);
+    }
 
     prev_true_bore_ = true_bore;
     have_prev_bore_ = true;
