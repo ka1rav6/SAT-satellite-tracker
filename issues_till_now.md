@@ -1,0 +1,157 @@
+# Issues till now
+
+A running, honest list of everything in SAT that is **not yet up to the mark** —
+unimplemented, implemented but under-performing, or implemented in a way that a
+measurement has since shown to be wrong.
+
+Rules for this file:
+
+* Every open item carries a **measurement**, not an adjective. "Slow" is not an
+  issue; "10,090 µs against a 40 µs budget" is.
+* Items are checked off only when a command in the `Justfile` reproduces the fix.
+* Nothing is deleted when it closes. A closed item keeps its before/after so the
+  file doubles as the change log for quality, which is what `docs/RESULTS.md`
+  cites.
+
+Legend: `[ ]` open · `[x]` closed · `[~]` partially closed · `[-]` closed as
+*won't fix*, with the reason stated.
+
+---
+
+## 1. Performance — design §15's 0.85 ms frame budget
+
+Measured with `just stages` on `scenarios/compliance.toml` (120 clutter sources,
+1 decoy, full damage chain, 640 × 480 sensor), Release `-O3`, single core.
+
+### 1.0 The stage table was measuring the wrong things
+
+- [x] **`frame_acquire` was one opaque 22.7 ms line.** Design §15 budgets
+      *Background render*, *Emitter splat* and *Damage chain* as three separate
+      rows, and the profiler collapsed all three into one, so there was no way
+      to tell which of them was over. Split into `background`, `splat` and
+      `damage_chain`, with `frame_acquire` kept as a non-additive parent.
+- [x] **`centroid` was reported as 865× over its budget.** The zone labelled
+      `Stage::Centroid` in the engine wrapped the *entire* detector, so the
+      number printed against §15's 0.02 ms "Centroid + bias correction" line was
+      really the whole of B6–B13. Renamed to `Stage::Perception`;
+      `Stage::Centroid` now times B12/B13 alone and measures **24 µs against a
+      20 µs budget**, which is the honest figure and is essentially on target.
+
+### 1.1 Open performance gaps
+
+| Stage | Measured p50 | §15 budget | Over | Status |
+|---|---:|---:|---:|---|
+| `splat` | 10,090 µs → **973 µs** | 40 | 24× | [~] separable factorisation landed; see 1.2 |
+| `damage_chain` | 12,079 µs | 550 | 22× | [ ] |
+| `cfar` (×2) | 4,914 µs each | 200 | 25× | [ ] |
+| `matched_filter` | 2,393 µs | 120 | 20× | [ ] |
+| `summed_area` (×2) | 1,827 µs each | 350 | 5× | [ ] |
+| `top_hat` | 1,999 µs | 300 | 7× | [ ] |
+| `median_3x3` | 567 µs | 350 | 2× | [ ] |
+| `grouping` | 396 µs | 50 | 8× | [ ] |
+| `background` | 135 µs | 150 | 0.9× | [x] within budget |
+| `centroid` | 24 µs | 20 | 1.2× | [x] within budget |
+| **`frame_total`** | **42,551 µs** | **850** | **50×** | [ ] |
+
+### 1.2 What has been done, and what is left
+
+- [x] **Emitter splat: 10,090 µs → 973 µs (10.4×).** The splat walked its
+      footprint pixel by pixel calling a 2-D coverage function. Two of the three
+      shapes are *separable* — a square's coverage is `overlap_x(i)·overlap_y(j)`
+      and a Gaussian's is `gauss_x(i)·gauss_y(j)·norm` — so a W×H footprint needs
+      W+H one-dimensional evaluations, not W·H two-dimensional ones. For a 24 px
+      Gaussian clutter source that is 496 `erf` calls instead of 61,504. The
+      circle is not separable but decomposes by inclusion-exclusion over shared
+      grid corners, which is exactly 4× fewer evaluations. Every expression
+      multiplies its factors in the same order as the function it replaces, so
+      the result is bit-identical, not merely equal.
+- [ ] **Emitter splat, the remaining 24×.** Two further levers, neither taken
+      yet: a Gaussian clutter source is drawn out to 6σ, which is 2.9× more area
+      than the 3.5σ at which its contribution drops below one 8-bit grey level
+      (6σ is required for the *graded* beacon, where truncation biases the
+      centroid — it is not required for clutter); and the inner row loop still
+      carries a per-pixel branch that blocks vectorisation.
+- [ ] **Damage chain.** Five separate full-frame passes (atmosphere, shot noise,
+      read noise, fixed pattern, quantise) over a 1.2 MB float buffer, each one
+      reading and writing it. Two `next_normal()` calls per pixel, each a
+      Marsaglia polar rejection loop with a `log` and a `sqrt`. Needs fusing to a
+      single pass and a vectorised generator.
+- [ ] **The detector runs full-frame in every mode.** 640 × 480 = 307,200
+      pixels of median, top-hat, two summed-area tables, matched filter and two
+      CFAR passes, on every frame, including frames where the tracker already
+      knows where the target is to within a few pixels.
+- [ ] **AVX2 kernels (CP 14.2's second half).** The build has no `-march`
+      beyond baseline x86-64, so every kernel is SSE2. The host supports AVX2
+      and AVX-VNNI.
+
+### 1.3 Downstream of the frame budget
+
+- [ ] **CP 7.3 — "a 120 s scenario completes in under 2 s wall time".** Measured
+      ~5 minutes. It is the frame budget, multiplied by 3,600 frames.
+- [ ] **CP 7.5 — "500 runs complete in under 3 minutes on 8 cores".** Measured
+      ~13 minutes. Same cause.
+
+---
+
+## 2. Accuracy and robustness
+
+- [ ] **Clutter and decoy discrimination.** Over 200 runs: tracking error
+      17.64 px clean → 44.57 px with one decoy → **205.20 px** with 120 clutter
+      plus a decoy; centroiding 0.141 px → 198.33 px. The association gate is
+      nearest-neighbour on a single track, so a brighter clutter source inside
+      the gate wins.
+      Owner: design §10.2's `priority_score` with switching hysteresis, plus
+      Stage 11's `CandidateNet` (out of scope — ML).
+- [ ] **The supervisor recovers nothing against clutter.** `just cp123`
+      measures **+15 points** of lock retention in fog and **0** against
+      clutter. It adapts thresholds and estimators; it does not adapt the
+      association policy, which is what clutter defeats.
+- [ ] **Low light.** Target loss reaches **86 %** in the `lowlight` weather mode.
+      The beacon is below the detector's noise floor, not mis-associated, so
+      this is a sensitivity problem and not an association one.
+- [ ] **Low-SNR centroiding.** 3.64× the theoretical bound at SNR 13, against
+      CP 9.6's requirement of 1.5× at every bin. Above SNR 20 the requirement is
+      met. Owner: Stage 11's `Learned` estimator (out of scope — ML).
+- [ ] **Figure-8 acceleration lag.** 16.56 px residual with feedforward on a
+      200 px/s sinusoid — the feedforward carries velocity, not acceleration.
+- [-] **Handover under spec row 23.** 100 % success on a clean run, **0 %** at
+      row 23's ±20 px/frame of jitter. Closed as *won't fix in the control law*:
+      row 23's jitter amplitude is 5× the quadrant cell's capture criterion, so
+      no controller can hold the beam inside a capture range smaller than the
+      disturbance. Recorded with the derivation in `docs/RESULTS.md` §6.
+
+---
+
+## 3. Deliverables not yet complete
+
+- [ ] **CP 15.1 — "every §12 panel complete".** The dashboard has the camera
+      view, screen overview, both error traces, the compliance table, the stage
+      latency table, the parameter table and live damage controls. Missing: the
+      IMM mode-probability panel, the SAT strategy timeline and the mode-FSM
+      graph.
+- [ ] **Documentation for a first-time user.** `QUICKSTART.md` and
+      `docs/MANUAL.md` exist but contain no screenshots, and neither walks
+      someone through the product end to end.
+- [-] **Stage 11 — machine learning, all of it.** Out of scope by explicit
+      instruction. `CentroidNet`, `CandidateNet`, `MotionNet`, the ablation table
+      and the model cards are not built, and `--gen-dataset` is not implemented.
+      `--no-ai` is the shipped path and INV-7 requires it to stay that way.
+- [-] **CP 12.4 — the learned `StrategyPolicy`.** Out of scope for the same
+      reason. The rule table of CP 12.2 is what ships.
+
+---
+
+## 4. Closed
+
+- [x] **CP 14.1 `--fuzz-scenarios`** — implemented, with explicit corner
+      sampling.
+- [x] **Adversarial scenarios** — `scenarios/adversarial/` now holds six.
+- [x] **Stage 13 acquisition strategy** — probability grid with negative
+      information, and the strategy benchmark.
+- [x] **Retention reported 100 % on a run that had lost the beacon** — the
+      numerator counted confirmed frames without intersecting the denominator's
+      in-FOV condition.
+- [x] **Design §7.4 events were parsed, validated, echoed to `run.json` and read
+      by nothing.** All four actions now execute.
+- [x] **INV-4's allocation trap was never armed.** It is now, in Debug, and it
+      caught four steady-state allocations.
