@@ -288,7 +288,25 @@ TEST_CASE("spec row 20: the loop sustains at least 20 FPS" * doctest::skip()) {
 #endif
 }
 
-TEST_CASE("CP 14.2: no single stage dominates the frame the way three used to") {
+TEST_CASE("CP 14.2: no single stage dominates the frame the way three used to"
+          * doctest::skip()) {
+    // -------------------------------------------------------------------
+    // SKIPPED BY DEFAULT, like the wall-clock case above it, and for the same
+    // reason arriving one step later than expected.
+    //
+    // These are RATIOS between stages, and the note further down records that
+    // they are not BUILD-independent. They are not CONTENTION-independent
+    // either, and that took a red CI run to notice: `just ci` runs ctest in
+    // parallel, and this case is measuring p50 stage times on cores it is
+    // sharing. It passed standalone and failed in CI, which is the signature
+    // of a timing assertion running in a parallel suite.
+    //
+    // tests/CMakeLists.txt already registers the "perf" suite as its own
+    // RUN_SERIAL entry (`frame_budget`) precisely so that timings are measured
+    // on a quiet machine. The wall-clock case carried doctest::skip() so that
+    // only that serial entry runs it; this one did not, so it ran in both — and
+    // the parallel one is the invocation where the measurement means nothing.
+    // -------------------------------------------------------------------
     // The three defects fixed at CP 14.2 were each a stage costing an order of
     // magnitude more than its neighbours. Asserting the SHAPE of the profile
     // catches that class directly, and is far less machine-dependent than any
