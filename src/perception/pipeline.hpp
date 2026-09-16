@@ -132,7 +132,36 @@ struct PerceptionWorkspace {
 // ---------------------------------------------------------------------------
 class ClassicalPerception {
 public:
-    void configure(const PerceptionParams& p) { params_ = p; }
+    /// How many components one frame is expected to produce at most. See
+    /// configure() for where the number comes from; the engine reserves its
+    /// detection vector to the same bound, because in principle every blob can
+    /// survive the shape gate.
+    static constexpr size_t kBlobReserve = 4096;
+
+    void configure(const PerceptionParams& p) {
+        params_ = p;
+        // -------------------------------------------------------------------
+        // INV-4 (CP 14.3). blobs_ is a MEMBER so its capacity survives between
+        // frames, and clear() keeps that capacity — but it still has to reach
+        // its high-water mark somehow, and it was doing so by allocating
+        // inside the frame loop. The Debug allocation trap caught it on the
+        // first frame of the first run it was ever armed for.
+        //
+        // 4096 is chosen from what the pipeline actually produces rather than
+        // from the theoretical worst case. §9.4's own measurement is 15,929
+        // bright pixels grouping into 84 blobs on CP 5.9's worst case; the
+        // absolute bound is a checkerboard mask, w*h/2 = 153,600 components,
+        // which would be 11 MB reserved against a case the median filter
+        // (§9.4.1) exists to make impossible.
+        //
+        // A frame that exceeds 4096 still works — the vector grows, as a
+        // vector does — and in a Debug build the trap says so. That is the
+        // right failure mode: a pathological frame is reported rather than
+        // silently truncated, and truncating would change what the detector
+        // found in order to satisfy an invariant about allocation.
+        // -------------------------------------------------------------------
+        blobs_.reserve(kBlobReserve);
+    }
     [[nodiscard]] const PerceptionParams& params() const noexcept { return params_; }
     [[nodiscard]] PerceptionParams& params() noexcept { return params_; }
 

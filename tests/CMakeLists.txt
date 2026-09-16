@@ -153,6 +153,18 @@ sat_add_test(supervisor
 )
 set_tests_properties(supervisor PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
 
+# --- CP 14.3: INV-4's allocation trap --------------------------------------
+#
+# Vacuous in Release by construction — the trap is Debug-only — so the suite
+# carries a self-test that FAILS if a Debug build ever stops defining
+# SAT_ALLOC_TRAP. An invariant checker nobody has watched fail is one you are
+# trusting rather than using.
+sat_add_test(robustness
+    SOURCES robustness/test_alloc.cpp
+    DEPS    sat_core sat_engine sat_scenario
+)
+set_tests_properties(robustness PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
+
 # --- CP 3.3-3.5: the motion algebra and its analytic derivatives ------------
 sat_add_test(motion
     SOURCES motion/test_motion.cpp

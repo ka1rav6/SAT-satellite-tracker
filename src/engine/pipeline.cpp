@@ -35,7 +35,25 @@ void Pipeline::build_stage6() {
 
     dets_.clear();
     meas_.clear();
-    dets_.reserve(static_cast<size_t>(std::max(1, cfg_.perception.max_candidates)));
+    // -----------------------------------------------------------------------
+    // INV-4 (CP 14.3): sized for the PRE-TRUNCATION count, not for
+    // max_candidates.
+    //
+    // ClassicalPerception::process pushes every blob that survives the shape
+    // gate and truncates to max_candidates afterwards, so `dets_` transiently
+    // holds more than the cap. Reserving the cap was enough until Stage 12:
+    // the supervisor lowers the CFAR threshold in poor conditions, more blobs
+    // survive, and the vector reallocated inside the frame loop at 48
+    // detections against a reserve of 24. The trap caught it on the first run
+    // with the supervisor switching.
+    //
+    // The bound is the blob reserve — in principle every blob can pass the
+    // gate. 4096 Detections is about 300 KB, reserved once.
+    //
+    // `meas_` keeps the cap: measurements are built only from the detections
+    // that survive truncation, so max_candidates really is its bound.
+    // -----------------------------------------------------------------------
+    dets_.reserve(ClassicalPerception::kBlobReserve);
     meas_.reserve(static_cast<size_t>(std::max(1, cfg_.perception.max_candidates)));
 
     // -----------------------------------------------------------------------
@@ -186,6 +204,13 @@ void Pipeline::build(const PipelineConfig& cfg, EmitterSoA emitters) {
     snapshots_.reset(proto);
 
     fingerprints_.clear();
+    // INV-4 (CP 14.3): one fingerprint per frame, and the run length is known
+    // here. Without the reserve the vector doubles its way up inside the frame
+    // loop — a handful of allocations over a run, invisible in a profile, and
+    // exactly what the Debug trap exists to refuse.
+    fingerprints_.reserve(
+        static_cast<size_t>(cfg_.synthetic.duration_s
+                            * std::max(1, cfg_.synthetic.camera_hz)) + 8);
     if (cfg_.publish_snapshots) {
         fingerprints_.reserve(
             static_cast<size_t>(cfg_.synthetic.duration_s * cfg_.synthetic.camera_hz) + 2);
@@ -286,6 +311,13 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     proto.reserve_preview(cfg_.synthetic.camera.width, cfg_.synthetic.camera.height);
     snapshots_.reset(proto);
     fingerprints_.clear();
+    // INV-4 (CP 14.3): one fingerprint per frame, and the run length is known
+    // here. Without the reserve the vector doubles its way up inside the frame
+    // loop — a handful of allocations over a run, invisible in a profile, and
+    // exactly what the Debug trap exists to refuse.
+    fingerprints_.reserve(
+        static_cast<size_t>(cfg_.synthetic.duration_s
+                            * std::max(1, cfg_.synthetic.camera_hz)) + 8);
 
     build_stage6();
 }
@@ -386,6 +418,20 @@ Status Pipeline::build_from_video(const Scenario& sc,
 
 bool Pipeline::step() {
     SAT_ZONE(timers_, Stage::FrameTotal);
+
+    // -----------------------------------------------------------------------
+    // CP 14.3: the window INV-4 is about.
+    //
+    // In a Debug build the global operator new aborts inside this scope. The
+    // window is deliberately narrow — it covers per-frame processing and not
+    // the setup that precedes a run, because building the world, sizing the
+    // arena and opening the logs all allocate and all of them should. INV-4 is
+    // about the STEADY state, not about a program that never calls malloc.
+    //
+    // Costs nothing in Release: FrameScope sets a bool, and with SAT_ALLOC_TRAP
+    // undefined nothing ever reads it.
+    // -----------------------------------------------------------------------
+    FrameScope frame_scope;
 
     const Clock& clk = source_.clock();
     const double truth_dt = clk.truth_dt();

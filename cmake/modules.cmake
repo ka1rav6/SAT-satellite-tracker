@@ -69,6 +69,7 @@ sat_add_module(sat_core
         src/core/arena.cpp
         src/core/mode.cpp
         src/core/strategy.cpp
+        src/core/alloc_trap.cpp
         src/core/profile.cpp
 )
 
@@ -84,6 +85,20 @@ sat_add_module(sat_world
         src/world/motion_factory.cpp
     PUBLIC_DEPS sat_core sat_scenario
 )
+
+# CP 14.3's allocation trap, Debug only.
+#
+# It replaces the GLOBAL operator new, so the definition has to be visible to
+# everything that links sat_core — which is everything. Debug only because
+# replacing operator new in a shipping binary is a liability: third-party code
+# that legitimately allocates during a frame (a video decoder, an inference
+# runtime) would abort the program rather than be slightly slower than we would
+# like. The Release build is the one that runs; the Debug build is the one that
+# checks, and `just test-debug` runs the whole suite under it.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(sat_core PUBLIC SAT_ALLOC_TRAP=1)
+    message(STATUS "SAT: INV-4 allocation trap ARMED (Debug)")
+endif()
 
 # scenario — TOML parsing and schema validation (design §7).
 sat_add_module(sat_scenario

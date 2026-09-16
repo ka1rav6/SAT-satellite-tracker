@@ -289,16 +289,34 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
         out.push_back(d);
     }
 
+    // -----------------------------------------------------------------------
     // Strongest first, so a caller that takes the top N takes the best N.
     //
-    // stable_sort, not sort. Design §2 INV-3: "Never std::sort on a key that can
-    // tie — use std::stable_sort or add an index tiebreaker." SNR ties are
-    // common on a quantised frame, and an unstable sort would order tied
-    // candidates by whatever the implementation happened to do — which is
-    // exactly the kind of thing that differs between libstdc++ and MSVC and
-    // would break reproducibility across platforms.
-    std::stable_sort(out.begin(), out.end(),
-                     [](const Detection& a, const Detection& b) { return a.snr > b.snr; });
+    // INV-3 forbids sorting on a key that can tie: "use std::stable_sort OR ADD
+    // AN INDEX TIEBREAKER". SNR ties are common on a quantised frame, and an
+    // unstable sort would order tied candidates by whatever the implementation
+    // happened to do — which differs between libstdc++ and MSVC and would break
+    // reproducibility across platforms.
+    //
+    // This took the first option and had to take the second, because
+    // std::stable_sort ALLOCATES. It asks for a temporary buffer — 360 bytes
+    // for five detections — and INV-4 forbids allocating in the steady state.
+    // CP 14.3's trap caught it the first time it was armed. The two invariants
+    // are not in conflict; only one reading of the first one was.
+    //
+    // The tiebreaker is raster order of the blob's centroid, which is a
+    // property of the IMAGE and therefore identical on every platform. With it
+    // the comparator is a strict total order, no two elements compare
+    // equivalent, and stability has nothing left to mean.
+    // -----------------------------------------------------------------------
+    std::sort(out.begin(), out.end(),
+              [](const Detection& a, const Detection& b) {
+                  if (a.snr != b.snr) return a.snr > b.snr;
+                  if (a.centroid_image.y != b.centroid_image.y) {
+                      return a.centroid_image.y < b.centroid_image.y;
+                  }
+                  return a.centroid_image.x < b.centroid_image.x;
+              });
 
     if (static_cast<int>(out.size()) > params_.max_candidates) {
         out.resize(static_cast<size_t>(params_.max_candidates));
