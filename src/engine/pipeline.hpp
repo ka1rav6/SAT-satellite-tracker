@@ -429,6 +429,12 @@ public:
     /// disagree with the plant cannot demonstrate §10.4's "amplifies model
     /// error" at all.
     [[nodiscard]] Controller& controller_mut() noexcept { return control_; }
+
+    /// Mutable, for CP 15.2's live algorithm switching. The GUI changes which
+    /// filter runs while the loop is running; a rebuild would restart the run
+    /// and the audience would see two runs rather than one loop changing its
+    /// mind.
+    [[nodiscard]] Tracker& tracker_mut() noexcept { return tracker_; }
     [[nodiscard]] SyntheticSource&   source()         noexcept { return source_; }
     [[nodiscard]] const StageTimers& timers()   const noexcept { return timers_; }
 

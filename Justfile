@@ -281,6 +281,72 @@ cp107: build
         --scenario scenarios/control/fast_linear.toml --out logs/control
 
 # ---------------------------------------------------------------------------
+# Stage 15 — deliverables
+# ---------------------------------------------------------------------------
+
+# CP 15.5 — a release archive: the binary, the scenarios, the docs, the clips.
+#
+# "Download onto a clean machine, unzip, run." The archive carries everything a
+# run needs and nothing that has to be rebuilt, and it records WHICH BUILD it
+# came from — an artifact that cannot say which commit produced it is an
+# artifact whose numbers cannot be reproduced.
+package: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    hash=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+    dirty=$(git diff --quiet 2>/dev/null && echo "" || echo "-dirty")
+    name="sat-tracker-${hash}${dirty}-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+    stage="dist/$name"
+    rm -rf "$stage"
+    mkdir -p "$stage/bin" "$stage/docs" "$stage/clips"
+
+    cp "{{build_dir}}/sat-tracker" "$stage/bin/"
+    cp -r scenarios "$stage/"
+    cp README.md QUICKSTART.md "$stage/"
+    cp docs/ARCHITECTURE.md docs/RESULTS.md docs/MANUAL.md docs/METRICS.md        docs/DEMO.md "$stage/docs/"
+    # One clip, not all fourteen: the archive is for running the system, and
+    # the awkward cases are a test fixture that only means anything next to the
+    # test that interprets them.
+    cp tests/video/clips/screen_2000x2000_30fps.mp4 "$stage/clips/" 2>/dev/null || true
+
+    # Provenance. Without this an archive is a binary of unknown origin, and
+    # every number it produces is unattributable.
+    {
+        echo "sat-tracker"
+        echo "commit   : $hash$dirty"
+        echo "built    : $(uname -s) $(uname -m)"
+        echo "packaged : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo
+        echo "Start here: QUICKSTART.md"
+        echo "  ./bin/sat-tracker --help"
+        echo "  ./bin/sat-tracker --headless --scenario scenarios/baseline.toml --out logs"
+    } > "$stage/BUILD-INFO.txt"
+
+    (cd dist && tar czf "$name.tar.gz" "$name")
+    echo
+    echo "  dist/$name.tar.gz  ($(du -h "dist/$name.tar.gz" | cut -f1))"
+    echo "  Verify it on a clean machine with:  just verify-package dist/$name.tar.gz"
+
+# CP 15.5's other half — unpack an archive somewhere else and prove it runs.
+#
+# A package nobody has unpacked is a package that does not work. This extracts
+# into a temporary directory with NOTHING from the source tree on the path and
+# runs a scenario out of the archive's own copy.
+verify-package archive: 
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    tar xzf "{{archive}}" -C "$tmp"
+    root=$(find "$tmp" -maxdepth 1 -mindepth 1 -type d | head -1)
+    echo "unpacked to $root"
+    cat "$root/BUILD-INFO.txt"
+    echo
+    ( cd "$root" && ./bin/sat-tracker --headless         --scenario scenarios/baseline.toml --duration 3 --out logs --no-report )
+    echo
+    echo "  package verified: it runs from its own copy of everything."
+
+# ---------------------------------------------------------------------------
 # Stage 13 — acquisition strategy (design §10.5)
 # ---------------------------------------------------------------------------
 

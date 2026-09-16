@@ -35,7 +35,8 @@ import os
 import re
 import sys
 
-DOCS = ("README.md", "docs/MANUAL.md", "docs/RESULTS.md",
+DOCS = ("README.md", "QUICKSTART.md", "docs/DEMO.md",
+        "docs/MANUAL.md", "docs/RESULTS.md",
         "docs/ARCHITECTURE.md", "docs/METRICS.md")
 CROSS_REF_DOCS = ("docs/RESULTS.md", "docs/METRICS.md",
                   "docs/ARCHITECTURE.md", "docs/MANUAL.md")

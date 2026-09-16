@@ -163,6 +163,33 @@ It is worth nothing where the fixed configuration already copes and up to
 [`RESULTS.md` §7](RESULTS.md). That is the correct behaviour, not a
 disappointing result.
 
+### Search strategies (Stage 13)
+
+```bash
+just cp132                 # all four strategies, with the camp-and-wait crossover
+```
+
+`search.strategy` takes `spiral`, `raster`, `probabilistic` or `camp_and_wait`.
+The first two are open loop — their next look does not depend on what the
+previous ones found. The last two are not: `probabilistic` carries a 32×32
+belief that a fruitless look *reduces*, and `camp_and_wait` deliberately holds
+still, because past a certain target speed a repeating path comes back to you
+faster than you can sweep to it.
+
+### Packaging (Stage 15)
+
+```bash
+just package                                   # dist/sat-tracker-<commit>-<os>-<arch>.tar.gz
+just verify-package dist/sat-tracker-….tar.gz  # unpack elsewhere and prove it runs
+```
+
+The archive carries the binary, every scenario, the docs and one video clip,
+and a `BUILD-INFO.txt` naming the commit it came from — an artifact that cannot
+say which commit produced it is one whose numbers cannot be reproduced.
+`verify-package` extracts into a temporary directory with nothing from the
+source tree on the path and runs a scenario out of the archive's own copy,
+because a package nobody has unpacked is a package that does not work.
+
 ### Gates
 
 ```bash

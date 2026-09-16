@@ -325,8 +325,9 @@ every CI platform failed.
 
 ## 7. Status
 
-Stages 0–10 complete, Stage 12 through CP 12.3, plus CP 14.2 and CP 14.4.
-All five ★ gates passed.
+Stages 0–10 and 12 complete, Stage 13 through CP 13.2, Stage 14 complete apart
+from CP 14.2's AVX2 half, Stage 15's deliverables apart from the GUI polish.
+All five ★ gates passed. Stage 11 (machine learning) is out of scope.
 
 | Stage | | |
 |---|---|---|
@@ -343,9 +344,9 @@ All five ★ gates passed.
 | 10 | Control refinement | ✅ — 10.4 built, measured, and left **off** on purpose |
 | 11 | Machine learning | **out of scope** |
 | 12 | SAT supervisor | CP 12.1–12.3 ✅; CP 12.4 is ML, out of scope |
-| 13 | Acquisition strategy | not started |
-| 14 | Robustness and performance | CP 14.2, 14.4 done |
-| 15 | GUI, demo, deliverables | dashboard exists; packaging not started |
+| 13 | Acquisition strategy | CP 13.1–13.3 ✅ |
+| 14 | Robustness and performance | 14.1 ✅, 14.2 ✅ (scalar; AVX2 not done), 14.3 ✅, 14.4 ✅ |
+| 15 | GUI, demo, deliverables | 15.0 ✅, 15.2 ✅, 15.3 ✅ (script), 15.4 ✅, 15.5 ✅; 15.1's full panel set outstanding |
 
 Three Stage 10 checkpoints did not land the way the design expected them to,
 and each is recorded as a measured result rather than quietly implemented as

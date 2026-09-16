@@ -334,6 +334,81 @@ void Dashboard::draw_controls() {
         "Turn this off and the controller's output stops reaching the mount.\n"
         "The camera should immediately stop following (CP 1.8 acceptance (b)).");
 
+    // -----------------------------------------------------------------------
+    // CP 15.2: live algorithm switching.
+    //
+    // The checkpoint's criterion is literal — "you can turn feedforward off
+    // live and watch the error trace blow up" — and §14.1 gives it 90 seconds
+    // of the demo. It is the single most convincing thing in the presentation
+    // because the effect is instant and enormous: CP 10.1 measures 21.60 px
+    // against 2.53 px on a 200 px/s target, and the trace separates within a
+    // second of the click.
+    //
+    // These write through to the LIVE objects rather than rebuilding, which is
+    // the whole point: a rebuild would restart the run and the audience would
+    // see two runs rather than one loop changing its mind. Gains go through
+    // set_gains so the switch is bumpless (§10.6's property 2) — reset() would
+    // zero the integrator and kick the mount, which looks like the feedforward
+    // mattering when it is the reset.
+    // -----------------------------------------------------------------------
+    ImGui::Separator();
+    ImGui::TextColored(kMutedCol, "Algorithms — live (CP 15.2)");
+
+    {
+        ControlGains g = pipeline_.controller().az().gains();
+        bool ff_on = g.k_ff > 0.0;
+        ImGui::PushStyleColor(ImGuiCol_Text, ff_on ? ImVec4{0.4f, 0.9f, 0.4f, 1.0f}
+                                                   : ImVec4{1.0f, 0.45f, 0.35f, 1.0f});
+        if (ImGui::Checkbox("velocity feedforward (CP 10.1)", &ff_on)) {
+            g.k_ff = ff_on ? 1.0 : 0.0;
+            pipeline_.controller_mut().set_gains(g);
+        }
+        ImGui::PopStyleColor();
+        ImGui::SetItemTooltip(
+            "Pure feedback lags by roughly speed / bandwidth. On a 200 px/s\n"
+            "target that is v/kp = 25 px before any noise. Measured 21.60 px\n"
+            "off, 2.53 px on. Watch the tracking trace, not the camera view —\n"
+            "at row 12's 24.6 px/s the lag is 3 px and you will not see it.");
+
+        bool aw = g.anti_windup;
+        if (ImGui::Checkbox("anti-windup (CP 10.2)", &aw)) {
+            g.anti_windup = aw;
+            pipeline_.controller_mut().set_gains(g);
+        }
+        ImGui::SetItemTooltip(
+            "Conditional integration. Visible on an acquisition SLEW, not in\n"
+            "steady state: 7.50 px of overshoot with it, 12.06 px without,\n"
+            "against specification row 17's 10 px budget.");
+
+        bool smith = g.smith;
+        if (ImGui::Checkbox("Smith predictor (CP 10.4)", &smith)) {
+            g.smith = smith;
+            pipeline_.controller_mut().set_gains(g);
+        }
+        ImGui::SetItemTooltip(
+            "Built, measured, and OFF by default because it does not help on\n"
+            "this plant: 20 degrees of delay phase at crossover out of a margin\n"
+            "near 90. The loop is not delay-limited. Turning it on makes p95\n"
+            "worse, which is worth showing.");
+    }
+
+    {
+        TrackParams& tp = pipeline_.tracker_mut().params();
+        bool imm = tp.imm;
+        if (ImGui::Checkbox("IMM: CV/CA/CT (CP 10.5)", &imm)) {
+            // NEW tracks only. Swapping a live four-state filter for a
+            // six-state one mid-track would have to invent two states, and
+            // INV-9's principle applies to a state estimate as much as to a
+            // centroid.
+            tp.imm = imm;
+        }
+        ImGui::SetItemTooltip(
+            "Takes effect on the next track, not this one — swapping a live\n"
+            "4-state filter for a 6-state one would have to invent two states.\n"
+            "Worth 21.75 -> 17.15 px on the figure-8, and nothing on a straight\n"
+            "line. Load scenarios/control/figure8.toml to see it.");
+    }
+
     // --- damage, dialled live (§14.1, 3:00-5:00) ---------------------------
     ImGui::Separator();
     ImGui::TextColored(kMutedCol, "Damage — specification rows 21-25");

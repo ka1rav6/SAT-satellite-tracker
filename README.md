@@ -53,7 +53,7 @@ The harder conditions in that sweep do **not** all pass. 120 clutter sources
 cost two orders of magnitude of tracking accuracy, and in `lowlight` target
 loss reaches 86 %. Those are the honest edge of what is built, and they are
 recorded with measurements rather than descriptions:
-[`RESULTS.md` §9](docs/RESULTS.md).
+[`RESULTS.md` §10](docs/RESULTS.md).
 
 ---
 
@@ -61,10 +61,12 @@ recorded with measurements rather than descriptions:
 
 | File | Role |
 |---|---|
+| [`QUICKSTART.md`](QUICKSTART.md) | five minutes from a clean checkout to a tracked beacon |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | what is built, how it fits, why each decision went that way |
 | [`docs/RESULTS.md`](docs/RESULTS.md) | every measured number, with the command that reproduces it |
 | [`docs/MANUAL.md`](docs/MANUAL.md) | building, running, the CLI, the scenario format, the artifacts |
 | [`docs/METRICS.md`](docs/METRICS.md) | §13.1's metric definitions verbatim, then how each is computed |
+| [`docs/DEMO.md`](docs/DEMO.md) | the ten-minute demo, minute by minute, every step a command that exists |
 | [`docs/SAT-DESIGN.md`](docs/SAT-DESIGN.md) | the master specification and checkpoint roadmap |
 | [`docs/SAT-ML.md`](docs/SAT-ML.md) | the ML companion spec (not implemented) |
 | [`AGENTS.md`](AGENTS.md) | rules for contributors |

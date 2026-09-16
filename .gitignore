@@ -85,3 +85,4 @@ Thumbs.db
 
 # test output & cache
 Testing/
+dist/
