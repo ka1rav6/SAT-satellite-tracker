@@ -132,6 +132,10 @@ const std::vector<FieldSpec>& schema() {
          "integrator clamp in urad*s; caps how much history the integral term "
          "can hold, independently of the anti-windup"},
 
+        // --- [search] — design §10.5 ---------------------------------------
+        {"search.strategy", ValueKind::String, false, 0.0, 0.0, "",
+         "spiral | raster | probabilistic | camp_and_wait (CP 13.2)"},
+
         // --- [supervisor] — design §10.6 -----------------------------------
         {"supervisor.enabled", ValueKind::Bool, false, 0.0, 0.0, "",
          "the SAT supervisor (§10.6); changes the configuration at runtime, so "

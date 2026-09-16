@@ -210,6 +210,12 @@ struct Scenario {
     // --- [control] — design §10.4 ------------------------------------------
     ControlSpec control{};
 
+    // --- [search] — design §10.5 -------------------------------------------
+    /// spiral | raster | probabilistic | camp_and_wait. CP 13.2 benchmarks all
+    /// of them; `spiral` is the default because it starts where the target was
+    /// last seen, which is the best prior available.
+    std::string search_strategy = "spiral";
+
     // --- [supervisor] — design §10.6 ---------------------------------------
     /// Stage 12. Off by default: a run with the supervisor on and one with it
     /// off use different configurations and are therefore different claims.

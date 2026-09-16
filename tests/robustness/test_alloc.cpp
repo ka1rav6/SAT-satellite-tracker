@@ -39,10 +39,12 @@
 
 #include "app/fuzz.hpp"
 #include "metrics/collector.hpp"
+#include "search/grid.hpp"
 #include "scenario/schema.hpp"
 #include "engine/pipeline.hpp"
 #include "scenario/scenario.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -236,4 +238,131 @@ TEST_CASE("adversarial scenarios run, and none of them produces a NaN") {
         CHECK(m.lock_retention_rate >= 0.0);
         CHECK(m.lock_retention_rate <= 1.0);
     }
+}
+
+// ===========================================================================
+// CP 13.1 — the probability grid
+//
+// `just cp132` benchmarks the strategies end to end, which takes twenty
+// minutes. These are the properties the grid has to have for that benchmark to
+// mean anything, checked directly.
+// ===========================================================================
+TEST_CASE("CP 13.1: looking somewhere and seeing nothing reduces that region") {
+    // §10.5's whole claim in one assertion: "Looking somewhere and seeing
+    // nothing IS EVIDENCE; raster scans discard it."
+    const CameraGeometry cam = CameraGeometry::make(640, 480, 4.0, 3.0);
+    const ScreenGeometry scr = ScreenGeometry::make(2000, 2000, cam);
+
+    ProbabilityGrid g;
+    g.reset(GridParams{}, scr);
+
+    const Angle2 centre = scr.to_angle(Pixel2{1000.0, 1000.0});
+    // Both look points are well INSIDE the screen. A look near a corner has
+    // part of its field of view off-screen, so it covers fewer cells and
+    // carries less mass on a uniform grid — 0.0572 against 0.0768 — which is
+    // correct behaviour and would make this an unequal comparison.
+    const Angle2 elsewhere = scr.to_angle(Pixel2{1000.0, 400.0});
+
+    const double before_here  = g.mass_in_fov(centre, cam);
+    const double before_there = g.mass_in_fov(elsewhere, cam);
+    CHECK(before_here == doctest::Approx(before_there).epsilon(0.02));  // uniform
+
+    // Look at the centre four times, find nothing. No diffusion: this is the
+    // static claim.
+    for (int i = 0; i < 4; ++i) g.observe(centre, cam, /*found=*/false);
+
+    const double after_here  = g.mass_in_fov(centre, cam);
+    const double after_there = g.mass_in_fov(elsewhere, cam);
+    MESSAGE("belief in the searched region " << before_here << " -> " << after_here
+            << ";  elsewhere " << before_there << " -> " << after_there);
+
+    CHECK(after_here < 0.2 * before_here);    // ruled out, mostly
+    CHECK(after_there > before_there);        // and the rest got likelier
+}
+
+TEST_CASE("CP 13.1: a cell is never ruled out completely") {
+    // p_detect is 0.9, not 1, and the grid is multiplicative — so a cell
+    // approaches zero but must never reach it. Zero is absorbing: no amount of
+    // later evidence brings a cell back from it, and a beacon that wandered
+    // into a region searched early would become permanently unfindable.
+    //
+    // The same absorbing-zero argument as the IMM's mode probabilities.
+    const CameraGeometry cam = CameraGeometry::make(640, 480, 4.0, 3.0);
+    const ScreenGeometry scr = ScreenGeometry::make(2000, 2000, cam);
+    ProbabilityGrid g;
+    g.reset(GridParams{}, scr);
+
+    const Angle2 centre = scr.to_angle(Pixel2{1000.0, 1000.0});
+    for (int i = 0; i < 500; ++i) g.observe(centre, cam, false);
+
+    double lowest = 1.0;
+    for (int iy = 0; iy < ProbabilityGrid::NY; ++iy) {
+        for (int ix = 0; ix < ProbabilityGrid::NX; ++ix) {
+            lowest = std::min(lowest, static_cast<double>(g.cell(ix, iy)));
+        }
+    }
+    MESSAGE("lowest cell after 500 fruitless looks at the same place: " << lowest);
+    CHECK(lowest > 0.0);
+}
+
+TEST_CASE("CP 13.1: diffusion gives a searched region back over time") {
+    // The half that makes the strategy correct for a MOVING target. Ruling a
+    // tile out permanently is wrong: a tile checked ten seconds ago may hold
+    // the beacon now, because the beacon moved there.
+    const CameraGeometry cam = CameraGeometry::make(640, 480, 4.0, 3.0);
+    const ScreenGeometry scr = ScreenGeometry::make(2000, 2000, cam);
+    ProbabilityGrid g;
+    g.reset(GridParams{}, scr);
+
+    const Angle2 centre = scr.to_angle(Pixel2{1000.0, 1000.0});
+    for (int i = 0; i < 6; ++i) g.observe(centre, cam, false);
+    const double searched = g.mass_in_fov(centre, cam);
+
+    // Ten seconds at 200 px/s: the target could have crossed 2000 px, the whole
+    // screen.
+    for (int i = 0; i < 300; ++i) g.diffuse(1.0 / 30.0, 200.0);
+    const double recovered = g.mass_in_fov(centre, cam);
+
+    MESSAGE("belief in a searched region: " << searched
+            << " immediately after, " << recovered << " ten seconds later");
+    CHECK(recovered > 2.0 * searched);
+}
+
+TEST_CASE("CP 13.1: best_look maximises a RATE, not a probability") {
+    // §10.5's denominator, which is the whole design of best_look. Given two
+    // regions of similar belief, the nearer one wins — because the quantity a
+    // search maximises is probability PER SECOND, and crossing the screen for a
+    // marginally better cell is slower than a spiral and has no coverage
+    // guarantee either.
+    const CameraGeometry cam = CameraGeometry::make(640, 480, 4.0, 3.0);
+    const ScreenGeometry scr = ScreenGeometry::make(2000, 2000, cam);
+    ProbabilityGrid g;
+    g.reset(GridParams{}, scr);
+
+    // Two bumps: a slightly stronger one far away, a slightly weaker one near.
+    // reset_from_prior gives one bump, so the far one is built by ruling
+    // everything else out around it and then partially undoing that near the
+    // camera.
+    const Angle2 here = scr.to_angle(Pixel2{300.0, 300.0});
+    const Angle2 far  = scr.to_angle(Pixel2{1800.0, 1800.0});
+
+    // Rule out a band in the middle so the two ends carry the belief.
+    for (int i = 0; i < 6; ++i) {
+        g.observe(scr.to_angle(Pixel2{1000.0, 1000.0}), cam, false);
+    }
+
+    const double mass_near = g.mass_in_fov(here, cam);
+    const double mass_far  = g.mass_in_fov(far,  cam);
+    REQUIRE(mass_near > 0.0);
+    REQUIRE(mass_far  > 0.0);
+
+    // Standing at `here`, with a mount that takes real time to cross: the
+    // choice must stay nearby rather than committing to the far end for a
+    // comparable payoff.
+    const Angle2 chosen = g.best_look(here, cam, /*max_rate=*/87266.0);
+    const double d_near = std::hypot(chosen.x - here.x, chosen.y - here.y);
+    const double d_far  = std::hypot(chosen.x - far.x,  chosen.y - far.y);
+    MESSAGE("near-end mass " << mass_near << ", far-end mass " << mass_far
+            << "; chose a point " << std::string(d_near < d_far ? "near" : "far"));
+    CHECK(d_near < d_far);
 }

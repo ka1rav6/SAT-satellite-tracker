@@ -41,6 +41,7 @@
 
 #include "core/frames.hpp"
 #include "core/units.hpp"
+#include "search/grid.hpp"
 
 #include <cstdint>
 
@@ -131,7 +132,12 @@ struct SearchParams {
 // ---------------------------------------------------------------------------
 class SearchPattern {
 public:
-    void reset(const SearchParams& p, Angle2 centre) noexcept;
+    /// `screen` is needed only by the Probabilistic strategy's grid; the
+    /// open-loop patterns ignore it. Passed always rather than conditionally,
+    /// because a strategy switched on at runtime (the supervisor can do that)
+    /// must not find its grid unconfigured.
+    void reset(const SearchParams& p, Angle2 centre,
+               const ScreenGeometry& screen = ScreenGeometry{}) noexcept;
 
     /// Re-centre without restarting the pattern's phase. Used when the target
     /// is lost and the last known position is a far better prior than the
@@ -151,6 +157,29 @@ public:
     // -----------------------------------------------------------------------
     Angle2 step(double dt, Angle2 boresight) noexcept;
 
+    // -----------------------------------------------------------------------
+    // CP 13.1/13.2: the two closed-loop strategies.
+    //
+    // Spiral and Raster are OPEN LOOP — their next look does not depend on what
+    // the previous ones found — so they need nothing from the caller but dt.
+    // Probabilistic and CampAndWait do, which is why they get their own entry
+    // point rather than a flag inside step():
+    //
+    //   Probabilistic  needs the grid updated with what this look saw, and the
+    //                  camera geometry to know what "this look" covered.
+    //   CampAndWait    needs to know whether anything has been seen at all.
+    //
+    // A caller that uses step() for a closed-loop strategy gets the open-loop
+    // behaviour rather than silently-wrong closed-loop behaviour, which is the
+    // failure mode worth designing out.
+    // -----------------------------------------------------------------------
+    Angle2 step_informed(double dt, Angle2 boresight, const CameraGeometry& cam,
+                         bool detected_this_frame, double target_speed_px_s,
+                         double max_rate_urad_s) noexcept;
+
+    [[nodiscard]] ProbabilityGrid&       grid()       noexcept { return grid_; }
+    [[nodiscard]] const ProbabilityGrid& grid() const noexcept { return grid_; }
+
     /// The current look point, without advancing.
     [[nodiscard]] Angle2 look() const noexcept { return look_; }
 
@@ -166,7 +195,9 @@ private:
     [[nodiscard]] bool   in_bounds(Angle2 a) const noexcept;
     [[nodiscard]] int    max_ring() const noexcept;
 
-    SearchParams p_{};
+    SearchParams    p_{};
+    ProbabilityGrid grid_{};
+    double          regrid_accum_ = 0.0;
     Angle2 centre_{};
     Angle2 look_{};
     int    index_    = 0;

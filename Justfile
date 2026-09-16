@@ -280,6 +280,21 @@ cp107: build
     @python3 tools/cp107_sweep.py --binary "{{build_dir}}/sat-tracker" \
         --scenario scenarios/control/fast_linear.toml --out logs/control
 
+# ---------------------------------------------------------------------------
+# Stage 13 — acquisition strategy (design §10.5)
+# ---------------------------------------------------------------------------
+
+# CP 13.2 — all four search strategies benchmarked, with the camp-and-wait
+# crossover plotted against target speed.
+#
+# Writes logs/search/cp132.svg. Takes about twenty minutes: 160 runs of 45 s
+# each, because a cold acquisition metric needs many seeds to mean anything —
+# P(beacon visible at t = 0) is 7.68%, so a single run mostly measures where
+# the beacon happened to start.
+cp132: build
+    @python3 tools/cp132_sweep.py --binary "{{build_dir}}/sat-tracker" \
+        --scenario scenarios/search/cold.toml --out logs/search
+
 # CP 14.1 ★ — 5,000 random scenarios: no crash, no hang, no NaN.
 #
 # Every parameter across its legal range, with one draw in six taking an

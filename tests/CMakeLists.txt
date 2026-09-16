@@ -161,7 +161,7 @@ set_tests_properties(supervisor PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
 # trusting rather than using.
 sat_add_test(robustness
     SOURCES robustness/test_alloc.cpp
-    DEPS    sat_core sat_engine sat_scenario sat_app sat_metrics
+    DEPS    sat_core sat_engine sat_scenario sat_app sat_metrics sat_search
 )
 # A longer budget than the control suite: this one runs 40 fuzzed scenarios and
 # six adversarial ones on top of two full runs, and several of the fuzzed

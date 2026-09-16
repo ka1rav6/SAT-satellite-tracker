@@ -1,0 +1,100 @@
+# scenarios/search/cold.toml — CP 13.2's acquisition benchmark base.
+#
+# Spec row 11's "random" initial position, which is the condition the
+# COLD acquisition metric is defined for: the beacon starts anywhere on the
+# 2000 x 2000 screen and the camera starts at its centre, so P(visible at t=0)
+# is 7.68% (§10.5's geometry).
+#
+# No clutter and no decoy. The question here is "how long until the search
+# finds it", and a run that spends its time locked onto a clutter source is
+# answering a different one — that cost is measured separately, in
+# tests/metrics/test_spec_run.cpp and in scenarios/adversarial/decoy_swarm.toml.
+#
+# The MOTION is supplied by tools/cp132_sweep.py, which appends a circular path
+# at the speed being benchmarked. A circle rather than a line because
+# camp-and-wait's whole premise is a REPEATING path: a target on a straight
+# line leaves and never comes back, and waiting for it is not a strategy, it is
+# giving up.
+
+[meta]
+name        = "search_cold"
+description = "CP 13.2: random start, cold acquisition, motion appended by the sweep"
+
+[input]
+mode = "synthetic"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 45
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+exposure_ms    = 5.0
+blur_substeps  = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+kind       = "target"
+intensity  = 120.0
+size_px    = 10
+initial_px = "random"               # row 11 — the cold-acquisition condition
+shape.type = "square"
+
+[gimbal]
+max_pan_dps      = 5.0
+max_tilt_dps     = 5.0
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 20.0
+salt_pepper    = 0.10
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"
+
+[disturbance]
+jitter_px_per_frame = 0.0
+
+[clutter]
+static_sources = 0
+decoy_beacons  = 0
+
+[search]
+strategy = "spiral"                 # CP 13.2 varies this
+
+[control]
+kp   = 8.0
+ki   = 2.0
+kd   = 0.15
+k_ff = 1.0
+
+[ai]
+enabled          = true
+fallback_on_fail = true
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

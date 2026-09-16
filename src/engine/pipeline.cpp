@@ -162,7 +162,7 @@ void Pipeline::build_stage6() {
                                                 cfg_.search.overlap);
         cfg_.search.strategy = keep;
     }
-    search_.reset(cfg_.search, cfg_.initial_boresight);
+    search_.reset(cfg_.search, cfg_.initial_boresight, cfg_.synthetic.screen);
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +257,11 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     cfg.gains.smith       = sc.control.smith;
     cfg.gains.smith_rate_blend = sc.control.smith_rate_blend;
     cfg.tracking.imm      = sc.tracking_imm;
+    cfg.search.strategy =
+          sc.search_strategy == "raster"        ? SearchStrategy::Raster
+        : sc.search_strategy == "probabilistic" ? SearchStrategy::Probabilistic
+        : sc.search_strategy == "camp_and_wait" ? SearchStrategy::CampAndWait
+                                                : SearchStrategy::Spiral;
     cfg.supervisor.enabled          = sc.supervisor_enabled;
     cfg.supervisor.min_dwell_frames = sc.supervisor_dwell;
     cfg.supervisor.ema_tau_frames   = sc.supervisor_ema_tau;
@@ -880,7 +885,15 @@ bool Pipeline::step() {
             search_.recentre(tracker_.has_track() ? trk.position() : search_.centre());
             search_.restart();
         }
-        aim = search_.step(frame_dt, commanded);
+        // CP 13.1/13.2: the closed-loop strategies need to know what this look
+        // saw and how fast the target can move. The open-loop ones ignore both
+        // and step_informed forwards to step() for them, so there is one call
+        // site rather than a branch that can get out of step with the enum.
+        aim = search_.step_informed(frame_dt, commanded, cfg_.synthetic.camera,
+                                    rec.detected, cfg_.max_target_speed_urad_s
+                                        / std::max(1e-9, cfg_.synthetic.camera.ifov_urad()),
+                                    std::min(cfg_.pan.max_rate_urad_s,
+                                             cfg_.tilt.max_rate_urad_s));
     }
     rec.aim = aim;
 

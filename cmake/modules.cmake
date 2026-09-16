@@ -173,6 +173,7 @@ sat_add_module(sat_tracking
 # search — acquisition patterns now, the probability grid at CP 13.1.
 sat_add_module(sat_search
     SOURCES
+        src/search/grid.cpp
         src/search/pattern.cpp
     PUBLIC_DEPS sat_core
 )

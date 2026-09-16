@@ -122,8 +122,10 @@ double full_sweep_time_s(const SearchParams& p, double max_rate_urad_s) noexcept
 // ---------------------------------------------------------------------------
 // SearchPattern
 // ---------------------------------------------------------------------------
-void SearchPattern::reset(const SearchParams& p, Angle2 centre) noexcept {
+void SearchPattern::reset(const SearchParams& p, Angle2 centre,
+                          const ScreenGeometry& screen) noexcept {
     p_       = p;
+    grid_.reset(GridParams{}, screen);
     centre_  = centre;
     index_   = 0;
     visited_ = 0;
@@ -237,6 +239,73 @@ Angle2 SearchPattern::step(double dt, Angle2 boresight) noexcept {
         if (dwell_ >= p_.dwell_s) advance();
     }
     return look_;
+}
+
+
+// ---------------------------------------------------------------------------
+// step_informed — CP 13.1's probabilistic search and CP 13.2's camp-and-wait.
+// ---------------------------------------------------------------------------
+Angle2 SearchPattern::step_informed(double dt, Angle2 boresight,
+                                    const CameraGeometry& cam,
+                                    bool detected_this_frame,
+                                    double target_speed_px_s,
+                                    double max_rate_urad_s) noexcept {
+    switch (p_.strategy) {
+        case SearchStrategy::Probabilistic: {
+            // Fold in what this frame saw BEFORE choosing where to go next.
+            // Doing it after would choose a look using a belief that does not
+            // yet know the current look found nothing, and the pattern would
+            // re-select the cell it is already staring at.
+            grid_.observe(boresight, cam, detected_this_frame);
+            grid_.diffuse(dt, target_speed_px_s);
+
+            // The look is only re-chosen once the dwell has expired, exactly as
+            // the open-loop strategies re-choose only on advance(). Re-deciding
+            // every frame would make the mount chase a belief that moves
+            // faster than the mount does — the grid updates at 30 Hz and a
+            // full-field slew takes the better part of a second.
+            const double tol = p_.arrive_frac * std::min(p_.step.x, p_.step.y);
+            if (!arrived_ && (boresight - look_).norm() <= tol) arrived_ = true;
+            if (arrived_) {
+                dwell_ += dt;
+                if (dwell_ >= p_.dwell_s) {
+                    look_    = grid_.best_look(boresight, cam, max_rate_urad_s);
+                    dwell_   = 0.0;
+                    arrived_ = false;
+                    ++visited_;
+                }
+            }
+            return look_;
+        }
+
+        case SearchStrategy::CampAndWait:
+            // ---------------------------------------------------------------
+            // Do nothing, on purpose.
+            //
+            // §10.5: "for a beacon on a repeating path, past a certain speed,
+            // staying still beats searching." The argument is a race. A search
+            // covers the screen in sweep_time = 25 tiles at ~0.75 s each, about
+            // 18.7 s at 5 deg/s (CP 6.7 measures it). A target on a closed path
+            // returns to any given point once per lap. If the lap is shorter
+            // than the sweep, waiting wins — and waiting is FREE, while
+            // searching spends the mount's whole rate budget and smears every
+            // frame it exposes while slewing.
+            //
+            // The crossover is what CP 13.2 measures, and it is a real result
+            // precisely because the naive answer ("always search") is wrong.
+            //
+            // The look is held at the centre it was reset to, which is the last
+            // known position when a track was lost and the screen centre on a
+            // cold start.
+            return look_;
+
+        case SearchStrategy::Spiral:
+        case SearchStrategy::Raster:
+        case SearchStrategy::Adaptive:
+        default:
+            // Open loop: nothing observed changes the next look.
+            return step(dt, boresight);
+    }
 }
 
 }  // namespace sat

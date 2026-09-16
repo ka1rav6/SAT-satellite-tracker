@@ -437,6 +437,11 @@ Result<Scenario> parse_scenario(std::string_view toml_text, std::string_view nam
     get_bool  (root, "control.smith",       sc.control.smith,       v);
     get_double(root, "control.smith_rate_blend", sc.control.smith_rate_blend, v);
 
+    // --- [search] — design §10.5 -------------------------------------------
+    get_string(root, "search.strategy", sc.search_strategy, v);
+    v.check_enum("search.strategy", sc.search_strategy,
+                 {"spiral", "raster", "probabilistic", "camp_and_wait"}, 0);
+
     // --- [supervisor] — design §10.6 ---------------------------------------
     get_bool  (root, "supervisor.enabled",          sc.supervisor_enabled, v);
     get_int   (root, "supervisor.min_dwell_frames", sc.supervisor_dwell,   v);
