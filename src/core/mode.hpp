@@ -28,9 +28,16 @@ namespace sat {
 /// Mode FSM state (design §10.4). Values are logged in centroid.csv and hashed
 /// into the reproducibility fingerprint, so they are fixed.
 enum class TrackMode : uint8_t {
-    Idle = 0, Search, Detect, Acquire, Track, Reacquire, Handover, Safe
+  Idle = 0,
+  Search,
+  Detect,
+  Acquire,
+  Track,
+  Reacquire,
+  Handover,
+  Safe
 };
 
-[[nodiscard]] const char* track_mode_name(TrackMode m) noexcept;
+[[nodiscard]] const char *track_mode_name(TrackMode m) noexcept;
 
-}  // namespace sat
+} // namespace sat

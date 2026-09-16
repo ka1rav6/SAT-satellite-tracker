@@ -9,4 +9,4 @@ namespace sat {
 
 bool g_in_frame = false;
 
-}  // namespace sat
+} // namespace sat

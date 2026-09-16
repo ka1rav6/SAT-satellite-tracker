@@ -33,92 +33,95 @@ namespace sat {
 // ---------------------------------------------------------------------------
 class Arena {
 public:
-    Arena() = default;
+  Arena() = default;
 
-    /// Reserve `bytes` of storage. This is the allocation INV-4 permits, and it
-    /// must happen before the loop starts. Calling reserve() again releases the
-    /// old block, so it is a load-time operation only.
-    explicit Arena(size_t bytes) { reserve(bytes); }
+  /// Reserve `bytes` of storage. This is the allocation INV-4 permits, and it
+  /// must happen before the loop starts. Calling reserve() again releases the
+  /// old block, so it is a load-time operation only.
+  explicit Arena(size_t bytes) { reserve(bytes); }
 
-    void reserve(size_t bytes) {
-        // Over-align to 64 bytes so every sub-allocation can be cache-line and
-        // AVX2 aligned without the caller thinking about it.
-        storage_ = std::make_unique<std::byte[]>(bytes + kAlign);
-        base_    = align_up(storage_.get(), kAlign);
-        // The extra kAlign bytes we asked for cover whatever alignment moved us.
-        capacity_ = bytes;
-        offset_   = 0;
-        high_water_ = 0;
+  void reserve(size_t bytes) {
+    // Over-align to 64 bytes so every sub-allocation can be cache-line and
+    // AVX2 aligned without the caller thinking about it.
+    storage_ = std::make_unique<std::byte[]>(bytes + kAlign);
+    base_ = align_up(storage_.get(), kAlign);
+    // The extra kAlign bytes we asked for cover whatever alignment moved us.
+    capacity_ = bytes;
+    offset_ = 0;
+    high_water_ = 0;
+  }
+
+  /// Allocate `count` objects of type T. Returns a span so the caller carries
+  /// the length with the pointer -- most out-of-bounds bugs in image kernels
+  /// are a pointer that lost its length.
+  ///
+  /// On exhaustion this returns an EMPTY span rather than throwing. Callers in
+  /// the frame path check `!s.empty()`; the sizing is validated once at
+  /// startup by a dry run, so an empty span in production means the arena was
+  /// mis-sized, which the metrics layer reports rather than crashing a demo.
+  template <typename T>
+  [[nodiscard]] std::span<T> alloc(size_t count) noexcept {
+    static_assert(std::is_trivially_default_constructible_v<T>,
+                  "Arena hands out raw storage; T must not need a constructor");
+    static_assert(std::is_trivially_destructible_v<T>,
+                  "Arena never runs destructors; T must not need one");
+    if (count == 0)
+      return {};
+
+    const size_t align = alignof(T) < kMinAlign ? kMinAlign : alignof(T);
+    size_t cur = reinterpret_cast<size_t>(base_) + offset_;
+    const size_t pad = (align - (cur % align)) % align;
+    const size_t need = pad + count * sizeof(T);
+
+    if (offset_ + need > capacity_) {
+      ++exhaustions_;
+      return {};
     }
+    std::byte *p = base_ + offset_ + pad;
+    offset_ += need;
+    if (offset_ > high_water_)
+      high_water_ = offset_;
+    return std::span<T>(reinterpret_cast<T *>(p), count);
+  }
 
-    /// Allocate `count` objects of type T. Returns a span so the caller carries
-    /// the length with the pointer -- most out-of-bounds bugs in image kernels
-    /// are a pointer that lost its length.
-    ///
-    /// On exhaustion this returns an EMPTY span rather than throwing. Callers in
-    /// the frame path check `!s.empty()`; the sizing is validated once at
-    /// startup by a dry run, so an empty span in production means the arena was
-    /// mis-sized, which the metrics layer reports rather than crashing a demo.
-    template <typename T>
-    [[nodiscard]] std::span<T> alloc(size_t count) noexcept {
-        static_assert(std::is_trivially_default_constructible_v<T>,
-                      "Arena hands out raw storage; T must not need a constructor");
-        static_assert(std::is_trivially_destructible_v<T>,
-                      "Arena never runs destructors; T must not need one");
-        if (count == 0) return {};
+  /// Allocate and zero. Slightly slower; use it where the kernel assumes a
+  /// clean buffer (summed-area table borders, accumulator arrays).
+  template <typename T>
+  [[nodiscard]] std::span<T> alloc_zeroed(size_t count) noexcept {
+    auto s = alloc<T>(count);
+    if (!s.empty())
+      std::memset(s.data(), 0, s.size_bytes());
+    return s;
+  }
 
-        const size_t align = alignof(T) < kMinAlign ? kMinAlign : alignof(T);
-        size_t       cur   = reinterpret_cast<size_t>(base_) + offset_;
-        const size_t pad   = (align - (cur % align)) % align;
-        const size_t need  = pad + count * sizeof(T);
+  /// Release everything. O(1): it is one store. Called once per frame.
+  void reset() noexcept { offset_ = 0; }
 
-        if (offset_ + need > capacity_) {
-            ++exhaustions_;
-            return {};
-        }
-        std::byte* p = base_ + offset_ + pad;
-        offset_ += need;
-        if (offset_ > high_water_) high_water_ = offset_;
-        return std::span<T>(reinterpret_cast<T*>(p), count);
-    }
+  // --- introspection, used by the metrics report and the sizing tests -----
+  [[nodiscard]] size_t capacity() const noexcept { return capacity_; }
+  [[nodiscard]] size_t used() const noexcept { return offset_; }
+  [[nodiscard]] size_t high_water() const noexcept { return high_water_; }
+  [[nodiscard]] uint64_t exhaustions() const noexcept { return exhaustions_; }
 
-    /// Allocate and zero. Slightly slower; use it where the kernel assumes a
-    /// clean buffer (summed-area table borders, accumulator arrays).
-    template <typename T>
-    [[nodiscard]] std::span<T> alloc_zeroed(size_t count) noexcept {
-        auto s = alloc<T>(count);
-        if (!s.empty()) std::memset(s.data(), 0, s.size_bytes());
-        return s;
-    }
-
-    /// Release everything. O(1): it is one store. Called once per frame.
-    void reset() noexcept { offset_ = 0; }
-
-    // --- introspection, used by the metrics report and the sizing tests -----
-    [[nodiscard]] size_t capacity()   const noexcept { return capacity_; }
-    [[nodiscard]] size_t used()       const noexcept { return offset_; }
-    [[nodiscard]] size_t high_water() const noexcept { return high_water_; }
-    [[nodiscard]] uint64_t exhaustions() const noexcept { return exhaustions_; }
-
-    /// Current bump position, for ScopedArena.
-    [[nodiscard]] size_t mark() const noexcept { return offset_; }
-    void release_to(size_t m) noexcept { offset_ = m; }
+  /// Current bump position, for ScopedArena.
+  [[nodiscard]] size_t mark() const noexcept { return offset_; }
+  void release_to(size_t m) noexcept { offset_ = m; }
 
 private:
-    static constexpr size_t kAlign    = 64;   // cache line / AVX-512 friendly
-    static constexpr size_t kMinAlign = 32;   // AVX2 friendly for every sub-alloc
+  static constexpr size_t kAlign = 64;    // cache line / AVX-512 friendly
+  static constexpr size_t kMinAlign = 32; // AVX2 friendly for every sub-alloc
 
-    static std::byte* align_up(std::byte* p, size_t a) noexcept {
-        const size_t v = reinterpret_cast<size_t>(p);
-        return reinterpret_cast<std::byte*>((v + a - 1) & ~(a - 1));
-    }
+  static std::byte *align_up(std::byte *p, size_t a) noexcept {
+    const size_t v = reinterpret_cast<size_t>(p);
+    return reinterpret_cast<std::byte *>((v + a - 1) & ~(a - 1));
+  }
 
-    std::unique_ptr<std::byte[]> storage_;
-    std::byte* base_       = nullptr;
-    size_t     capacity_   = 0;
-    size_t     offset_     = 0;
-    size_t     high_water_ = 0;
-    uint64_t   exhaustions_ = 0;
+  std::unique_ptr<std::byte[]> storage_;
+  std::byte *base_ = nullptr;
+  size_t capacity_ = 0;
+  size_t offset_ = 0;
+  size_t high_water_ = 0;
+  uint64_t exhaustions_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -131,18 +134,20 @@ private:
 // ---------------------------------------------------------------------------
 class ScopedArena {
 public:
-    explicit ScopedArena(Arena& a) noexcept : arena_(a), mark_(a.mark()) {}
-    ~ScopedArena() { arena_.release_to(mark_); }
+  explicit ScopedArena(Arena &a) noexcept : arena_(a), mark_(a.mark()) {}
+  ~ScopedArena() { arena_.release_to(mark_); }
 
-    ScopedArena(const ScopedArena&)            = delete;
-    ScopedArena& operator=(const ScopedArena&) = delete;
+  ScopedArena(const ScopedArena &) = delete;
+  ScopedArena &operator=(const ScopedArena &) = delete;
 
-    [[nodiscard]] Arena& get() noexcept { return arena_; }
-    operator Arena&() noexcept { return arena_; }   // NOLINT(google-explicit-constructor)
+  [[nodiscard]] Arena &get() noexcept { return arena_; }
+  operator Arena &() noexcept {
+    return arena_;
+  } // NOLINT(google-explicit-constructor)
 
 private:
-    Arena& arena_;
-    size_t mark_;
+  Arena &arena_;
+  size_t mark_;
 };
 
 // ---------------------------------------------------------------------------
@@ -153,22 +158,22 @@ private:
 // arena is reset at the top of every frame.
 // ---------------------------------------------------------------------------
 struct ArenaSet {
-    Arena persistent;   ///< world, masks, bias tables -- lives for the whole run
-    Arena frame;        ///< per-frame scratch; reset() every frame
-    Arena video;        ///< decoded-frame ring backing store (video modes only)
-    Arena report;       ///< metric accumulation and report generation
+  Arena persistent; ///< world, masks, bias tables -- lives for the whole run
+  Arena frame;      ///< per-frame scratch; reset() every frame
+  Arena video;      ///< decoded-frame ring backing store (video modes only)
+  Arena report;     ///< metric accumulation and report generation
 
-    static constexpr size_t kDefaultPersistentBytes = 24u << 20;   // 24 MB
-    static constexpr size_t kDefaultFrameBytes      =  8u << 20;   //  8 MB
-    static constexpr size_t kDefaultVideoBytes      = 48u << 20;   // 48 MB
-    static constexpr size_t kDefaultReportBytes     =  8u << 20;   //  8 MB
+  static constexpr size_t kDefaultPersistentBytes = 24u << 20; // 24 MB
+  static constexpr size_t kDefaultFrameBytes = 8u << 20;       //  8 MB
+  static constexpr size_t kDefaultVideoBytes = 48u << 20;      // 48 MB
+  static constexpr size_t kDefaultReportBytes = 8u << 20;      //  8 MB
 
-    void reserve_defaults() {
-        persistent.reserve(kDefaultPersistentBytes);
-        frame.reserve(kDefaultFrameBytes);
-        video.reserve(kDefaultVideoBytes);
-        report.reserve(kDefaultReportBytes);
-    }
+  void reserve_defaults() {
+    persistent.reserve(kDefaultPersistentBytes);
+    frame.reserve(kDefaultFrameBytes);
+    video.reserve(kDefaultVideoBytes);
+    report.reserve(kDefaultReportBytes);
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -188,10 +193,10 @@ extern bool g_in_frame;
 /// RAII guard that marks the frame-processing window for the allocation trap.
 class FrameScope {
 public:
-    FrameScope()  noexcept { g_in_frame = true;  }
-    ~FrameScope() noexcept { g_in_frame = false; }
-    FrameScope(const FrameScope&)            = delete;
-    FrameScope& operator=(const FrameScope&) = delete;
+  FrameScope() noexcept { g_in_frame = true; }
+  ~FrameScope() noexcept { g_in_frame = false; }
+  FrameScope(const FrameScope &) = delete;
+  FrameScope &operator=(const FrameScope &) = delete;
 };
 
-}  // namespace sat
+} // namespace sat

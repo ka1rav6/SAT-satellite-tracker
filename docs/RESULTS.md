@@ -441,20 +441,29 @@ its trigger … that turns 'adaptive' from a claim into data."*
 `scenarios/supervisor/weather_change.toml` — fog at 10 s, clear at 25 s — with
 the supervisor off and on:
 
-| Beacon | Retention (fixed → supervised) | Best metric moved |
-|---|---|---|
-| intensity 120 | 99.8 % → 99.8 % | nothing; fogged SNR lands in the middle band |
-| intensity 60 | 93.8 % → **97.6 %** | centroiding 64.2 → 39.3 px |
-| intensity 40 | 77.4 % → **86.3 %** | centroiding 125.7 → 97.5 px |
-| intensity 30 | 64.7 % → **80.1 %** | tracking 16.42 → **5.42 px** |
+CP 12.3's Monte Carlo — 5 seeds per cell, fixed configuration → supervised:
+
+| Beacon | Lock retention | Tracking RMS | Centroiding RMSE |
+|---|---|---|---|
+| intensity 80 | 99.38 → 99.60 % | 1.22 → 1.23 px | 18.43 → 12.81 px |
+| intensity 60 | 94.35 → **98.03 %** | 1.31 → 1.38 px | 61.13 → 34.75 px |
+| intensity 50 | 87.17 → **94.33 %** | 1.60 → 1.73 px | 93.54 → 59.02 px |
+| intensity 40 | 77.43 → **88.05 %** | 2.23 → 2.66 px | 123.58 → 86.64 px |
+| intensity 30 | 56.57 → **80.35 %** | 59.02 → **4.86 px** | 183.91 → 112.84 px |
+| intensity 25 | 65.08 → **74.78 %** | 152.23 → **22.25 px** | 167.22 → 126.13 px |
 
 The gain grows as conditions worsen and is **zero** where they do not. That is
 the correct behaviour, not a disappointing result: a supervisor that adapts
 when there is nothing to adapt to would be a worse system.
 
+The tracking column is where it matters most. At intensity 30 the fixed
+configuration is losing the beacon and following something else — 59 px RMS —
+and the adaptation brings it back to 4.86 px. That is the difference between
+tracking and not tracking, not a refinement.
+
 At spec row 7's nominal brightness the fogged SNR is ≈ 12, inside §10.6's
 middle band (8–15) where the rule table deliberately does nothing — neither
-rule's evidence applies.
+rule's evidence applies, and retention is 99.8 % either way.
 
 ### The three mandatory properties (§10.6)
 

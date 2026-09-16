@@ -66,7 +66,7 @@ def main(argv):
                 acc[sup][1] += t / len(SEEDS)
                 acc[sup][2] += c / len(SEEDS)
         rows.append((inten, acc[False], acc[True]))
-        print(f"  {inten:6d}      {acc[False][0]:6.2f} %% -> {acc[True][0]:6.2f} %%"
+        print(f"  {inten:6d}      {acc[False][0]:6.2f} % -> {acc[True][0]:6.2f} %"
               f"       {acc[False][1]:6.2f} -> {acc[True][1]:6.2f}"
               f"    {acc[False][2]:7.2f} -> {acc[True][2]:7.2f}")
 
