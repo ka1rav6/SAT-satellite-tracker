@@ -128,8 +128,9 @@ public:
     [[nodiscard]] const Clock&      clock()    const noexcept { return clock_; }
     [[nodiscard]] RngSet&           rng()            noexcept { return rng_; }
 
-    /// The float render, before quantisation. Exposed for tests and for the
-    /// centroid-accuracy harness of Stage 9, which needs the undegraded image.
+    /// The float render, before the damage chain and before quantisation.
+    /// Exposed for tests and for the centroid-accuracy harness of Stage 9,
+    /// which needs the undegraded image.
     [[nodiscard]] std::span<const float> radiance() const noexcept { return radiance_; }
 
 private:

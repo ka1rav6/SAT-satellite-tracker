@@ -123,6 +123,7 @@ sat_add_module(sat_camera
 # boresight, never on emitter positions.
 sat_add_module(sat_degrade
     SOURCES
+        src/degrade/fast_normal.cpp
         src/degrade/noise.cpp
         src/degrade/sensor.cpp
         src/degrade/disturbance.cpp
@@ -166,6 +167,7 @@ sat_add_module(sat_tracking
     SOURCES
         src/tracking/kalman.cpp
         src/tracking/imm.cpp
+        src/tracking/priority.cpp
         src/tracking/track.cpp
     PUBLIC_DEPS sat_core sat_perception Eigen3::Eigen
 )
@@ -392,6 +394,7 @@ endif()
 # ===========================================================================
 sat_add_module(sat_app
     SOURCES
+        src/app/bench_kernels.cpp
         src/app/fuzz.cpp
         src/app/headless.cpp
         src/app/timestamp.cpp

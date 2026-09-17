@@ -110,6 +110,17 @@ public:
     void apply_defects(std::span<uint8_t> img) const noexcept;
 
     [[nodiscard]] bool built() const noexcept { return !prnu_.empty(); }
+
+    /// Raw map access, so the fused damage chain can read both maps inside its
+    /// single pass instead of calling apply_gain_offset as a separate one.
+    /// Null when the maps have not been built (a video mode, INV-8).
+    [[nodiscard]] const float* prnu_map() const noexcept {
+        return prnu_.empty() ? nullptr : prnu_.data();
+    }
+    [[nodiscard]] const float* fpn_map() const noexcept {
+        return fpn_.empty() ? nullptr : fpn_.data();
+    }
+    [[nodiscard]] size_t map_size() const noexcept { return prnu_.size(); }
     [[nodiscard]] size_t hot_count()  const noexcept { return hot_.size(); }
     [[nodiscard]] size_t dead_count() const noexcept { return dead_.size(); }
 

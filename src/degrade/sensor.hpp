@@ -32,6 +32,15 @@ public:
     /// §6.1 step A4/A5); after this, applying the chain allocates nothing.
     void build(const Scenario& sc, int width, int height, RngSet& rng);
 
+    /// Configure from parameters directly, with no Scenario.
+    ///
+    /// For benchmarks and unit tests, which want a specific noise configuration
+    /// without constructing a whole scenario to get it. build() is what a run
+    /// uses, because INV-8's answer has to come from the scenario's own
+    /// damage_enabled() and not from a call site's opinion.
+    void configure(const NoiseParams& np, Atmosphere atm, bool enabled,
+                   int width, int height, RngSet& rng);
+
     /// Run the whole chain: float radiance in, 8-bit frame out.
     ///
     /// `radiance` is modified in place (it is scratch owned by the source), and

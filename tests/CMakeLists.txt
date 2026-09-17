@@ -178,7 +178,8 @@ target_compile_definitions(test_robustness PRIVATE
 # --- CP 3.3-3.5: the motion algebra and its analytic derivatives ------------
 sat_add_test(motion
     SOURCES motion/test_motion.cpp
-    DEPS    sat_core sat_world
+            motion/test_edge_behaviour.cpp
+    DEPS    sat_core sat_world sat_scenario
 )
 
 # --- CP 5.1-5.8: the perception kernels, against OpenCV oracles (§16) -------
@@ -205,6 +206,7 @@ target_compile_definitions(test_schema PRIVATE
 # --- CP 4.4-4.9: the degradation chain and the disturbances ----------------
 sat_add_test(degrade
     SOURCES degrade/test_noise.cpp
+            degrade/test_fast_normal.cpp
             degrade/test_ablation.cpp
     DEPS    sat_core sat_degrade sat_scenario sat_world sat_engine
 )
@@ -221,7 +223,8 @@ sat_add_test(repro
 # --- CP 5.7, 5.9: the whole detection pipeline against the real simulator ---
 sat_add_test(perception
     SOURCES perception/test_pipeline.cpp
-    DEPS    sat_core sat_perception sat_engine sat_scenario
+            perception/test_roi_and_snr_gate.cpp
+    DEPS    sat_core sat_perception sat_camera sat_engine sat_scenario
 )
 target_compile_definitions(test_perception PRIVATE
     SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
@@ -234,6 +237,7 @@ sat_add_test(tracking
             tracking/test_track.cpp
             tracking/test_mode_fsm.cpp
             tracking/test_search.cpp
+            tracking/test_priority.cpp
             tracking/test_reacquire.cpp
     DEPS    sat_core sat_tracking sat_control sat_search sat_perception sat_engine sat_scenario
 )
