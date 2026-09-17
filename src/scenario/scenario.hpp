@@ -235,7 +235,7 @@ struct Scenario {
     /// PerceptionParams::min_snr_factor for the derivation and the measurement.
     double min_snr_factor = 1.5;
     bool   roi_enabled    = true;
-    int    roi_min_half_px = 96;
+    int    roi_min_half_px = 72;
     double roi_sigma_margin = 6.0;
     int    roi_refresh_frames = 0;
 

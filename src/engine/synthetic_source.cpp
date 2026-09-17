@@ -169,9 +169,15 @@ void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
             const Pixel2 screen_pos{world_.emitters.x[i] + world_.emitters.vx[i] * dt_s,
                                     world_.emitters.y[i] + world_.emitters.vy[i] * dt_s};
             const Pixel2 img = screen_to_image(cfg_.camera, cfg_.screen, screen_pos, bore);
+            // Clutter is drawn to 3.5 sigma and the beacon to 6. The
+            // difference is not a shortcut: six sigma exists to stop the
+            // truncation shifting a rendered centroid, and a clutter source's
+            // centroid is never scored against anything. See splat.hpp.
+            const bool graded = world_.emitters.kind_of(i) != EmitterKind::Clutter;
             splat_emitter(radiance_, cfg_.camera.width, cfg_.camera.height, img,
                           static_cast<double>(world_.emitters.size_px[i]),
-                          world_.emitters.shape_of(i), world_.emitters.intensity[i], w);
+                          world_.emitters.shape_of(i), world_.emitters.intensity[i], w,
+                          graded ? 6.0 : kClutterReachSigmas);
         }
     }
     }

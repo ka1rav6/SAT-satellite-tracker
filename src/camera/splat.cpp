@@ -66,7 +66,7 @@ constexpr int kMaxSpan = 2048;
 
 void splat_emitter(std::span<float> dst, int width, int height,
                    Pixel2 centre, double size_px, ShapeKind shape,
-                   float intensity, double weight) noexcept {
+                   float intensity, double weight, double reach_sigmas) noexcept {
     if (dst.empty() || size_px <= 0.0 || weight == 0.0) return;
 
     // How far the emitter reaches from its centre.
@@ -82,7 +82,9 @@ void splat_emitter(std::span<float> dst, int width, int height,
     double reach = 0.5 * size_px;
     if (shape == ShapeKind::Gaussian) {
         constexpr double kFwhmToSigma = 1.0 / 2.3548200450309493;
-        reach = 6.0 * size_px * kFwhmToSigma;
+        // Six sigma for anything whose position is graded; see splat.hpp for
+        // why, and for why clutter does not need it.
+        reach = std::max(0.5, reach_sigmas) * size_px * kFwhmToSigma;
     }
 
     // Bounding box of the footprint, clipped to the sensor. The +1/-1 slack
@@ -144,18 +146,31 @@ void splat_emitter(std::span<float> dst, int width, int height,
             }
         }
 
+        // The x extent that actually contributes. A square's box has dead
+        // margins on both sides and a Gaussian's 1-D table can underflow to
+        // zero in its tails, and trimming the loop bounds once per emitter is
+        // strictly better than testing every pixel inside it.
+        int kx0 = 0, kx1 = nx - 1;
+        while (kx0 <= kx1 && !(ox[static_cast<size_t>(kx0)] > 0.0)) ++kx0;
+        while (kx1 >= kx0 && !(ox[static_cast<size_t>(kx1)] > 0.0)) --kx1;
+        if (kx0 > kx1) return;
+
         for (int kj = 0; kj < ny; ++kj) {
             const double oyv = oy[static_cast<size_t>(kj)];
-            // A whole row of zero coverage is common: the Gaussian's 6-sigma box
-            // has long dead margins, and a square's box has two of them.
+            // A whole row of zero coverage is common: the Gaussian's box has
+            // long dead margins, and a square's box has two of them.
             if (!(oyv > 0.0)) continue;
             float* row = dst.data()
                        + static_cast<size_t>(j0 + kj) * static_cast<size_t>(width) + i0;
-            for (int ki = 0; ki < nx; ++ki) {
+            // No per-pixel branch. Inside [kx0, kx1] the coverage is positive
+            // except where a Gaussian's table has underflowed, and adding an
+            // exact zero to a positive pedestal is a no-op — so the test bought
+            // nothing and cost the loop its vectorisation.
+            for (int ki = kx0; ki <= kx1; ++ki) {
                 // Same multiplication order as square_coverage/gaussian_coverage
                 // so the double is bit-identical, not merely equal to tolerance.
                 const double cov = (ox[static_cast<size_t>(ki)] * oyv) * norm;
-                if (cov > 0.0) row[ki] += static_cast<float>(cov * scale);
+                row[ki] += static_cast<float>(cov * scale);
             }
         }
         return;

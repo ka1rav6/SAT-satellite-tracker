@@ -249,12 +249,23 @@ struct RoiParams {
     /// ablation needs both arms to be runnable from the same binary.
     bool  enabled = true;
 
-    /// Half-width floor, in pixels. Never smaller than this however confident
-    /// the filter is, because the filter's sigma describes where the TARGET is,
-    /// not how much context CFAR needs around it: the training annulus is
-    /// `train` pixels across (§9.4.5, 61 by default) and a window narrower than
-    /// that would estimate the background from almost nothing.
-    int   min_half_px = 96;
+    // -----------------------------------------------------------------------
+    // Half-width floor, in pixels. Never smaller than this however confident
+    // the filter is, because the filter's sigma describes where the TARGET is,
+    // not how much context the DETECTOR needs around it. Three terms, added:
+    //
+    //   31 px   half of §9.4.5's CFAR training window (61 px), so the annulus
+    //           around a centred target is complete
+    //   10 px   half the largest beacon spec row 10 permits (20 px)
+    //   27 px   four frames of a 200 px/s target at 30 Hz, so a few missed
+    //           frames do not put the target outside its own window
+    //
+    // 72 px. Measured on scenarios/compliance.toml, every floor from 48 to 96
+    // gives byte-identical accuracy (121.88 px tracking RMS, 97.17% retention)
+    // and the frame falls from 3,752 us to 2,864 us across that range, so the
+    // floor is chosen by the derivation above rather than by the sweep.
+    // -----------------------------------------------------------------------
+    int   min_half_px = 72;
 
     /// How many position sigmas of margin beyond the floor.
     double sigma_margin = 6.0;
