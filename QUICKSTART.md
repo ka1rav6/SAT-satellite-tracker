@@ -2,6 +2,9 @@
 
 Five minutes from a clean checkout to a tracked beacon.
 
+> Want the longer version, with screenshots and an explanation of every panel?
+> [`docs/GUIDE.md`](docs/GUIDE.md) is the guided tour. This page is the sprint.
+
 ## 1. Build
 
 ```bash
@@ -43,6 +46,8 @@ just headless "--scenario scenarios/baseline.toml --duration 20"
 just video tests/video/clips/screen_2000x2000_30fps.mp4
 ```
 
+![The dashboard](docs/img/01-overview.png)
+
 Each headless run writes to `logs/run/`:
 
 | File | What it is |
@@ -68,11 +73,13 @@ Three things in the output are easy to misread, and each is labelled in place:
 
 | | |
 |---|---|
+| **the guided tour, with screenshots** | [`docs/GUIDE.md`](docs/GUIDE.md) |
 | what it is and how it is built | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | every measured number, with the command that reproduces it | [`docs/RESULTS.md`](docs/RESULTS.md) |
 | every command and every scenario key | [`docs/MANUAL.md`](docs/MANUAL.md) |
 | what each metric means and why | [`docs/METRICS.md`](docs/METRICS.md) |
 | the ten-minute demo, minute by minute | [`docs/DEMO.md`](docs/DEMO.md) |
+| what is still wrong with it | [`issues_till_now.md`](issues_till_now.md) |
 
 ```bash
 just --list        # every command, with what it is for

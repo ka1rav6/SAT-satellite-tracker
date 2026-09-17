@@ -23,7 +23,7 @@ Legend: `[ ]` open · `[x]` closed · `[~]` partially closed · `[-]` closed as
 Measured with `just stages` on `scenarios/compliance.toml` (120 clutter sources,
 1 decoy, full damage chain, 640 × 480 sensor), Release `-O3`, single core.
 
-### 1.0 The stage table was measuring the wrong things
+### 1.1 The stage table was measuring the wrong things
 
 - [x] **`frame_acquire` was one opaque 22.7 ms line.** Design §15 budgets
       *Background render*, *Emitter splat* and *Damage chain* as three separate
@@ -37,7 +37,7 @@ Measured with `just stages` on `scenarios/compliance.toml` (120 clutter sources,
       `Stage::Centroid` now times B12/B13 alone and measures **24 µs against a
       20 µs budget**, which is the honest figure and is essentially on target.
 
-### 1.0a Where it ended up
+### 1.2 Where it ended up
 
 `just stages` on `scenarios/compliance.toml`, 20 s, Release:
 
@@ -54,7 +54,7 @@ per pixel — which spec rows 21–22 require — costs 16 on its own. The reach
 synthetic floor is 1.5–2.0 ms, and all of the excess is the SIMULATOR, which
 does not exist in the video path Benchmark Performance-2 grades.
 
-### 1.1 Open performance gaps
+### 1.3 Open performance gaps
 
 | Stage | start | now | §15 | Status |
 |---|---:|---:|---:|---|
@@ -71,7 +71,7 @@ does not exist in the video path Benchmark Performance-2 grades.
 | `grouping` | 396 µs | **29 µs** | 50 | [x] within budget |
 | **`frame_total`** | **42,551 µs** | **2,618 µs** | **850** | [-] 3.1× over; see §14.0d |
 
-### 1.2 What has been done, and what is left
+### 1.4 What has been done, and what is left
 
 - [x] **Emitter splat: 10,090 µs → 973 µs (10.4×).** The splat walked its
       footprint pixel by pixel calling a 2-D coverage function. Two of the three
@@ -124,7 +124,7 @@ does not exist in the video path Benchmark Performance-2 grades.
       beyond baseline x86-64, so every kernel is SSE2. The host supports AVX2
       and AVX-VNNI.
 
-### 1.3 Downstream of the frame budget
+### 1.5 Downstream of the frame budget
 
 - [~] **CP 7.3 — "a 120 s scenario completes in under 2 s wall time".** Was ~5
       minutes; now ~19 s, a 16× improvement and still 9.5× over. The criterion
@@ -157,7 +157,7 @@ Four independent defects, each of which alone would produce that line.
       empty screen. Implemented as a triangle-wave fold of the analytically
       evaluated coordinate, which keeps §7.2's exactness properties that a
       reflected-velocity implementation would break.
-      `just test-motion` · design amendment §14.0c.
+      `just test-one motion` · design amendment §14.0c.
 - [x] **The detector returned six candidates a frame on pure read noise.**
       CFAR's `k` is a per-pixel statement, and at the specification's operating
       point about 29 pixels of a 640 × 480 frame fire every frame — by design.
@@ -288,7 +288,7 @@ system and each is now a different statement about the system.
       row 23's ±20 px/frame of jitter. Closed as *won't fix in the control law*:
       row 23's jitter amplitude is 5× the quadrant cell's capture criterion, so
       no controller can hold the beam inside a capture range smaller than the
-      disturbance. Recorded with the derivation in `docs/RESULTS.md` §6.
+      disturbance. Recorded with the derivation in `docs/RESULTS.md` §6 (control refinement).
 
 ---
 

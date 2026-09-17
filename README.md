@@ -15,10 +15,14 @@ a disturbance that can exceed the mount's own authority.
 ```bash
 just build         # configure + build
 just gui           # the live dashboard
-just test          # 16 suites, 1.84M assertions
+just test          # 20 suites, about 80 seconds
 ```
 
-Three things worth running first:
+**New here? Read [`docs/GUIDE.md`](docs/GUIDE.md).** It is a fifteen-minute
+guided tour with screenshots: what the panels mean, what to break first, and how
+to score a run.
+
+Three things worth running after that:
 
 ```bash
 just headless                # one run: metrics, centroid.csv, run.json, report.html
@@ -26,13 +30,15 @@ just video tests/video/clips/screen_2000x2000_30fps.mp4    # MP4 ingest
 just sweep                   # 200 runs -> the requirement compliance matrix
 ```
 
+![The dashboard](docs/img/01-overview.png)
+
 ---
 
 ## Where it stands
 
-Stages 0–10 of the roadmap are complete, plus the performance work at CP 14.2.
-All five ★ gates pass. Machine learning (Stage 11) is deliberately out of
-scope — INV-7 requires the system to run fully without it, and it does.
+Stages 0–10 and 12–15 of the roadmap are complete. All five ★ gates pass.
+Machine learning (Stage 11) is deliberately out of scope — INV-7 requires the
+system to run fully without it, and it does.
 
 On clear air with nothing else in the frame — 200 runs, `just sweep`:
 
@@ -40,20 +46,43 @@ On clear air with nothing else in the frame — 200 runs, `just sweep`:
 |---|---|---|
 | Acquisition, beacon in view (row 16) | ≤ 2 s | **0.067 s** |
 | Target loss (row 18) | < 5 % | **1.67 %** |
-| Re-acquisition (row 19) | ≤ 1 s | **0.090 s** (over all 200 runs) |
-| Processing speed (row 20) | ≥ 20 FPS | **21.5 / 30.8 FPS** |
-| Centroiding accuracy (60 % of the marks) | — | **0.141 px RMSE** |
+| Re-acquisition (row 19) | ≤ 1 s | **0.109 s** (over all 200 runs) |
+| Processing speed (row 20) | ≥ 20 FPS | **251 FPS** |
+| Centroiding accuracy (60 % of the marks) | — | **0.143 px RMSE** |
+
+Through every weather mode the specification lists, with row 21's 10 % impulse
+noise and row 22's read noise at the cap, centroiding stays at **0.14–3.4 px**
+and target loss at **1.7 %**.
 
 Two specification rows are internally inconsistent and are reported as derived
 bounds rather than pass or fail — cold acquisition cannot meet 2 s by geometry,
 and tracking error cannot go below 16.33 px while row 23's jitter is applied.
 Both derivations are in [`docs/RESULTS.md`](docs/RESULTS.md).
 
-The harder conditions in that sweep do **not** all pass. 120 clutter sources
-cost two orders of magnitude of tracking accuracy, and in `lowlight` target
-loss reaches 86 %. Those are the honest edge of what is built, and they are
-recorded with measurements rather than descriptions:
-[`RESULTS.md` §10](docs/RESULTS.md).
+**Two conditions do not pass, and they are the same condition twice:** a second
+beacon-shaped object in the frame. A moving decoy, or 120 clutter sources, cost
+two orders of magnitude of centroiding accuracy; so does light too low for the
+beacon to clear the detector's floor. Both are recorded with the measurement
+against them in [`issues_till_now.md`](issues_till_now.md), and both are what
+Stage 11's `CandidateNet` exists for.
+
+### Speed
+
+The frame is **2.62 ms** — 382 FPS, against a requirement of 20 and a design
+target of 350–500. That is 16× faster than it was before Stage 14's work:
+
+| | before | after |
+|---|---:|---:|
+| frame time p50 | 42,551 µs | **2,618 µs** |
+| the detector (B6–B13) | 17,309 µs | **1,275 µs** |
+| the sensor model | 12,079 µs | **1,395 µs** |
+| the full test suite | 359 s | **78 s** |
+
+It does **not** reach design §15's 0.85 ms, and that budget is not reachable:
+`docs/SAT-DESIGN.md` §14.0d derives it as 9.7 CPU cycles per pixel for the
+entire frame, against 16 for the one Gaussian noise sample per pixel that
+specification rows 21–22 require. All of the excess is the SIMULATOR, which does
+not exist in the video path that 30 % of the marks are scored on.
 
 ---
 
@@ -61,7 +90,9 @@ recorded with measurements rather than descriptions:
 
 | File | Role |
 |---|---|
+| [`docs/GUIDE.md`](docs/GUIDE.md) | **start here** — a guided tour with screenshots |
 | [`QUICKSTART.md`](QUICKSTART.md) | five minutes from a clean checkout to a tracked beacon |
+| [`issues_till_now.md`](issues_till_now.md) | everything not yet up to the mark, each with a measurement |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | what is built, how it fits, why each decision went that way |
 | [`docs/RESULTS.md`](docs/RESULTS.md) | every measured number, with the command that reproduces it |
 | [`docs/MANUAL.md`](docs/MANUAL.md) | building, running, the CLI, the scenario format, the artifacts |

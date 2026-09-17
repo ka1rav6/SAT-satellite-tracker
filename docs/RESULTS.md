@@ -492,29 +492,56 @@ Measured: detection SNR **40.76 before** the fog event, **12.09 after**.
 ## 8. Performance (CP 14.2)
 
 ```
-just stages        # per-stage p50/p95/p99 from the shipped binary
+just stages          # the honest number: the whole frame, in situ
+just bench-kernels   # each kernel alone, minimum of N runs — the instrument
 ```
 
-| Stage | before | after | §15 budget |
-|---|---:|---:|---:|
-| frame_acquire *(simulator only)* | 24,805 µs | 24,805 µs | 740 |
-| median_3x3 | 621 | 621 | 350 |
-| top_hat | 6,436 | **2,187** | 300 |
-| summed_area (×2) | 1,999 | 1,999 | 350 |
-| matched_filter | 22,671 | **2,618** | 120 |
-| cfar (×2) | 14,460 | **5,376** | 200 |
-| grouping | 433 | 433 | 50 |
-| **total, synthetic** | **87,379** | **46,555** | 850 |
-| **total, video mode** | 87,700 | **32,488** | — |
+Measured on `scenarios/compliance.toml`, 20 s, Release, one core.
 
-| | before | after | requirement |
-|---|---|---|---|
-| synthetic | 11.4 FPS | **21.5 FPS** | ≥ 20 ✓ |
-| video, 2000×2000 clip | 11.4 FPS | **30.8 FPS** | ≥ 20 ✓ |
+| Stage | before Stage 14 | now | §15 scalar | §15 SIMD |
+|---|---:|---:|---:|---:|
+| `background` | 135 µs | **72** | 150 | 40 |
+| `splat` | 10,090 | **231** | 40 | — |
+| `damage_chain` | 12,079 | **1,395** | 550 | 100 |
+| `median_3x3` | 621 | **42** | 350 | 40 |
+| `top_hat` | 6,436 | **161** | 300 | 90 |
+| `summed_area` (x2) | 1,999 | **123** ea | 350 | 120 |
+| `matched_filter` | 22,671 | **176** | 120 | 50 |
+| `cfar` (x2) | 14,460 | **362** ea | 200 | 70 |
+| `grouping` | 433 | **29** | 50 | — |
+| `centroid` | — | **2** | 20 | — |
+| **`perception`, all of B6-B13** | 17,309 | **1,275** | **1,390** | 370 |
+| **`frame_total`** | **42,551** | **2,618** | **850** | **850** |
 
-All three fixes are bit-identical to what they replaced. §15's 0.85 ms internal
-budget is **not** met and is not reachable by these means — see
-[`METRICS.md` §2.13](METRICS.md).
+| | before | now | requirement |
+|---|---:|---:|---|
+| synthetic | 23.5 FPS | **382 FPS** | >= 20 (row 20) |
+| the full test suite | 359 s | **78 s** | — |
+
+**Eight of the twelve stages are inside their §15 lines**, and perception as a
+whole is inside its own. What got it there, in order of size:
+
+| Change | Stage | Factor |
+|---|---|---:|
+| a detection window when the track is confirmed (§14.0b) | perception | 6.0x |
+| separable coverage in the emitter splat | splat | 10.4x |
+| the damage chain fused, one Gaussian draw instead of two, a sampler built for the call rate | damage | 3.6x |
+| CP 14.2's AVX2 damage chain, bit-identical to scalar | damage | 2.3x |
+| clutter drawn to 3.5 sigma rather than 6, and a branch out of the row loop | splat | 4.2x |
+
+Every one of those is bit-identical to what it replaced, and the two that could
+plausibly not have been are tested for it directly: the splat against the
+per-pixel coverage functions over 400 random trials, and the AVX2 damage chain
+against its own scalar path over four configurations on a deliberately-ragged
+buffer, with the generator required to end in the same state.
+
+§15's **0.85 ms is not met and is not reachable**, and `SAT-DESIGN.md` §14.0d
+derives why rather than leaving it as a gap: 0.85 ms at 3.5 GHz over spec row
+3's sensor is 9.7 CPU cycles per pixel for the entire frame, and the one
+Gaussian deviate per pixel that rows 21-22 require costs 16 on its own. The
+reachable synthetic floor is 1.5-2.0 ms, and all of the excess is the
+SIMULATOR — which INV-8 disables in the video path Benchmark Performance-2
+grades.
 
 ---
 
@@ -533,22 +560,31 @@ including video modes and with the whole Stage 6–9 apparatus in the loop.
 ## 10. Known gaps
 
 Recorded with measurements rather than described, so each has something to be
-improved against.
+improved against. The running list, with what has closed since, is
+[`../issues_till_now.md`](../issues_till_now.md).
+
+### Open
 
 | Gap | Measured | Owner |
 |---|---|---|
-| **Clutter and decoy discrimination** | over 200 runs: tracking 17.64 px clean → 44.57 px with one decoy → **205.20 px** with 120 clutter + decoy; centroiding 0.141 → 198.33 px | Stage 11 `CandidateNet`, Stage 12 priority policy |
-| **Low light** | target loss reaches **86 %** in `lowlight` — the beacon is below the detector's floor, not mis-associated | Stage 11 `CandidateNet`, Stage 13 acquisition strategy |
-| **Low-SNR centroiding** | 3.64× the bound at SNR 13 against CP 9.6's 1.5× | Stage 11 `Learned`, `MatchedPeak` via Stage 12 |
-| **§15's 0.85 ms frame budget** | 46.6 ms synthetic, 32.5 ms video | a different processing strategy, not faster arithmetic |
-| **CP 7.3's 2 s for a 120 s scenario** | ~5 minutes | same as above |
-| **CP 7.5's 500 runs in 3 minutes** | ~13 minutes | same as above |
-| **Handover under spec row 23** | 100 % clean, **0 %** at ±20 px/frame of jitter | nothing in the control law; row 23 is 5× the criterion (§6) |
-| **Figure-8 acceleration lag** | 16.56 px residual with feedforward on a 200 px/s sinusoid | Stage 11 `MotionNet` priors into the IMM |
-| **§15's 0.85 ms budget, IMM included** | IMM adds ~0.01 ms; the frame is still 46.6 ms | same as the row above it |
-| **Adversarial scenarios** | `scenarios/adversarial/` is empty | not yet written; the awkward *video* cases exist and are exercised (CP 8.8) |
-| **`--fuzz-scenarios`** | not implemented | CP 14.1 — 5,000 random scenarios, no crash, no hang, no NaN |
-| **Supervisor on clutter** | the adaptation recovers **+15 points** of retention in fog and **0** against clutter — it varies thresholds, not the association policy | §10.2's `priority_score` with hysteresis; not yet built |
-| **Stage 13 acquisition strategy** | not started | the low-light row above is what it is for |
+| **A second beacon-shaped object in the frame** | over 200 runs: centroiding **0.143 px** with nothing else in view, **75-110 px** with a moving decoy or 120 clutter sources. §10.2's priority policy took the clutter case from 205 px to 88 px by refusing to commit to anything that does not move; a decoy moves. | Stage 11 `CandidateNet` |
+| **Low light** | centroiding **79-302 px**, target loss 5-51 %. The beacon is below the detector's floor, not mis-associated, so this is sensitivity and not association. | Stage 11 `CandidateNet` |
+| **Low-SNR centroiding** | 3.64x the theoretical bound at SNR 13 against CP 9.6's 1.5x. Above SNR 20 the requirement is met. | Stage 11 `Learned` |
+| **Cold acquisition in clutter** | on `baseline.toml` the policy correctly refuses to lock onto any of the 120 clutter sources, and the spiral has not swept back over the beacon within 30 s. With `clutter.static_sources = 0` the same scenario acquires and holds. | Stage 13 — the sweep bound is 18.72 s at 5 deg/s and the target moves while it runs |
+| **§15's 0.85 ms frame budget** | **2.62 ms**, 16x faster than before Stage 14. Not reachable: §14.0d derives the budget as 9.7 cycles/pixel for the whole frame against 16 for one Gaussian deviate. | the budget, not the code |
+| **CP 7.3's 2 s for a 120 s scenario** | ~19 s, 16x faster than before. Needs 0.55 ms a frame, below §14.0d's floor. | same as above |
+| **Handover under spec row 23** | 100 % clean, **0 %** at +/-20 px/frame of jitter | nothing in the control law; row 23's jitter is 5x the quadrant cell's capture criterion (§6) |
+| **Figure-8 acceleration lag** | 16.56 px residual with feedforward on a 200 px/s sinusoid — the feedforward carries velocity, not acceleration | Stage 11 `MotionNet` priors into the IMM |
+| **AVX2 for the three remaining perception kernels** | the van Herk opening, the matched filter and CFAR are together about 700 us of perception's 1,275 | CP 14.2's second half; `just bench-kernels` is the instrument |
 | **CP 12.4 learned `StrategyPolicy`** | not started (ML) | Stage 11 |
-| **Test suite** | 19 suites, all green | — |
+
+### Closed since this table was first written
+
+| Gap | Was | Now |
+|---|---|---|
+| **The supervisor recovered nothing against clutter** | +15 points in fog, 0 against clutter | §10.2's priority policy is built; the clutter case went 205 px -> 88 px |
+| **Adversarial scenarios** | `scenarios/adversarial/` empty | six scenarios |
+| **`--fuzz-scenarios`** | not implemented | CP 14.1, with explicit corner sampling |
+| **Stage 13 acquisition strategy** | not started | the probability grid and four strategies |
+| **Spec row 8's edge behaviour** | parsed, echoed, read by nothing — the beacon left the canvas | implemented; §14.0c |
+| **Test suite** | 19 suites, 359 s | **20 suites, 78 s, all green** |

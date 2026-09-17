@@ -1,5 +1,10 @@
 # SAT — User manual
 
+> This is the **reference**: every command, every flag, every scenario key.
+> If you are looking at the project for the first time, read
+> [`GUIDE.md`](GUIDE.md) instead — it is a guided tour with screenshots and it
+> explains what the numbers mean before listing them.
+
 How to build it, how to run it, and what each artifact contains. Cross-
 referenced to the specification rows it implements, per CP 15.4.
 

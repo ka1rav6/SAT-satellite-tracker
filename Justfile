@@ -706,6 +706,58 @@ test-centroid: build
     "{{build_dir}}/test_centroid" --success --no-skipped-summary 2>&1 \
         | grep -E "MESSAGE|TEST CASE|ERROR|test cases" || true
 
+# CP 14.2 — time each kernel on its own, minimum of N runs.
+#
+# `just stages` measures ONE call per frame against a clock whose resolution is
+# the frame itself, on a machine that is also running the rest of the frame;
+# run-to-run spread on a laptop is 1.5x, which is larger than most of the
+# changes worth making. This measures the kernel instead. Both numbers are
+# needed and they answer different questions.
+bench-kernels repeats="60": build
+    "{{build_dir}}/sat-tracker" --bench-kernels --repeats "{{repeats}}"
+
+# ---------------------------------------------------------------------------
+# Documentation figures
+# ---------------------------------------------------------------------------
+
+# Regenerate every screenshot in docs/MANUAL.md.
+#
+# A screenshot pasted into a repository is a claim nobody can check: it rots
+# silently the moment a panel moves. Every figure in the manual is the output of
+# this recipe, so a stale one is a diff rather than a surprise. It is also the
+# only automated check that the GUI still starts and draws — CP 15.0's
+# acceptance criterion, which nothing in CI could verify before.
+#
+# The window is created HIDDEN, so this does not throw five windows across
+# whatever you are doing, and at a fixed 2400x1350 so a window manager cannot
+# crop the tables differently on every machine.
+#
+# ffmpeg quantises each shot to 64 colours afterwards. These are UI screenshots
+# with a handful of distinct colours, so the palette is lossless in practice and
+# takes 2.1 MB down to 0.4 MB — which is the difference between a repository
+# that clones quickly and one that does not.
+screenshots: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p docs/img
+    shot() {
+        local out="$1"; shift
+        "{{build_dir}}/sat-tracker" --gui --shot "docs/img/$out.png" "$@"
+        if command -v ffmpeg >/dev/null 2>&1; then
+            ffmpeg -y -loglevel error -i "docs/img/$out.png"                 -vf "palettegen=max_colors=64" "/tmp/sat-pal-$out.png"
+            ffmpeg -y -loglevel error -i "docs/img/$out.png" -i "/tmp/sat-pal-$out.png"                 -lavfi "paletteuse=dither=none" "docs/img/$out.q.png"
+            mv "docs/img/$out.q.png" "docs/img/$out.png"
+            rm -f "/tmp/sat-pal-$out.png"
+        fi
+    }
+    shot 01-overview  --scenario scenarios/baseline.toml --shot-after 150
+    shot 02-imm       --scenario scenarios/fog_figure8.toml --shot-after 400                       --shot-imm --shot-damage --shot-focus imm
+    shot 03-priority  --scenario scenarios/compliance.toml --shot-after 200                       --shot-clutter 120 --shot-damage --shot-focus priority
+    shot 04-strategy  --scenario scenarios/supervisor/weather_change.toml                       --shot-after 500 --shot-supervisor --shot-damage                       --shot-focus strategy
+    shot 05-fsm       --scenario scenarios/baseline.toml --shot-after 60                       --shot-focus fsm --shot-random
+    shot 06-strawman  --scenario scenarios/compliance.toml --shot-after 150                       --shot-clutter 120 --shot-damage --shot-focus tracking
+    echo "docs/img/ regenerated"
+
 # CP 14.4 — per-stage p50/p95/p99 from the SHIPPED binary, against §15's budget.
 stages scenario="scenarios/compliance.toml" duration="6": build
     "{{build_dir}}/sat-tracker" --headless --scenario "{{scenario}}" \
