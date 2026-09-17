@@ -7,6 +7,28 @@
 
 namespace sat {
 
+double fold_edge(double p, double& v, double extent, EdgeBehaviour e) noexcept {
+    if (e == EdgeBehaviour::Exit || !(extent > 0.0) || !std::isfinite(p)) return p;
+
+    if (e == EdgeBehaviour::Wrap) {
+        double q = std::fmod(p, extent);
+        if (q < 0.0) q += extent;
+        return q;
+    }
+
+    // Bounce. Fold into [0, 2*extent), then reflect the upper half down. The
+    // number of reflections is odd exactly in that upper half, which is where
+    // the velocity's sign flips.
+    const double period = 2.0 * extent;
+    double q = std::fmod(p, period);
+    if (q < 0.0) q += period;
+    if (q > extent) {
+        v = -v;
+        return period - q;
+    }
+    return q;
+}
+
 void World::advance(double t_s, double dt, RngSet& rng) {
     // Stochastic components must be advanced in order, once per tick, before
     // the stack is evaluated.
@@ -24,6 +46,11 @@ void World::advance(double t_s, double dt, RngSet& rng) {
         // filter's estimate against, so it must not be a difference.
         emitters.vx[i] = s.vx;
         emitters.vy[i] = s.vy;
+
+        // Spec row 8. See the note in world_builder.hpp for why this is a fold
+        // of the evaluated coordinate rather than a reflected velocity.
+        emitters.x[i] = fold_edge(emitters.x[i], emitters.vx[i], canvas_w, edge);
+        emitters.y[i] = fold_edge(emitters.y[i], emitters.vy[i], canvas_h, edge);
     }
 }
 
@@ -34,6 +61,9 @@ void World::reset() {
 World build_world(const Scenario& sc, RngSet& rng) {
     World w;
     const ScreenGeometry scr = sc.screen_geometry();
+    w.edge     = sc.edge_behaviour;              // spec row 8
+    w.canvas_w = static_cast<double>(scr.width);
+    w.canvas_h = static_cast<double>(scr.height);
 
     const size_t expected = sc.targets.size()
                           + static_cast<size_t>(std::max(0, sc.decoy_beacons))
