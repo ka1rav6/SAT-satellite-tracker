@@ -450,6 +450,22 @@ Result<Scenario> parse_scenario(std::string_view toml_text, std::string_view nam
     // --- [tracking] — design §10.2 -----------------------------------------
     get_bool  (root, "tracking.imm", sc.tracking_imm, v);
 
+    // --- [tracking] — §10.2's priority policy -------------------------------
+    get_bool  (root, "tracking.priority",               sc.priority_enabled,     v);
+    get_double(root, "tracking.priority_motion_weight", sc.priority_motion_w,    v);
+    get_double(root, "tracking.priority_min_commit",    sc.priority_min_commit,  v);
+    get_int   (root, "tracking.priority_min_frames",    sc.priority_min_frames,  v);
+    get_int   (root, "tracking.priority_drop_frames",   sc.priority_drop_frames, v);
+    get_int   (root, "tracking.priority_switch_frames", sc.priority_switch_frames, v);
+    get_double(root, "tracking.priority_switch_ratio",  sc.priority_switch_ratio,  v);
+
+    // --- [perception] — design §14.0b's detection window --------------------
+    get_double(root, "perception.min_snr_factor",     sc.min_snr_factor,     v);
+    get_bool  (root, "perception.roi",                sc.roi_enabled,        v);
+    get_int   (root, "perception.roi_min_half_px",    sc.roi_min_half_px,    v);
+    get_double(root, "perception.roi_sigma_margin",   sc.roi_sigma_margin,   v);
+    get_int   (root, "perception.roi_refresh_frames", sc.roi_refresh_frames, v);
+
     // --- [requirements] — rows 16-20 ---------------------------------------
     get_double(root, "requirements.acquisition_s",     sc.acquisition_s,     v);
     get_double(root, "requirements.tracking_error_px", sc.tracking_error_px, v);

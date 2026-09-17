@@ -152,6 +152,41 @@ const std::vector<FieldSpec>& schema() {
          "CP 10.5's interacting multiple model filter (CV/CA/CT); earns its "
          "place on manoeuvring motion and costs a little on a straight line"},
 
+        // --- [tracking] — §10.2's priority policy --------------------------
+        {"tracking.priority", ValueKind::Bool, false, 0.0, 0.0, "",
+         "design 10.2's priority policy; off reverts to locking onto the "
+         "strongest candidate in the first frame that has one"},
+        {"tracking.priority_motion_weight", ValueKind::Float, false, 0.0, 1.0, "",
+         "weight on the ego-motion-compensated motion term; the other four "
+         "terms sum to 0.45 and a static source can reach all of them"},
+        {"tracking.priority_min_commit", ValueKind::Float, false, 0.0, 2.0, "",
+         "priority score a candidate must reach before the mount is committed "
+         "to it, and below which a committed track is eventually dropped"},
+        {"tracking.priority_min_frames", ValueKind::Int, false, 1, 10000, "row 16",
+         "frames of motion evidence before promotion; spend too many and "
+         "acquisition misses row 16's 2 s"},
+        {"tracking.priority_drop_frames", ValueKind::Int, false, 0, 100000, "",
+         "frames scoring below min_commit before a lock is dropped; 0 never drops"},
+        {"tracking.priority_switch_frames", ValueKind::Int, false, 1, 100000, "",
+         "design 10.2's 'sustained 15 frames' before a challenger takes over"},
+        {"tracking.priority_switch_ratio", ValueKind::Float, false, 1.0, 100.0, "",
+         "design 10.2's 'score_new > 1.25 x score_current'"},
+
+        // --- [perception] — design §14.0b's detection window ---------------
+        {"perception.min_snr_factor", ValueKind::Float, false, 0.0, 20.0, "",
+         "candidate SNR gate as a multiple of cfar.k; 0 disables it and "
+         "restores the false-alarm rate CFAR's per-pixel threshold produces"},
+        {"perception.roi", ValueKind::Bool, false, 0.0, 0.0, "",
+         "restrict the detector to a window around the tracker's prediction "
+         "while the track is confirmed; off makes every frame a full search"},
+        {"perception.roi_min_half_px", ValueKind::Int, false, 16, 8192, "",
+         "half-width floor in pixels; below CFAR's 61 px training annulus the "
+         "background estimate comes from almost nothing"},
+        {"perception.roi_sigma_margin", ValueKind::Float, false, 0.0, 1000.0, "",
+         "how many of the filter's own position sigmas of margin beyond the floor"},
+        {"perception.roi_refresh_frames", ValueKind::Int, false, 0, 100000, "",
+         "full-frame sweep every N frames even while confirmed; 0 disables it"},
+
         // --- [requirements] — rows 16-20 -----------------------------------
         {"requirements.acquisition_s",     ValueKind::Float, false, 0.0, kInf, "row 16",
          "the specification requires acquisition within 2 s"},

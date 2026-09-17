@@ -228,6 +228,29 @@ struct Scenario {
     /// filter. Opt-in — see TrackParams::imm for why the default matters.
     bool tracking_imm = false;
 
+    // --- [perception] — design §9.4, and §14.0b's detection window ---------
+    /// Restrict the detector to a window around the tracker's own prediction
+    /// while the track is Confirmed. See DetectRoi in perception/pipeline.hpp.
+    /// The SNR gate, as a multiple of `cfar.k`. See
+    /// PerceptionParams::min_snr_factor for the derivation and the measurement.
+    double min_snr_factor = 1.5;
+    bool   roi_enabled    = true;
+    int    roi_min_half_px = 96;
+    double roi_sigma_margin = 6.0;
+    int    roi_refresh_frames = 0;
+
+    // --- [tracking] — §10.2's priority policy ------------------------------
+    /// Off reverts to the old single-lock behaviour: the first frame with any
+    /// detection seeds the track from the strongest candidate. Kept runnable
+    /// because the ablation in docs/RESULTS.md needs both arms.
+    bool   priority_enabled     = true;
+    double priority_motion_w    = 0.55;  ///< weight on the motion term
+    double priority_min_commit  = 0.60;  ///< score needed to take the mount
+    int    priority_min_frames  = 15;    ///< motion-evidence frames before promotion
+    int    priority_drop_frames = 45;    ///< frames below min_commit before dropping
+    int    priority_switch_frames = 15;  ///< §10.2's sustained-15-frames rule
+    double priority_switch_ratio  = 1.25;///< §10.2's 1.25x rule
+
     // --- [atmosphere] — row 24 --------------------------------------------
     Atmosphere atmosphere = Atmosphere::Clear;
 

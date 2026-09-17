@@ -32,6 +32,7 @@ void Pipeline::build_stage6() {
         arena_, cam.width, cam.height,
         structuring_element_size(cfg_.perception.target_size_px));
     perception_.configure(cfg_.perception);
+    tracker_.weights() = cfg_.priority;
 
     dets_.clear();
     meas_.clear();
@@ -139,6 +140,7 @@ void Pipeline::build_stage6() {
     base.perception = cfg_.detector;
     base.centroider = cfg_.perception.centroid_kind;
     base.cfar_k     = cfg_.perception.cfar.k;
+    base.min_snr_factor = cfg_.perception.min_snr_factor;
     base.filter     = cfg_.tracking.imm ? FilterKind::Imm : FilterKind::Cv;
     base.predictor  = cfg_.gains.smith ? PredictorKind::Smith : PredictorKind::None;
     base.gains      = cfg_.gains;
@@ -257,6 +259,20 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     cfg.gains.smith       = sc.control.smith;
     cfg.gains.smith_rate_blend = sc.control.smith_rate_blend;
     cfg.tracking.imm      = sc.tracking_imm;
+    cfg.priority.enabled        = sc.priority_enabled;
+    cfg.priority.motion         = static_cast<float>(sc.priority_motion_w);
+    cfg.priority.min_commit_score = static_cast<float>(sc.priority_min_commit);
+    cfg.priority.promote_min_age  = sc.priority_min_frames;
+    cfg.priority.drop_frames      = sc.priority_drop_frames;
+    cfg.priority.switch_frames    = sc.priority_switch_frames;
+    cfg.priority.switch_ratio     = static_cast<float>(sc.priority_switch_ratio);
+
+    cfg.perception.min_snr_factor = static_cast<float>(sc.min_snr_factor);
+
+    cfg.roi.enabled        = sc.roi_enabled;
+    cfg.roi.min_half_px    = sc.roi_min_half_px;
+    cfg.roi.sigma_margin   = sc.roi_sigma_margin;
+    cfg.roi.refresh_frames = sc.roi_refresh_frames;
     cfg.search.strategy =
           sc.search_strategy == "raster"        ? SearchStrategy::Raster
         : sc.search_strategy == "probabilistic" ? SearchStrategy::Probabilistic
@@ -329,6 +345,80 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
 
 // ---------------------------------------------------------------------------
 // build_from_video — Stage 8. The source changes; nothing else does.
+// ---------------------------------------------------------------------------
+// detect_window — where the detector is asked to look this frame.
+//
+// See DetectRoi in perception/pipeline.hpp for why, and docs/SAT-DESIGN.md
+// §14.0b for the design amendment. The rules, in order:
+//
+//   1. Windowing off, or no confirmed track           -> the whole frame.
+//   2. A refresh frame, if one is configured          -> the whole frame.
+//   3. Otherwise: centred on the PREDICTED image position, half-size the
+//      larger of the configured floor and the filter's own position sigma
+//      times the configured margin.
+//
+// Rule 3's two halves do different jobs. The floor is about CFAR, not about the
+// target: §9.4.5's training annulus is 61 px across, and a window narrower than
+// that estimates the background from almost nothing. The sigma term is about
+// the target: a filter that is losing confidence widens its own window, so a
+// track that starts to drift gets more frame back before it drops out of
+// Confirmed and gets all of it.
+//
+// COASTING deliberately does NOT get a window. drivable() is true for Coasting
+// as well as Confirmed, and the coasting case is exactly the one where the
+// prediction is least trustworthy — the detector has already failed to find
+// the target somewhere, and narrowing its search would be the wrong response.
+// ---------------------------------------------------------------------------
+DetectRoi Pipeline::detect_window(int width, int height,
+                                  Angle2 commanded) const noexcept {
+    const DetectRoi full = DetectRoi::full(width, height);
+    if (!cfg_.roi.enabled) return full;
+
+    const Track& trk = tracker_.track();
+    if (trk.state() != TrackState::Confirmed) return full;
+
+    if (cfg_.roi.refresh_frames > 0 &&
+        (frame_ % cfg_.roi.refresh_frames) == 0) {
+        return full;
+    }
+
+    // Where the tracker thinks the target will be when this frame is exposed,
+    // expressed in the camera's pixels via the COMMANDED boresight — the same
+    // boresight B16 uses to go the other way. Truth is not available here and
+    // must not be: INV-1.
+    const double  dt  = 1.0 / std::max(1.0, static_cast<double>(cfg_.synthetic.camera_hz));
+    const Angle2  ang = trk.predict_position(dt);
+    const Pixel2  c   = cfg_.synthetic.camera.project(
+                            Angle2{ang.x - commanded.x, ang.y - commanded.y});
+    if (!std::isfinite(c.x) || !std::isfinite(c.y)) return full;
+
+    // The filter's own uncertainty, converted from microradians to pixels.
+    const double ifov = cfg_.synthetic.camera.ifov_urad();
+    const double sig_px = ifov > 0.0 ? trk.position_sigma_urad() / ifov : 0.0;
+
+    const double half = std::max(static_cast<double>(cfg_.roi.min_half_px),
+                                 cfg_.roi.sigma_margin * sig_px);
+    // A window that has grown past the frame is just the frame; saying so here
+    // keeps the crop out of the hot path entirely on those frames.
+    if (half * 2.0 >= static_cast<double>(std::min(width, height))) return full;
+
+    const int x0 = static_cast<int>(std::floor(c.x - half));
+    const int y0 = static_cast<int>(std::floor(c.y - half));
+    const int x1 = static_cast<int>(std::ceil (c.x + half));
+    const int y1 = static_cast<int>(std::ceil (c.y + half));
+
+    const int cx0 = std::clamp(x0, 0, width  - 1);
+    const int cy0 = std::clamp(y0, 0, height - 1);
+    const int cx1 = std::clamp(x1, 0, width  - 1);
+    const int cy1 = std::clamp(y1, 0, height - 1);
+    const int w   = cx1 - cx0 + 1;
+    const int h   = cy1 - cy0 + 1;
+    // The prediction has left the sensor: there is nothing to window around.
+    if (w < 8 || h < 8) return full;
+
+    return DetectRoi{cx0, cy0, w, h};
+}
+
 // ---------------------------------------------------------------------------
 Status Pipeline::build_from_video(const Scenario& sc,
                                   const std::filesystem::path& clip,
@@ -599,8 +689,9 @@ bool Pipeline::step() {
         // around B12/B13 in perception/pipeline.cpp, and this is `perception`.
         SAT_ZONE(timers_, Stage::Perception);
         if (cfg_.detector == PipelineConfig::Detector::Classical && perception_ready_) {
-            perception_.process(frame.pixels, frame.width, frame.height, ws_, dets_,
-                                &timers_);
+            rec.roi = detect_window(frame.width, frame.height, commanded);
+            perception_.process(frame.pixels, frame.width, frame.height, rec.roi,
+                                ws_, dets_, &timers_);
         } else {
             // The CP 4.11 ablation arm. §9.4 is explicit that this "must never
             // be the default", and it is not — but it has to be runnable
@@ -688,6 +779,18 @@ bool Pipeline::step() {
     int associated = -1;
     {
         SAT_ZONE(timers_, Stage::Tracking);
+        // §10.2's priority policy needs two things the tracker cannot know on
+        // its own: where the camera is pointing (for the centrality term) and
+        // how fast the target is allowed to move (to normalise the motion
+        // term). Both come from the COMMANDED boresight and the scenario, never
+        // from truth.
+        PriorityContext pc;
+        pc.boresight       = commanded;
+        pc.half_fov_urad   = cfg_.synthetic.camera.half_fov_urad().norm();
+        pc.speed_ref_urad_s = tracker_.params().max_target_speed_urad_s
+                            * static_cast<double>(tracker_.weights().speed_frac);
+        pc.speed_max_urad_s = tracker_.params().max_target_speed_urad_s;
+        tracker_.set_priority_context(pc);
         associated = tracker_.step(frame_dt, std::span<Measurement>(meas_), frame_);
     }
     if (associated >= 0) {
@@ -773,7 +876,8 @@ bool Pipeline::step() {
             // -------------------------------------------------------------
             cfg_.detector = st.perception;
             cfg_.perception.centroid_kind = st.centroider;
-            cfg_.perception.cfar.k        = st.cfar_k;
+            cfg_.perception.cfar.k          = st.cfar_k;
+            cfg_.perception.min_snr_factor  = st.min_snr_factor;
             perception_.configure(cfg_.perception);
 
             // §10.6's property 2, BUMPLESS SWITCHING: "carry the integrator
@@ -832,7 +936,10 @@ bool Pipeline::step() {
     ModeFsmInputs fsm_in;
     fsm_in.running         = true;
     fsm_in.have_track      = tracker_.has_track();
-    fsm_in.track_state     = trk.state();
+    // Not trk.state(): see Tracker::fsm_state() for why a live hypothesis has
+    // to count as Acquire, and for the frame of transient overshoot that
+    // telling the FSM otherwise cost.
+    fsm_in.track_state     = tracker_.fsm_state();
     fsm_in.candidate_count = rec.candidate_count;
     fsm_in.rms_error_px    = rec.handover_rms_urad / cfg_.synthetic.camera.ifov_urad();
     rec.mode = fsm_.step(fsm_in, frame_, frame.timestamp_s);

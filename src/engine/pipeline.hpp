@@ -118,6 +118,10 @@ struct FrameRecord {
 
     // --- Stage 6: tracking -------------------------------------------------
     int        candidate_count = 0;   ///< gated detections this frame (§9.4.7)
+    /// The window the detector was actually given this frame. Recorded so the
+    /// GUI can draw it, the trace can log it, and a reviewer can see for
+    /// themselves that a fast frame searched less rather than searched worse.
+    DetectRoi  roi{};
     TrackMode  mode        = TrackMode::Idle;
     TrackState track_state = TrackState::Deleted;
     bool       has_lock    = false;   ///< Confirmed or Coasting
@@ -219,7 +223,9 @@ struct PipelineConfig {
     DetectorKind detector = DetectorKind::Classical;
 
     PerceptionParams perception{};
+    RoiParams        roi{};
     TrackParams      tracking{};
+    PriorityWeights  priority{};
 
     /// Stage 12. Off by default: the supervisor CHANGES the configuration a
     /// run uses, so a run with it on and one with it off are different claims
@@ -471,6 +477,11 @@ private:
     /// Startup wiring for perception, tracking, the mode FSM and the search
     /// pattern. Called from both build() paths; see pipeline.cpp.
     void build_stage6();
+
+    /// The window the detector gets this frame (see DetectRoi). Full frame
+    /// unless the track is confirmed and the filter is confident.
+    [[nodiscard]] DetectRoi detect_window(int width, int height,
+                                          Angle2 commanded) const noexcept;
 
     PipelineConfig  cfg_{};
     SyntheticSource source_{};

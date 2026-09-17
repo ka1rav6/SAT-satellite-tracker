@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace sat {
 
@@ -23,6 +24,10 @@ bool PerceptionWorkspace::allocate(Arena& arena, int width, int height, int se_s
     scale      = arena.alloc<uint8_t>(n);
     mask      = arena.alloc<uint8_t>(n);
     mask2     = arena.alloc<uint8_t>(n);
+    // Sized for the worst case, which is a "window" covering the whole frame.
+    // 300 KB against a 64 MB arena, and sizing it smaller would mean a ROI
+    // larger than expected silently falling back to the slow path.
+    crop      = arena.alloc<uint8_t>(n);
 
     morph.a       = arena.alloc<uint8_t>(n);
     morph.b       = arena.alloc<uint8_t>(n);
@@ -41,7 +46,7 @@ bool PerceptionWorkspace::allocate(Arena& arena, int width, int height, int se_s
     return !filtered.empty() && !tophat.empty() && !sat_sum.empty() &&
            !sat_sumsq.empty() && !response.empty() && !response_q.empty() &&
            !resp_sum.empty() && !resp_sumsq.empty() && !scale.empty() &&
-           !mask.empty() && !mask2.empty() && !morph.a.empty() &&
+           !mask.empty() && !mask2.empty() && !crop.empty() && !morph.a.empty() &&
            // Not merely non-empty: SUFFICIENT. top_hat() returns without
            // writing when the workspace is too small, which is silent — the
            // caller reads a stale buffer and every estimator downstream agrees
@@ -75,23 +80,71 @@ float centroid_sigma(float snr, int size_est_px) noexcept {
 
 void ClassicalPerception::process(std::span<const uint8_t> pixels,
                                   int width, int height,
+                                  DetectRoi roi,
                                   const PerceptionWorkspace& ws,
                                   std::vector<Detection>& out,
                                   StageTimers* timers) {
     // A no-op timer when none was supplied, so the body below has one shape.
-    StageTimers scratch;
+    //
+    // thread_local rather than a plain local: StageTimers is 24 histograms of
+    // 128 buckets, about 25 KB, and zero-initialising it on every frame of
+    // every run that does not want timing is 25 KB of memset for nothing. One
+    // per thread, reused, never read.
+    static thread_local StageTimers scratch;
     StageTimers& t = timers ? *timers : scratch;
     out.clear();
     last_blobs_ = 0;
-    const size_t n = static_cast<size_t>(width) * static_cast<size_t>(height);
-    if (width <= 0 || height <= 0 || pixels.size() < n) return;
+    if (width <= 0 || height <= 0) return;
+    const size_t full_n = static_cast<size_t>(width) * static_cast<size_t>(height);
+    if (pixels.size() < full_n) return;
+
+    // -----------------------------------------------------------------------
+    // The window (see DetectRoi in the header for why this exists).
+    //
+    // Clamped rather than validated: a caller that asks for a rectangle partly
+    // off the sensor gets the part that is on it, which is the behaviour a
+    // predicted position near the frame edge needs. An empty or absurd
+    // rectangle falls back to the whole frame, because a detector that
+    // silently looks at nothing is worse than a slow one.
+    // -----------------------------------------------------------------------
+    int rx = std::clamp(roi.x0, 0, width  - 1);
+    int ry = std::clamp(roi.y0, 0, height - 1);
+    int rw = std::clamp(roi.width,  0, width  - rx);
+    int rh = std::clamp(roi.height, 0, height - ry);
+    if (rw <= 0 || rh <= 0) { rx = 0; ry = 0; rw = width; rh = height; }
+
+    const bool   windowed = (rw != width || rh != height);
+    const size_t n        = static_cast<size_t>(rw) * static_cast<size_t>(rh);
+
+    // The crop. One contiguous copy, then every kernel below runs on an rw x rh
+    // image and knows nothing about the rest of the frame. See the note on
+    // PerceptionWorkspace::crop for why this is a copy and not a stride.
+    std::span<const uint8_t> frame = pixels;
+    if (windowed) {
+        if (ws.crop.size() < n) {   // not sized for it; fall back rather than fail
+            rx = 0; ry = 0; rw = width; rh = height;
+        } else {
+            for (int j = 0; j < rh; ++j) {
+                const uint8_t* srow = pixels.data()
+                                    + static_cast<size_t>(ry + j) * static_cast<size_t>(width) + rx;
+                std::memcpy(ws.crop.data() + static_cast<size_t>(j) * static_cast<size_t>(rw),
+                            srow, static_cast<size_t>(rw));
+            }
+            frame = std::span<const uint8_t>(ws.crop.data(), n);
+        }
+    }
+    // From here down, `width`/`height` mean the WINDOW, and detections are put
+    // back into full-frame coordinates at the very end.
+    const int ox = rx, oy = ry;
+    width  = rw;
+    height = rh;
 
     // --- B6: median 3x3 ---------------------------------------------------
-    std::span<const uint8_t> src = pixels;
+    std::span<const uint8_t> src = frame;
     if (params_.median_enabled && ws.filtered.size() >= n) {
         SAT_ZONE(t, Stage::Median);
-        median_3x3(pixels, ws.filtered, width, height);
-        src = ws.filtered;
+        median_3x3(frame, ws.filtered, width, height);
+        src = std::span<const uint8_t>(ws.filtered.data(), n);
     }
 
     // --- B7: top-hat background removal -----------------------------------
@@ -236,6 +289,7 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
     // small because this loop runs over at most `max_candidates` blobs (24 by
     // default), not over pixels.
     SAT_ZONE(t, Stage::Centroid);
+    const float min_snr = min_candidate_snr(params_);
     for (const BlobAccum& b : blobs_) {
         if (!passes_gate(b, params_)) continue;
 
@@ -290,6 +344,24 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
             d.centroid_image = BiasTable::builtin().correct(
                 params_.centroid_kind, d.size_est_px, d.snr, d.centroid_image);
         }
+
+        // -----------------------------------------------------------------
+        // The SNR gate. It cannot live in passes_gate() with the shape tests,
+        // because the statistic it tests is CFAR evaluated at the CENTROID and
+        // the centroid does not exist until the lines above have run. See
+        // PerceptionParams::min_snr_factor for the derivation of the factor
+        // and for the measurement that made it necessary.
+        // -----------------------------------------------------------------
+        if (d.snr < min_snr) continue;
+
+        // Back into FULL-FRAME coordinates. Everything above ran on the
+        // window, including the CFAR and matched-filter evaluations that need
+        // window coordinates to index their tables, so the shift happens here
+        // and exactly once. A caller downstream cannot tell a windowed frame
+        // from a full one, which is the property that keeps the ROI out of the
+        // tracker, the metrics and the log format.
+        d.centroid_image.x += static_cast<double>(ox);
+        d.centroid_image.y += static_cast<double>(oy);
 
         out.push_back(d);
     }
