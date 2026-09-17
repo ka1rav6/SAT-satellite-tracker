@@ -160,19 +160,37 @@ int gui_command(int argc, char* argv[], int& i) {
     return 3;
 #else
     std::string path = std::string(SAT_SCENARIO_DIR) + "/baseline.toml";
+    sat::gui::ScreenshotJob job;
     for (int k = i + 1; k < argc; ++k) {
-        if (std::strcmp(argv[k], "--scenario") == 0 && k + 1 < argc) {
-            path = argv[++k];
-            i = k;
-        } else {
-            break;
+        const char* a = argv[k];
+        if      (std::strcmp(a, "--scenario") == 0 && k + 1 < argc) { path = argv[++k]; }
+        else if (std::strcmp(a, "--shot")     == 0 && k + 1 < argc) { job.path = argv[++k]; }
+        else if (std::strcmp(a, "--shot-after") == 0 && k + 1 < argc) {
+            job.after_frames = std::atoi(argv[++k]);
         }
+        else if (std::strcmp(a, "--shot-clutter") == 0 && k + 1 < argc) {
+            job.clutter = std::atoi(argv[++k]);
+        }
+        else if (std::strcmp(a, "--shot-focus") == 0 && k + 1 < argc) {
+            job.focus = argv[++k];
+        }
+        else if (std::strcmp(a, "--shot-imm")        == 0) { job.imm = true; }
+        else if (std::strcmp(a, "--shot-supervisor") == 0) { job.supervisor = true; }
+        else if (std::strcmp(a, "--shot-damage")     == 0) { job.damage = true; }
+        else if (std::strcmp(a, "--shot-random")     == 0) { job.random_start = true; }
+        else break;
+        i = k;
     }
 
     auto r = sat::load_scenario(path);
     if (!r) {
         std::fprintf(stderr, "%s\n", r.error().c_str());
         return 1;
+    }
+    if (!job.path.empty()) {
+        std::printf("screenshot run: '%s' -> %s after %d frames\n",
+                    r->name.c_str(), job.path.c_str(), job.after_frames);
+        return sat::gui::run_dashboard_screenshot(*r, job);
     }
     std::printf("opening dashboard with '%s'\n", r->name.c_str());
     return sat::gui::run_dashboard(*r);
@@ -183,6 +201,11 @@ void print_usage() {
     std::printf("usage: sat-tracker [options]\n\n");
     std::printf("  --version            print the version and build hash, then exit\n");
     std::printf("  --gui [--scenario F] open the live dashboard (design §12)\n");
+    std::printf("      [--shot FILE] [--shot-after N] [--shot-imm]\n");
+    std::printf("      [--shot-supervisor] [--shot-clutter N] [--shot-damage]\n");
+    std::printf("                       run N frames, save the window to FILE, exit.\n");
+    std::printf("                       Every figure in docs/MANUAL.md is made this\n");
+    std::printf("                       way; `just screenshots` regenerates them all\n");
     std::printf("  --headless [--scenario F] [--out DIR] [--seed N] [--duration S]\n");
     std::printf("             [--no-ai] [--bench] [--quiet] [--set k=v] [--trace]\n");
     std::printf("                       run with no window; writes centroid.csv and\n");

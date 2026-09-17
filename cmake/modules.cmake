@@ -254,6 +254,16 @@ if(SAT_HAVE_GLFW)
         PUBLIC  SAT_HAVE_GUI=1
         PRIVATE SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
     )
+    # `--gui --shot FILE` writes the window to a PNG so every figure in the
+    # manual is the output of a command rather than a picture somebody pasted
+    # in once. Design §4.2 sanctions OpenCV for "decode, file I/O and test
+    # oracles"; this is the file I/O.
+    if(SAT_HAVE_OPENCV)
+        target_link_libraries(sat_gui PRIVATE opencv_core opencv_imgproc opencv_imgcodecs)
+        target_compile_definitions(sat_gui PRIVATE SAT_HAVE_OPENCV=1)
+    else()
+        target_compile_definitions(sat_gui PRIVATE SAT_HAVE_OPENCV=0)
+    endif()
 else()
     # Declared but empty, so the application links the same way either
     # way and `--gui` reports a clear message instead of failing to build.

@@ -2,6 +2,11 @@
 
 #include "gui/dashboard.hpp"
 
+#if SAT_HAVE_OPENCV
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+#endif
+
 #include "sat/version.hpp"
 #include "scenario/schema.hpp"
 
@@ -219,6 +224,31 @@ void Dashboard::step_simulation() {
 
     tracking_.push(r.time_s, r.tracking_error_px);
     saturation_.push(r.time_s, pipeline_.gimbal().saturation_frac());
+
+    // CP 15.1's panels. Pushed here rather than read on demand because a plot
+    // needs the HISTORY, and the pipeline only keeps the current frame.
+    const Tracker& tk = pipeline_.tracker();
+    if (pipeline_.tracker().track().uses_imm()) {
+        imm_cv_.push(r.time_s, static_cast<double>(r.imm_mode_prob[0]));
+        imm_ca_.push(r.time_s, static_cast<double>(r.imm_mode_prob[1]));
+        imm_ct_.push(r.time_s, static_cast<double>(r.imm_mode_prob[2]));
+    }
+    score_committed_.push(r.time_s, static_cast<double>(tk.committed_score()));
+    score_rival_.push(r.time_s, static_cast<double>(tk.best_rival_score()));
+
+    if (r.sup_switched) {
+        char buf[128];
+        std::snprintf(buf, sizeof buf, "%s  k=%.2f  gate=%.2f",
+                      centroid_kind_name(r.sup_centroider),
+                      static_cast<double>(r.sup_cfar_k),
+                      static_cast<double>(r.sup_cfar_k) * 1.5);
+        strategy_marks_.push_back(StrategyMark{r.time_s, buf,
+                                               r.sup_snr, r.sup_q_scale});
+        // §10.6's dwell allows at most one switch per second, so 2048 is over
+        // half an hour of demo. Dropping the oldest keeps the panel bounded
+        // without the timeline lying about what happened recently.
+        if (strategy_marks_.size() > 2048) strategy_marks_.erase(strategy_marks_.begin());
+    }
     if (r.centroid_error_valid) {
         centroid_image_.push(r.time_s, r.centroid_error_px);
         centroid_screen_.push(r.time_s, r.centroid_error_screen_px);
@@ -499,16 +529,39 @@ void Dashboard::draw_controls() {
         "watch the brightest-pixel detector lock onto one of them instead -\n"
         "that is CP 4.11.");
 
+    // -----------------------------------------------------------------------
+    // The detector, live. CP 15.2 asks for switching you can watch, and this is
+    // the switch with the largest visible consequence in the whole project.
+    //
+    // This block used to read "Detector: brightest pixel - a deliberate straw
+    // man ... Stage 5 replaces this with the real pipeline". Stage 5 arrived
+    // and the text did not: the dashboard has been running the classical
+    // pipeline for some time while telling everyone who looked at it that it
+    // was not. Stale explanatory text is worse than none, because it is
+    // believed.
+    // -----------------------------------------------------------------------
     ImGui::Separator();
-    ImGui::TextColored(ImVec4{1.0f, 0.80f, 0.35f, 1.0f},
-                       "Detector: brightest pixel - a deliberate straw man");
-    ImGui::TextWrapped(
-        "Stage 5 replaces this with the real pipeline: a 3x3 median, a van Herk "
-        "top-hat, integer summed-area tables, a multi-scale matched filter and "
-        "CFAR. Until then, press \"Full spec\" above to watch this detector fail "
-        "at row 21's 10%% impulse noise - 30,720 corrupted pixels against a "
-        "100-pixel beacon, every one of them brighter. That is CP 4.11, and it "
-        "is the measured justification for building the median filter.");
+    ImGui::TextColored(kMutedCol, "Detector (CP 4.11's ablation, live)");
+    {
+        const bool classical =
+            pipeline_.config().detector == DetectorKind::Classical;
+        if (ImGui::RadioButton("classical (§9.4)", classical)) {
+            pipeline_.set_detector(DetectorKind::Classical);
+        }
+        ImGui::SetItemTooltip(
+            "A 3x3 median, a van Herk top-hat, integer summed-area tables, a\n"
+            "multi-scale matched filter, CFAR with a guard band, run-length\n"
+            "grouping, a shape gate and an SNR gate. This is what ships.");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("brightest pixel", !classical)) {
+            pipeline_.set_detector(DetectorKind::BrightestPixel);
+        }
+        ImGui::SetItemTooltip(
+            "The straw man, kept runnable because CP 4.11's finding is a claim\n"
+            "about the CLOSED LOOP and needs both arms. Switch to it with the\n"
+            "clutter slider up, or with salt-and-pepper at row 21's 10%%, and\n"
+            "watch it lock onto the wrong thing within a few frames.");
+    }
 
     ImGui::End();
 }
@@ -792,6 +845,7 @@ void Dashboard::draw_metrics() {
 // ---------------------------------------------------------------------------
 void Dashboard::draw_tracking_panel() {
     if (dock_.left_bottom) ImGui::SetNextWindowDockID(dock_.left_bottom, dock_cond());
+    focus_if_requested("tracking");
     ImGui::Begin("Tracking");
 
     const Track&  trk  = pipeline_.tracker().track();
@@ -862,6 +916,309 @@ void Dashboard::draw_tracking_panel() {
     ImGui::End();
 }
 
+// ===========================================================================
+// CP 15.1 — the §12 panels that had nothing to attach to until Stages 6, 10
+// and 12 existed.
+//
+// §14.0a listed four of them as outstanding: "the IMM mode-probability panel,
+// the SAT strategy timeline, the mode-FSM graph and live algorithm switching".
+// Live switching landed at Stage 15; these are the other three, plus one the
+// design did not anticipate because §10.2's policy did not exist in its current
+// form — the hypothesis table, which shows the single most consequential
+// decision the tracker makes.
+// ===========================================================================
+
+// Bring a docked panel to the front of its tab bar, when a screenshot run asked
+// for it by name. Docked panels share a tab bar, so a figure OF one has to say
+// which one; in an interactive session this does nothing and the user clicks.
+void Dashboard::focus_if_requested(const char* title) {
+    if (job_.focus.empty()) return;
+    if (job_.focus != title) return;
+    ImGui::SetNextWindowFocus();
+}
+
+void Dashboard::draw_imm_panel() {
+    if (dock_.right_bottom) ImGui::SetNextWindowDockID(dock_.right_bottom, dock_cond());
+    focus_if_requested("imm");
+    ImGui::Begin("IMM mode probabilities  (CP 10.5)");
+
+    const Track& trk = pipeline_.tracker().track();
+    if (!trk.uses_imm()) {
+        ImGui::TextColored(kMutedCol,
+            "The IMM is off. It is opt-in (tracking.imm) because every\n"
+            "reproducibility fingerprint in the project is a hash of the\n"
+            "simulation state, and a six-state filter would churn all of them.\n\n"
+            "Turn it on in Run control, or load scenarios/fog_figure8.toml,\n"
+            "where the manoeuvre is what it is for.");
+        ImGui::End();
+        return;
+    }
+
+    // What the checkpoint asks to be visible: the shift at a crossing.
+    ImGui::TextColored(kMutedCol,
+        "CV constant velocity  ·  CA constant acceleration  ·  CT coordinated turn");
+
+    if (ImPlot::BeginPlot("##imm", ImVec2(-1, 190))) {
+        ImPlot::SetupAxes("t (s)", "probability",
+                          ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_Lock);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.0, ImPlotCond_Always);
+        auto line = [&](const char* name, const Trace& t, ImVec4 col) {
+            if (t.empty()) return;
+            t.flatten(plot_x_, plot_y_);
+            ImPlot::SetNextLineStyle(col, 2.0f);
+            ImPlot::PlotLine(name, plot_x_.data(), plot_y_.data(),
+                             static_cast<int>(plot_x_.size()));
+        };
+        line("CV", imm_cv_, ImVec4{0.45f, 0.75f, 1.00f, 1.0f});
+        line("CA", imm_ca_, ImVec4{1.00f, 0.78f, 0.35f, 1.0f});
+        line("CT", imm_ct_, ImVec4{0.95f, 0.45f, 0.75f, 1.0f});
+        ImPlot::EndPlot();
+    }
+
+    const ImmFilter& imm = trk.imm();
+    if (ImGui::BeginTable("immnow", 2,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        auto row = [](const char* k, const char* fmt, auto... v) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextColored(kMutedCol, "%s", k);
+            ImGui::TableNextColumn(); ImGui::Text(fmt, v...);
+        };
+        row("P(CV)", "%.3f", imm.mode_prob(ImmMode::CV));
+        row("P(CA)", "%.3f", imm.mode_prob(ImmMode::CA));
+        row("P(CT)", "%.3f", imm.mode_prob(ImmMode::CT));
+        // The turn rate is the CT model's own state, and seeing it move is what
+        // makes "the mode plot shows the shift" mean something physical.
+        row("turn rate", "%.2f deg/s", imm.turn_rate_rad_s() * 180.0 / kPi);
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
+void Dashboard::draw_hypotheses_panel() {
+    if (dock_.right_bottom) ImGui::SetNextWindowDockID(dock_.right_bottom, dock_cond());
+    focus_if_requested("priority");
+    ImGui::Begin("Priority policy  (design 10.2)");
+
+    const Tracker& tk = pipeline_.tracker();
+    const double ifov = scenario_.camera_geometry().ifov_urad();
+
+    ImGui::TextColored(kMutedCol,
+        "The mount follows ONE track. This is how it is chosen: candidates\n"
+        "become hypotheses, and a hypothesis takes the mount only if it MOVES\n"
+        "differently from the static world. Clutter does not.");
+    ImGui::Spacing();
+
+    if (!tk.weights().enabled) {
+        ImGui::TextColored(ImVec4{1.0f, 0.75f, 0.3f, 1.0f},
+            "Policy OFF — the strongest candidate in the first frame that has\n"
+            "one becomes the track. This is the ablation arm; on the\n"
+            "specification's own scenario it locks onto a rock.");
+        ImGui::End();
+        return;
+    }
+
+    // The ego-motion estimate. It is a real physical quantity — spec row 25's
+    // platform rate as the tracker sees it — so showing it lets a viewer check
+    // it against the scenario.
+    const Angle2 cv = tk.common_velocity();
+    ImGui::Text("static world drifts at %.1f, %.1f px/s%s",
+                cv.x / ifov, cv.y / ifov,
+                tk.common_velocity_valid() ? "" : "   (not yet measurable)");
+    ImGui::TextColored(kMutedCol,
+        "committed score %.3f   best rival %.3f   switch pressure %d/%d   "
+        "switches %lld   drops %lld",
+        static_cast<double>(tk.committed_score()),
+        static_cast<double>(tk.best_rival_score()),
+        tk.switch_pressure(), tk.weights().switch_frames,
+        static_cast<long long>(tk.switches()), static_cast<long long>(tk.drops()));
+
+    ImGui::Spacing();
+    if (ImGui::BeginTable("hyps", 6,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders
+                        | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("slot");
+        ImGui::TableSetupColumn("state");
+        ImGui::TableSetupColumn("SNR");
+        ImGui::TableSetupColumn("hits");
+        ImGui::TableSetupColumn("rel. speed");
+        ImGui::TableSetupColumn("score");
+        ImGui::TableHeadersRow();
+
+        const Track& trk = tk.track();
+        if (trk.alive()) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(ImVec4{0.4f, 0.9f, 0.4f, 1.0f}, "MOUNT");
+            ImGui::TableNextColumn(); ImGui::Text("%s", track_state_name(trk.state()));
+            ImGui::TableNextColumn(); ImGui::Text("%.1f", static_cast<double>(trk.mean_snr()));
+            ImGui::TableNextColumn(); ImGui::Text("%d/%d", trk.hits(), trk.age_frames());
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f px/s", trk.relative_speed_urad_s() / ifov);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f", static_cast<double>(tk.committed_score()));
+        }
+        for (int i = 0; i < Tracker::kMaxHypotheses; ++i) {
+            const Track& h = tk.hypothesis(i);
+            if (!h.alive()) continue;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextColored(kMutedCol, "%d", i);
+            ImGui::TableNextColumn(); ImGui::Text("%s", track_state_name(h.state()));
+            ImGui::TableNextColumn(); ImGui::Text("%.1f", static_cast<double>(h.mean_snr()));
+            ImGui::TableNextColumn(); ImGui::Text("%d/%d", h.hits(), h.age_frames());
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f px/s", h.relative_speed_urad_s() / ifov);
+            ImGui::TableNextColumn();
+            const float sc = tk.hypothesis_score(i);
+            ImGui::TextColored(sc >= tk.weights().min_commit_score
+                                   ? ImVec4{0.4f, 0.9f, 0.4f, 1.0f} : kMutedCol,
+                               "%.3f", static_cast<double>(sc));
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::Spacing();
+    ImGui::TextColored(kMutedCol,
+        "A score needs %.2f to take the mount. The four terms that are not\n"
+        "motion sum to %.2f, so brightness and stability alone cannot reach it.",
+        static_cast<double>(tk.weights().min_commit_score),
+        static_cast<double>(tk.weights().snr + tk.weights().stability
+                          + tk.weights().centrality + tk.weights().age));
+
+    if (!score_committed_.empty() && ImPlot::BeginPlot("##scores", ImVec2(-1, 150))) {
+        ImPlot::SetupAxes("t (s)", "priority score",
+                          ImPlotAxisFlags_AutoFit, ImPlotAxisFlags_Lock);
+        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, 1.05, ImPlotCond_Always);
+        score_committed_.flatten(plot_x_, plot_y_);
+        ImPlot::SetNextLineStyle(ImVec4{0.4f, 0.9f, 0.4f, 1.0f}, 2.0f);
+        ImPlot::PlotLine("committed", plot_x_.data(), plot_y_.data(),
+                         static_cast<int>(plot_x_.size()));
+        score_rival_.flatten(plot_x_, plot_y2_);
+        ImPlot::SetNextLineStyle(ImVec4{1.0f, 0.55f, 0.35f, 1.0f}, 1.5f);
+        ImPlot::PlotLine("best rival", plot_x_.data(), plot_y2_.data(),
+                         static_cast<int>(plot_y2_.size()));
+        const double thr = static_cast<double>(tk.weights().min_commit_score);
+        ImPlot::SetNextLineStyle(ImVec4{0.9f, 0.3f, 0.3f, 0.8f}, 1.0f);
+        ImPlot::PlotInfLines("commit threshold", &thr, 1, ImPlotInfLinesFlags_Horizontal);
+        ImPlot::EndPlot();
+    }
+    ImGui::End();
+}
+
+void Dashboard::draw_strategy_panel() {
+    if (dock_.right_bottom) ImGui::SetNextWindowDockID(dock_.right_bottom, dock_cond());
+    focus_if_requested("strategy");
+    ImGui::Begin("SAT strategy timeline  (CP 12.2)");
+
+    const FrameRecord& r = pipeline_.last();
+    if (!pipeline_.config().supervisor.enabled) {
+        ImGui::TextColored(kMutedCol,
+            "The supervisor is off. It CHANGES the configuration a run uses, so\n"
+            "a run with it on and one with it off are different claims and must\n"
+            "be distinguishable — the same argument INV-7 makes for --no-ai.\n\n"
+            "Turn it on in Run control to watch it adapt.");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::Text("now:  %s   k = %.2f   q x %.2f",
+                centroid_kind_name(r.sup_centroider),
+                static_cast<double>(r.sup_cfar_k),
+                static_cast<double>(r.sup_q_scale));
+    ImGui::TextColored(kMutedCol, "deciding on integrated SNR %.1f", 
+                       static_cast<double>(r.sup_snr));
+    ImGui::Spacing();
+
+    if (strategy_marks_.empty()) {
+        ImGui::TextColored(kMutedCol,
+            "No switch yet. §10.6's hysteresis allows at most one per second\n"
+            "and the middle SNR band deliberately does nothing — a supervisor\n"
+            "that always does SOMETHING is a supervisor that is guessing.");
+    } else if (ImGui::BeginTable("strat", 3,
+                                 ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY
+                               | ImGuiTableFlags_SizingStretchProp, ImVec2(0, 200))) {
+        ImGui::TableSetupColumn("t (s)");
+        ImGui::TableSetupColumn("chose");
+        ImGui::TableSetupColumn("because SNR was");
+        ImGui::TableHeadersRow();
+        for (size_t i = strategy_marks_.size(); i-- > 0;) {   // newest first
+            const StrategyMark& m = strategy_marks_[i];
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::Text("%.2f", m.t_s);
+            ImGui::TableNextColumn(); ImGui::Text("%s", m.label.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextColored(kMutedCol, "%.1f", static_cast<double>(m.snr));
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
+void Dashboard::draw_mode_graph() {
+    if (dock_.left_bottom) ImGui::SetNextWindowDockID(dock_.left_bottom, dock_cond());
+    focus_if_requested("fsm");
+    ImGui::Begin("Mode FSM  (design 10.4)");
+
+    // §14.0's substitute for this panel was "assert the FSM transition sequence
+    // against the expected trace", and that test stays — it tests more than a
+    // person watching. This is the inspection surface: it makes the CURRENT
+    // state and the shape of the machine legible at a glance, which a trace in
+    // a log does not.
+    const TrackMode now = pipeline_.fsm().mode();
+
+    struct Node { TrackMode mode; float x, y; const char* label; };
+    static constexpr Node kNodes[] = {
+        {TrackMode::Search,    0.10f, 0.50f, "Search"},
+        {TrackMode::Detect,    0.32f, 0.50f, "Detect"},
+        {TrackMode::Acquire,   0.54f, 0.50f, "Acquire"},
+        {TrackMode::Track,     0.76f, 0.50f, "Track"},
+        {TrackMode::Reacquire, 0.76f, 0.15f, "Reacquire"},
+        {TrackMode::Handover,  0.95f, 0.50f, "Handover"},
+        {TrackMode::Safe,      0.32f, 0.85f, "Safe"},
+        {TrackMode::Idle,      0.10f, 0.15f, "Idle"},
+    };
+    struct Edge { int from, to; };
+    static constexpr Edge kEdges[] = {
+        // Design §10.4's arrows, plus the two §14.0c added because the table
+        // stops at the happy path: Detect and Acquire both fall back to Search.
+        {7,0}, {0,1}, {1,2}, {2,3}, {3,5}, {3,4}, {4,3}, {4,0}, {1,0}, {2,0},
+        {3,6},
+    };
+
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 avail  = ImGui::GetContentRegionAvail();
+    const float  w = avail.x;
+    const float  h = std::max(150.0f, std::min(avail.y, 220.0f));
+    ImDrawList*  dl = ImGui::GetWindowDrawList();
+
+    auto at = [&](const Node& n) {
+        return ImVec2(origin.x + n.x * w, origin.y + n.y * h);
+    };
+
+    for (const Edge& e : kEdges) {
+        const ImVec2 a = at(kNodes[e.from]);
+        const ImVec2 b = at(kNodes[e.to]);
+        dl->AddLine(a, b, IM_COL32(120, 130, 150, 160), 1.5f);
+    }
+    for (const Node& n : kNodes) {
+        const bool live = (n.mode == now);
+        const ImVec2 c  = at(n);
+        const float  r  = 26.0f;
+        dl->AddCircleFilled(c, r, live ? IM_COL32(60, 170, 90, 230)
+                                       : IM_COL32(45, 50, 60, 220));
+        dl->AddCircle(c, r, live ? IM_COL32(120, 240, 150, 255)
+                                 : IM_COL32(110, 120, 140, 200), 0, live ? 2.5f : 1.0f);
+        const ImVec2 ts = ImGui::CalcTextSize(n.label);
+        dl->AddText(ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f),
+                    live ? IM_COL32(255, 255, 255, 255) : IM_COL32(190, 200, 215, 255),
+                    n.label);
+    }
+    ImGui::Dummy(ImVec2(w, h));
+
+    ImGui::TextColored(kMutedCol, "%d frames in %s",
+                       pipeline_.fsm().frames_in_mode(), track_mode_name(now));
+    ImGui::End();
+}
+
 void Dashboard::draw_scenario_panel() {
     if (dock_.left_bottom) ImGui::SetNextWindowDockID(dock_.left_bottom, dock_cond());
     ImGui::Begin("Scenario");
@@ -927,7 +1284,8 @@ void Dashboard::draw_scenario_panel() {
 // run
 // ===========================================================================
 
-int Dashboard::run(const Scenario& initial) {
+int Dashboard::run(const Scenario& initial, ScreenshotJob job) {
+    job_ = job;
     glfwSetErrorCallback(glfw_error);
     if (!glfwInit()) {
         std::fprintf(stderr, "sat-tracker: could not initialise GLFW.\n"
@@ -944,7 +1302,25 @@ int Dashboard::run(const Scenario& initial) {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
 
-    window_ = glfwCreateWindow(1900, 1100, "SAT — Satellite Adaptive Tracker", nullptr, nullptr);
+    // A screenshot run creates the window HIDDEN and at a fixed size.
+    //
+    // Both matter. Hidden, because regenerating the manual's figures should not
+    // throw eight windows across whatever the user is doing. Fixed, because a
+    // window manager is free to resize a visible window to fit its own idea of
+    // the screen — this laptop's tiler gave back 941 x 1130 for a request of
+    // 1900 x 1100 — and a figure whose panels are cropped differently on every
+    // machine is not a figure, it is a lottery.
+    if (!job_.path.empty()) {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    }
+    // 2400 x 1350 for a figure: the right-hand column carries wide tables
+    // (the hypothesis table, the compliance matrix, the stage timings) and at
+    // 1920 they clip. A figure with a clipped table is a figure that has to be
+    // apologised for in its caption.
+    const int win_w = job_.path.empty() ? 1900 : 2400;
+    const int win_h = job_.path.empty() ? 1100 : 1350;
+    window_ = glfwCreateWindow(win_w, win_h, "SAT — Satellite Adaptive Tracker",
+                               nullptr, nullptr);
     if (!window_) {
         std::fprintf(stderr, "sat-tracker: could not create a window.\n"
                              "  No display, or no OpenGL 3.3. Use --headless instead.\n");
@@ -986,7 +1362,24 @@ int Dashboard::run(const Scenario& initial) {
     ImGui_ImplGlfw_InitForOpenGL(window_, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+    // A screenshot run configures itself before the first frame, so the figure
+    // in the manual shows the feature it is a figure OF rather than the default
+    // opening state.
+    if (!job_.path.empty()) {
+        if (job_.imm)          const_cast<Scenario&>(initial).tracking_imm = true;
+        if (job_.supervisor)   const_cast<Scenario&>(initial).supervisor_enabled = true;
+        if (job_.clutter >= 0) {
+            clutter_sources_ = job_.clutter;
+            decoy_beacons_   = job_.clutter > 0 ? 1 : 0;
+        }
+        start_clean_    = !job_.damage;
+        beacon_in_view_ = !job_.random_start;
+        steps_per_draw_ = 4;   // reach the target frame in a fraction of a second
+    }
+
     rebuild(initial);
+
+    int64_t shot_countdown = job_.path.empty() ? -1 : job_.after_frames;
 
     while (!glfwWindowShouldClose(window_)) {
         glfwPollEvents();
@@ -1059,6 +1452,10 @@ int Dashboard::run(const Scenario& initial) {
         draw_error_plots();
         draw_metrics();
         draw_tracking_panel();
+        draw_hypotheses_panel();
+        draw_imm_panel();
+        draw_strategy_panel();
+        draw_mode_graph();
         draw_scenario_panel();
 
         ImGui::Render();
@@ -1069,6 +1466,19 @@ int Dashboard::run(const Scenario& initial) {
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         if (redock_frames_ > 0) --redock_frames_;
+
+        // The screenshot is taken AFTER the draw and BEFORE the swap, so the
+        // back buffer still holds the frame that was just rendered. Reading
+        // after the swap would capture whatever the driver left behind.
+        if (shot_countdown >= 0 && frames_ >= shot_countdown && layout_built_
+            && redock_frames_ == 0) {
+            const bool ok = capture(job_.path);
+            glfwSwapBuffers(window_);
+            glfwDestroyWindow(window_);
+            glfwTerminate();
+            return ok ? 0 : 1;
+        }
+
         glfwSwapBuffers(window_);
     }
 
@@ -1081,9 +1491,60 @@ int Dashboard::run(const Scenario& initial) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// capture — glReadPixels the window and write it.
+//
+// OpenCV rather than a hand-rolled PNG writer: it is already a dependency, and
+// design §4.2's boundary explicitly sanctions it for "decode, file I/O and test
+// oracles". Writing a deflate stream by hand to avoid one imgcodecs link would
+// be the wrong kind of purity.
+// ---------------------------------------------------------------------------
+bool Dashboard::capture(const std::string& path) const {
+#if SAT_HAVE_OPENCV
+    int w = 0, h = 0;
+    glfwGetFramebufferSize(window_, &w, &h);
+    if (w <= 0 || h <= 0) return false;
+
+    std::vector<unsigned char> px(static_cast<size_t>(w) * static_cast<size_t>(h) * 3u);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK);
+    glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px.data());
+
+    // GL's origin is bottom-left and every image format's is top-left, so the
+    // rows come back upside down. Flipped in place rather than by cv::flip so
+    // the buffer is only walked once.
+    const size_t stride = static_cast<size_t>(w) * 3u;
+    for (int y = 0; y < h / 2; ++y) {
+        std::swap_ranges(px.begin() + static_cast<ptrdiff_t>(y * stride),
+                         px.begin() + static_cast<ptrdiff_t>((y + 1) * stride),
+                         px.begin() + static_cast<ptrdiff_t>((h - 1 - y) * stride));
+    }
+
+    cv::Mat rgb(h, w, CV_8UC3, px.data(), stride);
+    cv::Mat bgr;
+    cv::cvtColor(rgb, bgr, cv::COLOR_RGB2BGR);
+    if (!cv::imwrite(path, bgr)) {
+        std::fprintf(stderr, "sat-tracker: could not write %s\n", path.c_str());
+        return false;
+    }
+    std::printf("wrote %s  (%d x %d)\n", path.c_str(), w, h);
+    return true;
+#else
+    (void)path;
+    std::fprintf(stderr,
+        "sat-tracker: --shot needs OpenCV, which this build does not have.\n");
+    return false;
+#endif
+}
+
 int run_dashboard(const Scenario& sc) {
     Dashboard d;
     return d.run(sc);
+}
+
+int run_dashboard_screenshot(const Scenario& sc, const ScreenshotJob& job) {
+    Dashboard d;
+    return d.run(sc, job);
 }
 
 }  // namespace sat::gui

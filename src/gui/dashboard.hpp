@@ -99,16 +99,48 @@ private:
     size_t n_ = 0;
 };
 
+// -----------------------------------------------------------------------
+// ScreenshotJob — run for a while, save the window, exit.
+//
+// The docs are supposed to show what the product looks like, and a
+// screenshot pasted into a repository is a claim nobody can check: it rots
+// silently the moment a panel moves. This makes every figure in the manual
+// the output of a COMMAND — `just screenshots` regenerates all of them —
+// so a stale one is a diff rather than a surprise.
+//
+// It is also the only automated check that the GUI still starts and draws.
+// CP 15.0's acceptance is "a window opens and renders at >= 60 FPS", which
+// nothing in CI could verify before.
+// -----------------------------------------------------------------------
+struct ScreenshotJob {
+    std::string path;          ///< PNG to write; empty means interactive
+    int  after_frames = 90;    ///< simulation frames to run first
+    bool imm          = false; ///< force the IMM on before running
+    bool supervisor   = false; ///< force the supervisor on
+    int  clutter      = -1;    ///< >= 0 overrides the clutter count
+    bool damage       = false; ///< start with the damage chain on
+    bool random_start = false; ///< honour spec row 11 instead of centring
+    /// Panel to bring to the front of its tab bar before the shot is taken.
+    /// Docked panels share a tab bar, so a figure OF a panel has to ask for it.
+    std::string focus;
+};
+
 // ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
 class Dashboard {
 public:
-    /// Open the window and run until the user closes it.
+    /// Open the window and run until the user closes it, or — when `job.path`
+    /// is set — until the screenshot has been taken.
     /// Returns a process exit code.
-    [[nodiscard]] int run(const Scenario& initial);
+    [[nodiscard]] int run(const Scenario& initial, ScreenshotJob job = {});
 
 private:
+    /// glReadPixels the whole window, flip it, and write it. Returns false and
+    /// explains on stderr if the image could not be written.
+    [[nodiscard]] bool capture(const std::string& path) const;
+
+    ScreenshotJob job_{};
     void step_simulation();
     void rebuild(const Scenario& sc);
 
@@ -120,6 +152,24 @@ private:
     void draw_metrics();
     void draw_tracking_panel();
     void draw_scenario_panel();
+
+    // --- CP 15.1's remaining §12 panels ------------------------------------
+    /// The IMM's three mode probabilities over time, and the turn rate it is
+    /// estimating. The panel CP 10.5 is written against: "the mode plot shows
+    /// the shift" at a figure-8 crossing.
+    void draw_imm_panel();
+    /// §10.6's strategy timeline — what the supervisor chose, when, and what
+    /// condition made it choose. CP 12.2: "switches visible on a timeline".
+    void draw_strategy_panel();
+    /// §10.4's mode FSM, drawn as a graph with the live state highlighted.
+    /// CP 6.6's acceptance criterion before §14.0 replaced it with a trace.
+    void draw_mode_graph();
+    /// §10.2's priority policy: every live hypothesis, its score, and why the
+    /// committed one is committed. Without this the tracker's most important
+    /// decision is invisible.
+    void draw_hypotheses_panel();
+    /// Bring a docked panel to the front of its tab bar, for a screenshot run.
+    void focus_if_requested(const char* title);
 
     GLFWwindow* window_ = nullptr;
 
@@ -177,6 +227,22 @@ private:
     Trace tracking_{};
     Trace saturation_{};
 
+    /// The IMM's three mode probabilities, and the priority policy's two
+    /// scores. Same rolling window as the error traces.
+    Trace imm_cv_{}, imm_ca_{}, imm_ct_{};
+    Trace score_committed_{}, score_rival_{};
+
+    /// One entry per supervisor switch, for the strategy timeline. Bounded:
+    /// §10.6's dwell allows at most one switch per second, so a twenty-minute
+    /// demo cannot exceed this.
+    struct StrategyMark {
+        double      t_s = 0.0;
+        std::string label;      ///< what changed, already formatted
+        float       snr = 0.0f;     ///< the condition that triggered it
+        float       q_scale = 1.0f; ///< and what it did to the filter
+    };
+    std::vector<StrategyMark> strategy_marks_;
+
     // The beacon's true path and the detector's reported path, in screen
     // coordinates, for the overview panel. Subsampled: a 120 s run at 30 Hz is
     // 3600 points, which is more than a 400-pixel-wide panel can show.
@@ -198,5 +264,9 @@ private:
 
 /// Entry point for `sat-tracker --gui`.
 [[nodiscard]] int run_dashboard(const Scenario& sc);
+
+/// Entry point for `sat-tracker --gui --shot FILE`. See Dashboard::ScreenshotJob.
+[[nodiscard]] int run_dashboard_screenshot(const Scenario& sc,
+                                           const ScreenshotJob& job);
 
 }  // namespace sat::gui
