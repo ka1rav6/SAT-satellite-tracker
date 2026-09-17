@@ -1693,6 +1693,176 @@ sat-tracker --bench
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
 
+## 14.0c AMENDMENT — spec row 8's edge behaviour was never implemented; and
+## §10.2's priority score cannot tell a beacon from a rock
+
+**Status:** adopted. **Applies from:** Stage 3 (row 8) and Stage 6 (§10.2).
+
+Two defects found together, because the first one was masking the second.
+
+### Row 8: `world.edge_behaviour` was parsed, validated, echoed, and read by nothing
+
+The same shape as §7.4's events before they were wired up. `bounce`, `wrap` and
+`exit` were all accepted by the schema and reported in `run.json`; `World::advance`
+never looked at them.
+
+The consequence is not cosmetic. On `scenarios/baseline.toml` — the
+specification's own defaults, with its own default seed — row 11's random initial
+position puts the beacon at (1936, 1831) on a 2000 × 2000 screen, and row 12's
+linear motion carries it off the canvas within three seconds:
+
+| frame | true beacon position |
+|---|---|
+| 0 | (1936, 1831) |
+| 100 | (2009, 1794) — already outside |
+| 800 | (2523, 1537) |
+
+Every metric that run produced was a measurement of a beacon that was not in the
+world. It is the most misleading class of defect available: everything
+downstream works perfectly and reports a catastrophe.
+
+**Implemented** as a fold of the analytically evaluated coordinate, not as a
+reflected velocity. §7.2 is explicit that positions come from evaluating the
+motion stack at absolute time `t` rather than from integrating, because that is
+what makes the position exact for an accelerating target and what lets the
+analytic velocity be reported as truth. A bounce that flipped a stored velocity
+would have to become stateful and would break both properties. The triangle-wave
+fold in `world/world_builder.cpp` is a pure function of the coordinate and keeps
+them; `wrap` is the corresponding sawtooth; `exit` is unchanged, because a target
+that leaves has left and that is a legitimate thing for a scenario to ask for.
+
+### §10.2's priority score chooses the clutter
+
+The design gives the score as
+
+```
+w.snr * norm(mean_snr) + w.stability * norm(hit_ratio)
++ w.centrality * (1 - norm(dist_from_boresight)) + w.age * norm(age_s)
+```
+
+and **every one of those four terms is something a bright static source scores
+well on.** It is bright, it never misses, the controller has just centred it, and
+it gets older every frame. §9.1 makes 120 clutter sources mandatory and draws
+their intensities over 0.35× to 1.6× the beacon's, so roughly half of them are
+brighter than it. The design's own weights, applied to the design's own scenario,
+choose the rock — and `Tracker::step` made it worse by seeding the track from
+"the strongest candidate" in the first frame that had one.
+
+Measured on `baseline.toml` over 30 s before this amendment: the beacon was never
+in view, 1,798 false-track frames per minute, 1,272 px of tracking error.
+
+**Added: a fifth term, motion — but measured RELATIVELY.** Clutter is specified
+as static and the target is specified as moving, so angular velocity is the
+discriminator the other four terms lack. The first implementation scored *raw*
+apparent speed and made things worse, for a reason worth recording:
+
+The tracker converts pixels to world angles through the **commanded** boresight,
+because it cannot know the true one. Rows 23 and 25 move the true boresight and
+not the commanded one, so an object at a fixed world angle θ is reported at
+θ − disturbance(t) and therefore appears to move at minus the platform rate. On
+`baseline.toml`:
+
+| | apparent speed |
+|---|---|
+| clutter (platform 15, −8 px/s) | 1,854 µrad/s |
+| beacon (22, −11 px/s) | 831 µrad/s |
+
+The clutter appears to be moving more than twice as fast as the beacon. Raw speed
+does not weaken the discriminator, it **inverts** it.
+
+The fix is ego-motion compensation and it is exact rather than approximate: every
+static source shares the same apparent step every frame, so that step is
+recoverable as the component-wise **median** over the live hypotheses — most of
+which, in a field of 120 clutter sources, are static. Subtracting it frame by
+frame, rather than at the end, is what makes it work: row 23's ±20 px of jitter
+is common mode and cancels exactly in the median, and a velocity fitted against
+it would otherwise need 45 frames — 1.5 s of row 16's 2 s budget — to reach the
+precision that cancellation gives in twelve.
+
+**Also added, and both are necessary:**
+
+* a **commit threshold**. The four non-motion weights are deliberately scaled to
+  sum to 0.45, which is the ceiling on what anything can score without moving;
+  the threshold sits at 0.60 above it. A candidate cannot take the mount on
+  brightness and stability alone, however bright and however stable.
+* a **drop rule**. A promotion threshold alone is not enough: once anything is
+  committed the FSM stops searching, the controller centres it, every other
+  candidate leaves the field of view, and no challenger is left to out-score it.
+  A committed track that scores below the threshold for 45 consecutive frames is
+  dropped and the search resumes.
+
+**What this does not fix, stated plainly.** A moving decoy is not separated by
+this — it moves, it is bright, it is stable. Nor is a genuinely stationary
+target distinguished from clutter; motion is one weighted term and not a gate,
+so such a target competes on the same footing it did before, which is to say
+badly. Both remain §11's `CandidateNet` territory and both are recorded in
+`issues_till_now.md`.
+
+Everything is data: `tracking.priority` turns the policy off entirely and the
+weights, threshold, evidence requirement and hysteresis are all scenario keys, so
+the arm-versus-arm comparison in `docs/RESULTS.md` runs from one binary.
+
+---
+
+## 14.0b AMENDMENT — the detector is given a window when the track is confirmed
+
+**Status:** adopted. **Applies from:** Stage 5.
+
+§9.4's pipeline runs every stage over the whole frame: median, top-hat, two
+summed-area tables, a matched filter and two CFAR passes, over 307,200 pixels
+(row 3), thirty times a second. Measured, that is 11.5 ms of a 16 ms frame
+against §15's 1.39 ms for the same list of stages, and no amount of arithmetic
+improvement closes a gap that size.
+
+**The observation:** on a frame where the track is Confirmed, the tracker already
+knows where the beacon is — to within its filter's own position sigma, which in
+clear air is a couple of pixels. Searching the other 99% of the frame is not
+robustness; it is arithmetic performed on the answer to a question nobody asked.
+
+**Adopted:** when the track is Confirmed the detector is handed a window centred
+on the predicted image position, with a half-size that is the larger of a fixed
+floor and the filter's position sigma times a margin. When it is not — searching,
+acquiring, or coasting past its own confidence — it is handed the whole frame,
+because then the question really is "where is it".
+
+CP 6.7 already names this idea as "predicted-region reacquisition"; this applies
+it to the steady state as well.
+
+**Why the floor exists, and why it is not about the target.** §9.4.5's CFAR
+training annulus is 61 px across. A window narrower than that would estimate the
+background from almost nothing, so the floor is 96 px of half-width regardless of
+how confident the filter is.
+
+**Why Coasting deliberately does NOT get a window.** `drivable()` is true for
+Coasting as well as Confirmed, but the coasting case is exactly the one where the
+prediction is least trustworthy: the detector has already failed to find the
+target somewhere, and narrowing its search is the wrong response.
+
+**Three properties that make it safe:**
+
+* **INV-1 holds.** The window is a rectangle of pixel coordinates derived from
+  the tracker's own estimate. Perception still never sees truth.
+* **INV-3 holds.** The rectangle is a deterministic function of filter state.
+* **It cannot hide a target the tracker had.** The window grows with the
+  covariance, so a track that starts to drift widens its own window; one that
+  fails M-of-N drops out of Confirmed and gets the whole frame back next frame.
+
+**What it changes on purpose:** clutter outside the window is no longer detected
+and therefore can no longer be associated.
+
+**Implementation note.** The window is realised as a *copy* into a compact
+buffer, not as a stride threaded through every kernel. Six kernels each have an
+edge-clamping argument that would otherwise acquire a second meaning, and the
+copy leaves each kernel reading a contiguous buffer that fits in L2 — which is
+most of why the window is fast. `perception.roi` turns it off, so both arms are
+runnable from one binary.
+
+**Measured:** perception 17.3 ms → 2.9 ms p50 on `scenarios/compliance.toml`;
+frame total 22.7 ms → 8.4 ms. The p99 still shows the full-frame acquisition
+frames, which is honest and is what the stage table reports.
+
+---
+
 ## 14.0a AMENDMENT — the dashboard was pulled forward to Stage 4
 
 **Status:** adopted, superseding part of §14.0 below. **Applies from:** Stage 4.
