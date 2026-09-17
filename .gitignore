@@ -93,3 +93,6 @@ models/*.pt
 models/*.onnx
 models/*.onnx.data
 
+
+__pycache__/
+
