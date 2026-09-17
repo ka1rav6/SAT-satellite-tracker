@@ -37,21 +37,39 @@ Measured with `just stages` on `scenarios/compliance.toml` (120 clutter sources,
       `Stage::Centroid` now times B12/B13 alone and measures **24 µs against a
       20 µs budget**, which is the honest figure and is essentially on target.
 
+### 1.0a Where it ended up
+
+`just stages` on `scenarios/compliance.toml`, 20 s, Release:
+
+| | start of this work | now |
+|---|---:|---:|
+| `frame_total` p50 | 42,551 µs | **2,618 µs** |
+| FPS | 23.5 | **382** |
+| full test suite | 359 s | 78 s |
+
+Spec row 20 asks for 20 FPS and §15 targets 350–500. Both are met. §15's 0.85 ms
+is **not**, and the amendment at `docs/SAT-DESIGN.md` §14.0d derives why:
+0.85 ms is 9.7 cycles per pixel for the whole frame, and one Gaussian deviate
+per pixel — which spec rows 21–22 require — costs 16 on its own. The reachable
+synthetic floor is 1.5–2.0 ms, and all of the excess is the SIMULATOR, which
+does not exist in the video path Benchmark Performance-2 grades.
+
 ### 1.1 Open performance gaps
 
-| Stage | Measured p50 | §15 budget | Over | Status |
+| Stage | start | now | §15 | Status |
 |---|---:|---:|---:|---|
-| `splat` | 10,090 µs → **973 µs** | 40 | 24× | [~] separable factorisation landed; see 1.2 |
-| `damage_chain` | 12,079 µs | 550 | 22× | [ ] |
-| `cfar` (×2) | 4,914 µs each | 200 | 25× | [ ] |
-| `matched_filter` | 2,393 µs | 120 | 20× | [ ] |
-| `summed_area` (×2) | 1,827 µs each | 350 | 5× | [ ] |
-| `top_hat` | 1,999 µs | 300 | 7× | [ ] |
-| `median_3x3` | 567 µs | 350 | 2× | [ ] |
-| `grouping` | 396 µs | 50 | 8× | [ ] |
-| `background` | 135 µs | 150 | 0.9× | [x] within budget |
-| `centroid` | 24 µs | 20 | 1.2× | [x] within budget |
-| **`frame_total`** | **42,551 µs** | **850** | **50×** | [ ] |
+| `damage_chain` | 12,079 µs | **1,395 µs** | 550 | [~] 8.7× faster; the floor is ~1 ms — §14.0d |
+| `perception` (all of B6–B13) | 17,309 µs | **1,275 µs** | 1,390 | [x] **inside its §15 scalar line** |
+| `splat` | 10,090 µs | **231 µs** | 40 | [~] 44× faster, 5.8× over |
+| `background` | 135 µs | **72 µs** | 150 | [x] within budget |
+| `centroid` | — | **2 µs** | 20 | [x] within budget |
+| `median_3x3` | 567 µs | **42 µs** | 350 | [x] within budget |
+| `top_hat` | 1,999 µs | **161 µs** | 300 | [x] within budget |
+| `summed_area` (×2) | 1,827 µs each | **123 µs** each | 350 | [x] within budget |
+| `matched_filter` | 2,393 µs | **176 µs** | 120 | [~] 1.5× over |
+| `cfar` (×2) | 4,914 µs each | **362 µs** each | 200 | [~] 1.8× over |
+| `grouping` | 396 µs | **29 µs** | 50 | [x] within budget |
+| **`frame_total`** | **42,551 µs** | **2,618 µs** | **850** | [-] 3.1× over; see §14.0d |
 
 ### 1.2 What has been done, and what is left
 
@@ -65,7 +83,29 @@ Measured with `just stages` on `scenarios/compliance.toml` (120 clutter sources,
       grid corners, which is exactly 4× fewer evaluations. Every expression
       multiplies its factors in the same order as the function it replaces, so
       the result is bit-identical, not merely equal.
-- [ ] **Emitter splat, the remaining 24×.** Two further levers, neither taken
+- [x] **Emitter splat, the remaining 24× → 5.8×.** Clutter is now drawn to 3.5σ
+      rather than 6 — six sigma exists to stop truncation shifting a GRADED
+      centroid, and a clutter source's centroid is never scored — and the row
+      loop's per-pixel `cov > 0` branch is gone, replaced by trimming the x
+      extent once per emitter. 621 µs → 147 µs.
+- [x] **The damage chain.** Fused to one pass, one Gaussian draw instead of two
+      (variances add), a sampler built for the call rate, and CP 14.2's AVX2
+      path — bit-identical to scalar over four configurations on a
+      deliberately-ragged 4,101-pixel buffer, with the generator ending in the
+      same state. 12,079 µs → 1,395 µs.
+- [x] **The detector ran full-frame in every mode.** It is given a window when
+      the track is Confirmed (§14.0b). Perception 17,309 µs → 1,275 µs, which is
+      inside §15's own line for the same list of stages.
+- [x] **AVX2 kernels (CP 14.2).** Landed for the damage chain, with runtime
+      dispatch so one binary runs everywhere (CP 15.5).
+- [ ] **AVX2 for the three perception kernels that still dominate it** — the van
+      Herk opening, the matched filter and CFAR, together about 700 µs of the
+      1,275. `--bench-kernels` exists so this can be worked on with a usable
+      instrument.
+- [-] **Emitter splat, the last 5.8×.** Closed as *not worth it*: 231 µs against
+      a 2,618 µs frame, and the remaining cost is the outer-product store, which
+      is already close to memory bandwidth for the footprint it covers.
+- [~] **The old entry, kept for its argument:** Two further levers, neither taken
       yet: a Gaussian clutter source is drawn out to 6σ, which is 2.9× more area
       than the 3.5σ at which its contribution drops below one 8-bit grey level
       (6σ is required for the *graded* beacon, where truncation biases the
@@ -86,10 +126,11 @@ Measured with `just stages` on `scenarios/compliance.toml` (120 clutter sources,
 
 ### 1.3 Downstream of the frame budget
 
-- [ ] **CP 7.3 — "a 120 s scenario completes in under 2 s wall time".** Measured
-      ~5 minutes. It is the frame budget, multiplied by 3,600 frames.
-- [ ] **CP 7.5 — "500 runs complete in under 3 minutes on 8 cores".** Measured
-      ~13 minutes. Same cause.
+- [~] **CP 7.3 — "a 120 s scenario completes in under 2 s wall time".** Was ~5
+      minutes; now ~19 s, a 16× improvement and still 9.5× over. The criterion
+      needs 0.55 ms a frame, which §14.0d shows is below the floor.
+- [~] **CP 7.5 — "500 runs complete in under 3 minutes on 8 cores".** Same
+      cause, same 16×.
 
 ---
 
