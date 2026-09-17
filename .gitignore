@@ -86,3 +86,10 @@ Thumbs.db
 # test output & cache
 Testing/
 dist/
+
+data/
+ml/__pycache__/
+models/*.pt
+models/*.onnx
+models/*.onnx.data
+
