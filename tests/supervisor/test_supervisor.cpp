@@ -352,7 +352,23 @@ TEST_CASE("Stage 12: the supervisor recovers lock that the fixed configuration l
             ++in_fov;
             if (r.track_state == TrackState::Confirmed) ++held;
         }
-        REQUIRE(in_fov > 900);
+        // -------------------------------------------------------------------
+        // A SAMPLE-SIZE GUARD, NOT AN ASSERTION ABOUT THE RUN.
+        //
+        // This was `in_fov > 900` out of 1200 frames, and it passed — because
+        // the detector used to return several candidates per frame of pure
+        // noise, the tracker locked onto one of them within a frame, and the
+        // camera therefore stayed roughly where the beacon was instead of
+        // searching. With the SNR gate in place those candidates are gone, the
+        // FSM correctly goes back to Search when the fog takes the beacon below
+        // the threshold, and the camera sweeps away from it. in_fov is now 547
+        // for the fixed configuration and 629 for the supervised one.
+        //
+        // That is the scenario working as designed — it exists to put a dim
+        // beacon through a threshold — so the guard is now what it was always
+        // meant to be: enough frames for the retention ratio to mean something.
+        // -------------------------------------------------------------------
+        REQUIRE(in_fov > 300);
         return static_cast<double>(held) / static_cast<double>(in_fov);
     };
 
@@ -362,9 +378,20 @@ TEST_CASE("Stage 12: the supervisor recovers lock that the fixed configuration l
     MESSAGE("lock retention through fog: fixed configuration "
             << (100.0 * fixed) << " %, supervised " << (100.0 * supervised) << " %");
 
-    // Measured 77.4% -> 86.3%. The bound is set well below that so a modest
-    // regression still passes while a REVERSAL — the supervisor making things
-    // worse, which is the failure mode that matters — turns it red.
+    // Measured 77.4% -> 86.3% when this was written, and 55.2% -> 62.3% now.
+    // Both arms fell when the SNR gate landed, for the reason in the guard
+    // above; what the case measures is the GAP, and the gap is 7.1 points
+    // against the 8.9 it was.
+    //
+    // Recovering it needed the supervisor's low-SNR rule to move the candidate
+    // gate as well as the CFAR threshold — see the third departure recorded in
+    // control/supervisor.cpp's rule_table. With only cfar_k adapted the
+    // supervisor recovered 0.5 points, because it was lowering one of the two
+    // thresholds that were rejecting the target.
+    //
+    // The bound is set well below the measurement so a modest regression still
+    // passes while a REVERSAL — the supervisor making things worse, which is
+    // the failure mode that matters — turns it red.
     CHECK(supervised > fixed + 0.03);
 }
 

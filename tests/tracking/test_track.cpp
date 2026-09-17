@@ -53,11 +53,33 @@ int feed(Tracker& tr, int64_t frame, std::vector<Measurement> ms) {
 
 // ===========================================================================
 // CP 6.4 — the lifecycle, arrow by arrow
+//
+// These cases drive Tracker directly and assert on tr.track(). Their subject is
+// the LIFECYCLE — Tentative, Confirmed, Coasting, Deleted, and the M-of-N and
+// miss-count arrows between them — which §10.2's priority policy does not
+// change.
+//
+// What the policy does change is when a track becomes THE committed one: a
+// candidate now starts life as a hypothesis and is promoted, so tr.track() is
+// Deleted for the first few frames rather than Tentative. Running these cases
+// with the policy off is not dodging it; it is stating that the subject here is
+// the lifecycle and that the policy has its own tests in test_priority.cpp.
 // ===========================================================================
 
-TEST_CASE("CP 6.4: three hits in three frames confirms; a Tentative track cannot drive") {
+namespace {
+/// A tracker with §10.2's priority policy off — the ablation arm, which is the
+/// behaviour these lifecycle cases were written against.
+Tracker lifecycle_tracker(const TrackParams& p) {
     Tracker tr;
-    tr.reset(params());
+    tr.reset(p);
+    tr.weights().enabled = false;
+    return tr;
+}
+}  // namespace
+
+
+TEST_CASE("CP 6.4: three hits in three frames confirms; a Tentative track cannot drive") {
+    Tracker tr = lifecycle_tracker(params());
 
     feed(tr, 0, {meas(0, 0)});
     CHECK(tr.track().state() == TrackState::Tentative);
@@ -74,8 +96,7 @@ TEST_CASE("CP 6.4: three hits in three frames confirms; a Tentative track cannot
 }
 
 TEST_CASE("CP 6.4: 3-of-5 confirms even when the hits are not consecutive") {
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
     feed(tr, 0, {meas(0, 0)});          // hit
     feed(tr, 1, {});                    // miss
     feed(tr, 2, {meas(0, 0)});          // hit
@@ -86,8 +107,7 @@ TEST_CASE("CP 6.4: 3-of-5 confirms even when the hits are not consecutive") {
 }
 
 TEST_CASE("CP 6.4: a Tentative track that never reaches 3-of-5 is deleted after 5 frames") {
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
     feed(tr, 0, {meas(0, 0)});
     for (int i = 1; i <= 3; ++i) feed(tr, i, {});
     CHECK(tr.track().state() == TrackState::Tentative);
@@ -100,8 +120,7 @@ TEST_CASE("CP 6.4: blanking detection for 8 frames does NOT delete the track") {
     // The checkpoint's own wording. This is the criterion the whole coasting
     // mechanism exists to satisfy, and it is graded: §13.1's
     // lock_retention_rate is BP-2.
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
 
     // A target crossing at a steady 240 px/s, confirmed over 10 frames.
     const double v = 240.0 * kIfov;          // urad/s
@@ -132,8 +151,7 @@ TEST_CASE("CP 6.4: blanking detection for 8 frames does NOT delete the track") {
 }
 
 TEST_CASE("CP 6.4: any hit returns a Coasting track to Confirmed; 15 misses delete it") {
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
     for (int i = 0; i < 5; ++i) feed(tr, i, {meas(0, 0)});
     REQUIRE(tr.track().confirmed());
 
@@ -156,8 +174,7 @@ TEST_CASE("CP 6.4: the gate widens while coasting, with no special case") {
     // §10.2: "During Coasting the covariance grows -> the gate widens
     // automatically -> short dropouts recover with no special case." That is an
     // assertion about the arithmetic, so it can be checked as one.
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
     for (int i = 0; i < 10; ++i) feed(tr, i, {meas(0, 0)});
     REQUIRE(tr.track().confirmed());
 
@@ -185,8 +202,7 @@ TEST_CASE("CP 6.3: with a decoy 60 px away the tracker stays on the real beacon"
     // the case that matters: a tracker that re-picks the strongest candidate
     // every frame — which is what Stage 1's straw man did — switches to it
     // immediately. Only the gate prevents that.
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
 
     const double v = 150.0 * kIfov;
     for (int i = 0; i < 10; ++i) feed(tr, i, {meas(v * i * kDt, 0.0, kIfov, 18.0f)});
@@ -223,8 +239,7 @@ TEST_CASE("CP 6.3: the predicted position covariance is isotropic, and that is f
     //
     // Anisotropy arrives with CP 10.5's coordinate-turn model. Asserting the
     // isotropy now means that when it does, this test fails and says so.
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
     const double v = 300.0 * kIfov;                  // moving in x only
     for (int i = 0; i < 20; ++i) feed(tr, i, {meas(v * i * kDt, 0.0)});
     REQUIRE(tr.track().confirmed());
@@ -246,8 +261,7 @@ TEST_CASE("CP 6.3: what the gate DOES buy is a radius that tracks its own confid
     // The honest justification for a chi-square gate over a fixed angular
     // radius: the threshold keeps meaning "reject 1% of true detections" as the
     // filter's confidence changes, which a fixed radius cannot.
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
     for (int i = 0; i < 20; ++i) feed(tr, i, {meas(0, 0, 0.3 * kIfov)});
     REQUIRE(tr.track().confirmed());
 
@@ -265,8 +279,7 @@ TEST_CASE("CP 6.3: association prefers the crisp detection over the smeared one"
     //
     // The two candidates below are the same distance from the prediction and
     // differ only in how much they trust themselves.
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
     for (int i = 0; i < 20; ++i) feed(tr, i, {meas(0, 0, 0.5 * kIfov)});
     REQUIRE(tr.track().confirmed());
 
@@ -292,8 +305,7 @@ TEST_CASE("CP 6.3: unassociated measurements are reported, not silently dropped"
     // §10.5's probability grid treats "we looked and saw something we could not
     // explain" as information. Flagging the associated one rather than erasing
     // it is what makes that possible later.
-    Tracker tr;
-    tr.reset(params());
+    Tracker tr = lifecycle_tracker(params());
     for (int i = 0; i < 5; ++i) feed(tr, i, {meas(0, 0)});
     REQUIRE(tr.track().confirmed());
 

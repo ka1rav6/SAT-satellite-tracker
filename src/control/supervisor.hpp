@@ -132,6 +132,11 @@ struct Strategy {
     DetectorKind   perception  = DetectorKind::Classical;
     CentroidKind   centroider  = CentroidKind::WindowedCoM;
     float          cfar_k      = 4.0f;
+    /// The candidate SNR gate, as a multiple of cfar_k
+    /// (PerceptionParams::min_snr_factor). Adapted alongside cfar_k and for the
+    /// same reason: both are thresholds that reject a faint target, and moving
+    /// one without the other only half-answers the condition.
+    float          min_snr_factor = 1.5f;
     FilterKind     filter      = FilterKind::Cv;
     PredictorKind  predictor   = PredictorKind::None;
     ControlGains   gains{};

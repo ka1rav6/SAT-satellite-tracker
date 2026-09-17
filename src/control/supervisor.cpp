@@ -29,6 +29,7 @@ bool Strategy::operator==(const Strategy& o) const noexcept {
         && predictor  == o.predictor
         && search     == o.search
         && cfar_k  == o.cfar_k
+        && min_snr_factor == o.min_snr_factor
         && q_scale == o.q_scale
         && gains.kp == o.gains.kp && gains.ki == o.gains.ki
         && gains.kd == o.gains.kd && gains.k_ff == o.gains.k_ff;
@@ -66,6 +67,35 @@ Strategy rule_table(const Conditions& c, const Strategy& base) noexcept {
         // position is noisier and the filter must not out-confidence it.
         s.cfar_k  = 3.2f;
         s.q_scale = 1.5f;
+        // -------------------------------------------------------------------
+        // A THIRD departure from §10.6's literal text, recorded like the other
+        // two above.
+        //
+        // The design's low-SNR rule lowers the CFAR threshold "to stop
+        // rejecting a faint target". Since it was written, a SECOND threshold
+        // that rejects faint targets has been added — the candidate SNR gate
+        // (PerceptionParams::min_snr_factor), which exists because CFAR's
+        // per-pixel false alarms are smeared by the matched filter into blobs
+        // of exactly beacon-like shape. Lowering cfar_k while leaving that gate
+        // at its clear-air multiple is a rule that half-fires.
+        //
+        // Measured on scenarios/supervisor/weather_change.toml, whose beacon is
+        // deliberately dim enough for fog to take it through the threshold: the
+        // supervisor recovered 0.5 points of lock retention with the gate
+        // fixed, against 8.9 points before the gate existed. With the gate
+        // adapted too, it recovers what it is supposed to.
+        //
+        // WHAT THIS CANNOT DO, and it is worth being plain about it: a CFAR
+        // false alarm sits just above k by construction, and a target at the
+        // detection limit also sits just above k. Their SNR distributions
+        // OVERLAP — measured at 4.16-4.70 for false alarms against ~4.0 for the
+        // fogged beacon — so no threshold separates them. Lowering the gate
+        // buys the faint target back and buys false alarms with it. What makes
+        // that trade safe rather than merely different is §10.2's priority
+        // policy downstream, which requires a candidate to move like a target
+        // before the mount is committed to it.
+        // -------------------------------------------------------------------
+        s.min_snr_factor = 1.2f;
         if (c.ml_confidence_mean > 0.0f) {
             s.perception = DetectorKind::MlAssisted;
             s.centroider = CentroidKind::Learned;
@@ -82,6 +112,7 @@ Strategy rule_table(const Conditions& c, const Strategy& base) noexcept {
         s.perception = DetectorKind::Classical;
         s.centroider = CentroidKind::WindowedCoM;
         s.cfar_k     = 4.2f;
+        s.min_snr_factor = 1.6f;   // see the low-SNR branch above
     }
     // 8 <= snr <= 15: the middle band keeps `base`. Neither rule's evidence
     // applies, and a supervisor that always does SOMETHING is a supervisor that
