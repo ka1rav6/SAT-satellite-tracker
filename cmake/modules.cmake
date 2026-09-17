@@ -124,6 +124,7 @@ sat_add_module(sat_camera
 sat_add_module(sat_degrade
     SOURCES
         src/degrade/fast_normal.cpp
+        src/degrade/sensor_simd.cpp
         src/degrade/noise.cpp
         src/degrade/sensor.cpp
         src/degrade/disturbance.cpp

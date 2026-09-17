@@ -15,6 +15,7 @@
 #include "core/rng.hpp"
 
 #include <cmath>
+#include <limits>
 #include <vector>
 
 using namespace sat;
@@ -131,4 +132,137 @@ TEST_CASE("fast_normal is a pure function of its input") {
     CHECK(std::isfinite(fast_normal(0xFFFFFFFFu)));
     CHECK(fast_normal(0u) < -5.0f);
     CHECK(fast_normal(0xFFFFFFFFu) > 5.0f);
+}
+
+// ---------------------------------------------------------------------------
+// CP 14.2's criterion, stated for the damage chain: "bit-identical to scalar on
+// random inputs".
+//
+// Not "agrees to a tolerance". The chain feeds the rendered frame, which feeds
+// the reproducibility fingerprint (INV-3) and the graded centroiding metric, so
+// a vector path that differed by an ulp would make every recorded number depend
+// on which machine produced it — which is the property CP 2.6 exists to
+// establish.
+//
+// The comparison is run against the scalar loop with the vector path forced
+// off, on the same generator state, over inputs chosen to hit every branch:
+// negative radiance, zero, values that clip at both ends, and NaN.
+// ---------------------------------------------------------------------------
+
+#include "degrade/sensor.hpp"
+#include "degrade/sensor_simd.hpp"
+
+#include <cstring>
+
+TEST_CASE("CP 14.2: the vectorised damage chain is bit-identical to the scalar one") {
+    if (!damage_chain_simd_available()) {
+        MESSAGE("no AVX2 on this host — the scalar path is the only path");
+        return;
+    }
+
+    constexpr size_t kN = 4096 + 5;        // deliberately not a multiple of 8
+    Pcg32 g0{20260917u};
+
+    std::vector<float> rad(kN), prnu(kN), fpn(kN);
+    for (size_t i = 0; i < kN; ++i) {
+        // Every branch: the ordinary range, both clipping ends, and the values
+        // the comparisons are written to be careful about.
+        switch (i % 64) {
+            case 0:  rad[i] = 0.0f; break;
+            case 1:  rad[i] = -50.0f; break;
+            case 2:  rad[i] = 1.0e6f; break;
+            case 3:  rad[i] = std::numeric_limits<float>::quiet_NaN(); break;
+            case 4:  rad[i] = 238.5f; break;      // lands near the 254.5 clip
+            default: rad[i] = static_cast<float>(g0.next_range(0.0, 200.0));
+        }
+        prnu[i] = static_cast<float>(1.0 + 0.01 * g0.next_normal());
+        fpn[i]  = static_cast<float>(1.5 * g0.next_normal());
+    }
+
+    DamageArgs base;
+    base.rad   = rad.data();
+    base.prnu  = prnu.data();
+    base.fpn   = fpn.data();
+    base.n     = kN;
+    base.alpha = 0.83f;                 // a weather mode that is not the identity
+    base.beta  = 16.0f + 4.0f;          // black level plus an atmosphere offset
+    base.k     = 8.0f;
+    base.inv_k = 1.0f / 8.0f;
+    base.sigma = 20.0f;
+    base.rvar  = 400.0f;
+    base.shot  = true;
+    base.read  = true;
+    base.fp    = true;
+
+    // The scalar reference, written out here so the comparison does not depend
+    // on SensorChain's plumbing. It is the same arithmetic in the same order as
+    // the loop in degrade/sensor.cpp.
+    auto scalar = [&](const DamageArgs& a, Pcg32 g, std::vector<uint8_t>& out) {
+        out.assign(a.n, 0);
+        for (size_t i = 0; i < a.n; ++i) {
+            float v = a.alpha * a.rad[i] + a.beta;
+            if (a.shot) {
+                const float var = v * a.inv_k + a.rvar;
+                v += std::sqrt(var) * fast_normal(g.next_u32());
+            } else if (a.read) {
+                v += a.sigma * fast_normal(g.next_u32());
+            }
+            if (a.fp) v = v * a.prnu[i] + a.fpn[i];
+            if (!(v > 0.0f))      out[i] = 0;
+            else if (v >= 254.5f) out[i] = 255;
+            else                  out[i] = static_cast<uint8_t>(v + 0.5f);
+        }
+        return g;
+    };
+
+    for (int cfg = 0; cfg < 4; ++cfg) {
+        DamageArgs a = base;
+        a.shot = (cfg & 1) != 0;
+        a.read = true;
+        a.fp   = (cfg & 2) != 0;
+        if (!a.fp) { a.prnu = nullptr; a.fpn = nullptr; }
+
+        Pcg32 gs{4242u, 7u};
+        std::vector<uint8_t> ref;
+        const Pcg32 gs_end = scalar(a, gs, ref);
+
+        std::vector<uint8_t> got(kN, 0);
+        DamageArgs av = a;
+        av.dst = got.data();
+        Pcg32 gv{4242u, 7u};
+        const size_t done = damage_chain_simd(av, gv);
+        REQUIRE(done > 0);
+        REQUIRE(done % 8 == 0);
+        REQUIRE(done <= kN);
+
+        // Finish the remainder the way SensorChain does, with the state the
+        // vector path left behind.
+        for (size_t i = done; i < kN; ++i) {
+            float v = a.alpha * a.rad[i] + a.beta;
+            if (a.shot) {
+                const float var = v * a.inv_k + a.rvar;
+                v += std::sqrt(var) * fast_normal(gv.next_u32());
+            } else if (a.read) {
+                v += a.sigma * fast_normal(gv.next_u32());
+            }
+            if (a.fp) v = v * a.prnu[i] + a.fpn[i];
+            if (!(v > 0.0f))      got[i] = 0;
+            else if (v >= 254.5f) got[i] = 255;
+            else                  got[i] = static_cast<uint8_t>(v + 0.5f);
+        }
+
+        size_t mismatches = 0, first = 0;
+        for (size_t i = 0; i < kN; ++i) {
+            if (got[i] != ref[i]) { if (!mismatches) first = i; ++mismatches; }
+        }
+        INFO("cfg shot=", a.shot, " fp=", a.fp,
+             " mismatches ", mismatches, " first at ", first,
+             " (scalar ", int(ref[first]), " vector ", int(got[first]), ")");
+        CHECK(mismatches == 0);
+
+        // And the generator ends in the same place, which is what makes the
+        // vector and scalar paths interchangeable at any pixel boundary.
+        CHECK(gv.raw_state() == gs_end.raw_state());
+        CHECK(gv.raw_inc()   == gs_end.raw_inc());
+    }
 }

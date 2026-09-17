@@ -2,6 +2,7 @@
 
 #include "camera/splat.hpp"          // quantise_u8
 #include "degrade/fast_normal.hpp"
+#include "degrade/sensor_simd.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -161,7 +162,49 @@ void SensorChain::apply(std::span<float> radiance, std::span<uint8_t> out,
     const float sigma_f = static_cast<float>(sigma);
     const float rvar_f  = static_cast<float>(read_var);
 
-    for (size_t i = 0; i < n; ++i) {
+    // ----------------------------------------------------------------------
+    // CP 14.2's vector path, where it applies.
+    //
+    // It consumes whole vectors of pixels and leaves the generator exactly
+    // where the scalar loop would have left it, so the two are interchangeable
+    // at any pixel boundary and the remainder below finishes the frame. It
+    // declines — returning 0 — on a machine without AVX2, and the loop below
+    // then does the whole frame.
+    //
+    // It also declines when design §9.3's discrete-Poisson branch could fire,
+    // because Knuth's method has no vector form. `lambda_floor` is the smallest
+    // lambda any pixel of this frame can produce: the radiance is non-negative,
+    // so the floor is the atmosphere's own offset. At the specification's black
+    // level of 16 grey levels and 8 photons per level it is 128, four times the
+    // cutoff, which is why the branch is unreachable in a configured scenario
+    // and is checked rather than assumed.
+    // ----------------------------------------------------------------------
+    size_t i = 0;
+    {
+        const float lambda_floor = beta_f * k_f;
+        const bool  discrete_possible =
+            shot && !(lambda_floor >= kPoissonNormalCutoff);
+        if (!discrete_possible) {
+            DamageArgs da;
+            da.rad   = rad;
+            da.dst   = dst;
+            da.prnu  = prnu;
+            da.fpn   = fpn;
+            da.n     = n;
+            da.alpha = alpha_f;
+            da.beta  = beta_f;
+            da.k     = k_f;
+            da.inv_k = inv_k_f;
+            da.sigma = sigma_f;
+            da.rvar  = rvar_f;
+            da.shot  = shot;
+            da.read  = read;
+            da.fp    = fp;
+            i = damage_chain_simd(da, gmain);
+        }
+    }
+
+    for (; i < n; ++i) {
         // --- 1. Atmosphere (spec row 24), then the black level -------------
         // The black level is added HERE — after the atmosphere, before any
         // noise — because that is where a real sensor applies it: the pedestal

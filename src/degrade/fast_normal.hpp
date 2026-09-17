@@ -120,6 +120,10 @@ public:
     /// one of these costs 4,095 calls to acklam_inverse_normal, so do not.
     FastNormal() noexcept;
 
+    /// The knot table, for the vectorised path's gather. Read-only, kCells + 1
+    /// floats, and stable for the life of the process.
+    [[nodiscard]] const float* knots() const noexcept { return knots_.data(); }
+
 private:
     // kCells + 1 knots so the last interpolating cell has a right-hand knot.
     std::array<float, kCells + 1> knots_{};

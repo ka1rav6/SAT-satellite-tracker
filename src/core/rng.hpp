@@ -167,6 +167,21 @@ public:
     [[nodiscard]] constexpr uint64_t raw_state() const noexcept { return state_; }
     [[nodiscard]] constexpr uint64_t raw_inc()   const noexcept { return inc_; }
 
+    /// Put the state back. The ONLY caller is the vectorised damage chain
+    /// (degrade/sensor_simd.cpp), which advances eight draws at a time by
+    /// applying M^8 directly instead of stepping eight times, and then has to
+    /// tell the generator where it ended up.
+    ///
+    /// Deliberately narrow: it sets the state and not the increment, so a
+    /// stream cannot be silently switched to a different sequence, and it
+    /// clears the cached spare normal because that spare belongs to the state
+    /// being replaced. Anything that wants a different sequence calls seed().
+    constexpr void set_raw_state(uint64_t s) noexcept {
+        state_            = s;
+        has_spare_normal_ = false;
+        spare_normal_     = 0.0;
+    }
+
 private:
     constexpr void step() noexcept { state_ = state_ * kMultiplier + inc_; }
 
