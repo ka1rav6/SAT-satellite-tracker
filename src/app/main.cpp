@@ -11,6 +11,7 @@
 #include "core/frames.hpp"
 #include "core/units.hpp"
 #include "app/calibrate.hpp"
+#include "app/bench_kernels.hpp"
 #include "app/fuzz.hpp"
 #include "app/headless.hpp"
 #include "app/sweep.hpp"
@@ -207,6 +208,10 @@ void print_usage() {
     std::printf("                       parameter's legal range, corners\n");
     std::printf("                       included; fails on a crash, a hang or\n");
     std::printf("                       a NaN in any reported metric (CP 14.1)\n");
+    std::printf("  --bench-kernels [--width W] [--height H] [--repeats N]\n");
+    std::printf("                       time each kernel in isolation, minimum of N\n");
+    std::printf("                       runs, against design section 15's budget\n");
+    std::printf("                       (CP 14.2's instrument, not its score)\n");
     std::printf("  --probe-video FILE   open FILE and report resolution/fps/frames (CP 0.7)\n");
     std::printf("  --has-video          exit 0 if this build can decode video, 1 if not\n");
     std::printf("  --verify-reproducibility [--seeds N] [--duration S]\n");
@@ -246,6 +251,9 @@ int main(int argc, char* argv[]) {
         }
         if (std::strcmp(argv[i], "--fuzz-scenarios") == 0) {
             return sat::fuzz_command(argc, argv, i);
+        }
+        if (std::strcmp(argv[i], "--bench-kernels") == 0) {
+            return sat::bench_kernels_main(argc - i - 1, argv + i + 1);
         }
         if (std::strcmp(argv[i], "--verify-reproducibility") == 0) {
             return verify_reproducibility_command(argc, argv, i);
