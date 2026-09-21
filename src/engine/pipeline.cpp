@@ -423,7 +423,8 @@ DetectRoi Pipeline::detect_window(int width, int height,
 Status Pipeline::build_from_video(const Scenario& sc,
                                   const std::filesystem::path& clip,
                                   const VideoMode* mode_override,
-                                  const std::filesystem::path* truth_csv) {
+                                  const std::filesystem::path* truth_csv,
+                                  int decode_threads) {
     // The synthetic world is still built, and deliberately so: it owns the
     // clock, and the clock owns the sub-tick structure that the gimbal and the
     // controller run on. What it does NOT do in video mode is render — step()
@@ -432,7 +433,7 @@ Status Pipeline::build_from_video(const Scenario& sc,
     // enforced by the code path rather than by a flag.
     build_from_scenario(sc);
 
-    auto v = VideoSource::open(clip, sc, mode_override);
+    auto v = VideoSource::open(clip, sc, mode_override, decode_threads);
     if (!v) return Err(v.error());
     video_ = std::move(*v);
 

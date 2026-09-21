@@ -8,7 +8,10 @@
 #  include <opencv2/videoio.hpp>
 #endif
 
+#include <chrono>
 #include <cstdlib>
+#include <string>
+#include <thread>
 
 namespace sat {
 
@@ -23,19 +26,24 @@ struct DecodeThread::Impl {
 DecodeThread::DecodeThread() = default;
 DecodeThread::~DecodeThread() { close(); }
 
-Status DecodeThread::open(const std::filesystem::path& path, int capacity) {
+int DecodeThread::default_threads() noexcept {
+    const unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0) return 1;                      // unknowable: be conservative
+    return static_cast<int>(hw < 4u ? hw : 4u);
+}
+
+Status DecodeThread::open(const std::filesystem::path& path, int capacity, int threads) {
     close();
     impl_ = std::make_unique<Impl>();
 
     // ------------------------------------------------------------------
-    // SINGLE-THREADED DECODE, forced two ways.
+    // DECODER WORKER THREADS — P0-3.
     //
-    // Not for speed — for INV-3 and for survival. FFmpeg's multi-threaded
-    // H.264 decoder deadlocked on the corrupt clip in tests/video/clips: all
-    // four worker threads parked in futex_do_wait and the test hung for nine
-    // minutes before CI killed it. Its frame-slicing also makes output depend
-    // on thread count, which would make a decode non-reproducible across
-    // machines.
+    // This used to force 1, both ways, permanently. See the long note in the
+    // header for why one of the two stated reasons was real (a deadlock on a
+    // malformed clip, now handled by pop()'s watchdog) and the other was not
+    // (threaded H.264 decode is bit-exact for conforming streams, measured on
+    // every committed clip).
     //
     // The environment variable is set before opening because OpenCV reads it
     // when it constructs the backend; CAP_PROP_N_THREADS is set after, because
@@ -44,17 +52,19 @@ Status DecodeThread::open(const std::filesystem::path& path, int capacity) {
     // does not define the enum, and hard-coding the number with this comment
     // beats failing to compile on the version CI installs.
     // ------------------------------------------------------------------
+    threads_ = (threads > 0) ? threads : default_threads();
+    const std::string nthreads = std::to_string(threads_);
 #if defined(_WIN32)
-    _putenv_s("OPENCV_FFMPEG_THREADS", "1");
+    _putenv_s("OPENCV_FFMPEG_THREADS", nthreads.c_str());
 #else
-    setenv("OPENCV_FFMPEG_THREADS", "1", 1);
+    setenv("OPENCV_FFMPEG_THREADS", nthreads.c_str(), 1);
 #endif
     if (!impl_->cap.open(path.string(), cv::CAP_ANY)) {
         impl_.reset();
         return Err("cannot open video '" + path.string() +
                    "' (unsupported codec, or the file is not a video)");
     }
-    impl_->cap.set(70 /* CAP_PROP_N_THREADS */, 1);
+    impl_->cap.set(70 /* CAP_PROP_N_THREADS */, threads_);
 
     width_   = static_cast<int>(impl_->cap.get(cv::CAP_PROP_FRAME_WIDTH));
     height_  = static_cast<int>(impl_->cap.get(cv::CAP_PROP_FRAME_HEIGHT));
@@ -72,6 +82,7 @@ Status DecodeThread::open(const std::filesystem::path& path, int capacity) {
     head_ = tail_ = size_ = 0;
     eof_ = false;
     stop_.store(false);
+    stalled_.store(false);
     skipped_.store(0);
     decoded_.store(0);
     waits_.store(0);
@@ -188,7 +199,33 @@ bool DecodeThread::pop(DecodedFrame& out) {
         // regression shows up as a rising count instead of a vanished claim.
         waits_.fetch_add(1);
     }
-    not_empty_.wait(lk, [this] { return size_ > 0 || eof_ || stop_.load(); });
+    // ----------------------------------------------------------------------
+    // THE WATCHDOG — P0-3.
+    //
+    // This was an unbounded wait. With the decoder single-threaded that was
+    // merely optimistic; with worker threads it is the difference between a
+    // diagnosable failure and the nine-minute CI hang that made threading get
+    // switched off in the first place.
+    //
+    // wait_for rather than wait, and on a stall the run ends with a message
+    // naming the remedy. The timeout is three orders of magnitude above the
+    // slowest legitimate frame (a 2000x2000 H.264 frame is 5-10 ms), so it
+    // cannot fire on a merely slow machine — the failure it catches is a
+    // permanent deadlock, not slowness.
+    //
+    // It deliberately does not try to kill the decoder thread: there is no
+    // portable way to interrupt a thread blocked inside a third-party library,
+    // and attempting it would trade a hang for a crash. close() detaches
+    // instead of joining when this has fired.
+    // ----------------------------------------------------------------------
+    const auto deadline = std::chrono::steady_clock::now()
+                        + std::chrono::duration<double>(stall_timeout_s_);
+    const bool ready = not_empty_.wait_until(
+        lk, deadline, [this] { return size_ > 0 || eof_ || stop_.load(); });
+    if (!ready) {
+        stalled_.store(true);
+        return false;
+    }
     if (size_ == 0) return false;
 
     out = std::move(ring_[tail_]);
@@ -203,7 +240,40 @@ void DecodeThread::close() {
     stop_.store(true);
     not_full_.notify_all();
     not_empty_.notify_all();
-    if (thread_.joinable()) thread_.join();
+
+    if (thread_.joinable()) {
+        if (stalled_.load()) {
+            // ----------------------------------------------------------
+            // DETACH, DO NOT JOIN — and leak the Impl deliberately.
+            //
+            // The watchdog fired, which means the decode thread is blocked
+            // inside FFmpeg and is not coming back. Joining it would hang
+            // here exactly as it hung in pop(), turning a diagnosable
+            // failure into the original nine-minute freeze one function
+            // later.
+            //
+            // The thread still holds a reference to *impl_ and to the ring.
+            // Destroying either while it is blocked inside read() is a
+            // use-after-free waiting for the decoder to wake up. So the
+            // Impl is RELEASED rather than reset: the cv::VideoCapture and
+            // its buffers stay allocated for the life of the process, which
+            // is a bounded, one-off leak on a path that is already a fatal
+            // error and is about to end the run.
+            //
+            // The ring is likewise left alone.
+            //
+            // This is the honest cost of a watchdog over a library that
+            // offers no cancellation. It is recorded here rather than
+            // hidden because a reader finding a deliberate leak deserves
+            // the reason.
+            // ----------------------------------------------------------
+            thread_.detach();
+            (void)impl_.release();
+            head_ = tail_ = size_ = 0;
+            return;
+        }
+        thread_.join();
+    }
     impl_.reset();
     ring_.clear();
     head_ = tail_ = size_ = 0;
@@ -217,13 +287,14 @@ void DecodeThread::close() {
 struct DecodeThread::Impl {};
 DecodeThread::DecodeThread() = default;
 DecodeThread::~DecodeThread() = default;
-Status DecodeThread::open(const std::filesystem::path&, int) {
+Status DecodeThread::open(const std::filesystem::path&, int, int) {
     return Err("this build has no video support (OpenCV was not found at "
                "configure time)");
 }
 void DecodeThread::run() {}
 bool DecodeThread::pop(DecodedFrame&) { return false; }
 void DecodeThread::close() {}
+int  DecodeThread::default_threads() noexcept { return 1; }
 
 #endif
 

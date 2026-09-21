@@ -75,9 +75,38 @@ enum class Stage : uint8_t {
 // ---------------------------------------------------------------------------
 class LatencyHistogram {
 public:
-    static constexpr int    kBuckets = 128;
-    static constexpr double kMinUs   = 1.0;        ///< 1 microsecond
-    static constexpr double kMaxUs   = 100'000.0;  ///< 100 milliseconds
+    // -----------------------------------------------------------------------
+    // RANGE AND RESOLUTION — and why the old ceiling was a reporting defect.
+    //
+    // The range used to end at 100 ms, and bucket_of() clamps anything at or
+    // above the ceiling into the top bucket. quantile() then returns that
+    // bucket's CENTRE, so every frame slower than ~91 ms reported as exactly
+    // 95.6 ms — indistinguishable from a real measurement, and printed beside
+    // genuine percentiles with nothing to mark it.
+    //
+    // That is not hypothetical. The BP-2 screen path's p99 read "95.602 ms" on
+    // every run, to the last digit, across runs whose p50 varied by 30 %. It
+    // was taken at face value in an external audit and turned into "10.5 FPS,
+    // below spec row 20's 20 FPS minimum". The true figure was above 91 ms and
+    // otherwise unknown — the instrument had saturated.
+    //
+    // 10 seconds, because the things that legitimately land in the tail are
+    // startup frames: the first frame of a video run allocates the workspace,
+    // fills the decoder's ring and JITs nothing, and on a loaded machine that
+    // is hundreds of milliseconds. A ceiling has to be above the values it is
+    // meant to measure, not above the ones it is meant to like.
+    //
+    // 256 buckets keeps the resolution at 6.5 % per bucket over the wider
+    // range, slightly better than the 9.4 % it had before. Cost is 2 KB per
+    // histogram, ~43 KB for the whole stage table, once.
+    //
+    // saturated() reports occupancy of the top bucket so a reader is TOLD when
+    // a percentile is a floor rather than a value, instead of having to notice
+    // that it never changes.
+    // -----------------------------------------------------------------------
+    static constexpr int    kBuckets = 256;
+    static constexpr double kMinUs   = 1.0;            ///< 1 microsecond
+    static constexpr double kMaxUs   = 10'000'000.0;   ///< 10 seconds
 
     void record(double microseconds) noexcept {
         ++count_;
@@ -109,6 +138,14 @@ public:
     [[nodiscard]] double   p95()   const noexcept { return quantile(0.95); }
     [[nodiscard]] double   p99()   const noexcept { return quantile(0.99); }
     [[nodiscard]] double   max()   const noexcept { return max_us_; }
+
+    /// Samples that landed in the top bucket, i.e. at or above the ceiling.
+    ///
+    /// Non-zero means any percentile at or above the corresponding rank is a
+    /// LOWER BOUND, not a measurement. max() is still exact — it is tracked
+    /// outside the buckets — so a saturated histogram can still say how bad
+    /// the worst frame was, just not where the 99th percentile sits.
+    [[nodiscard]] uint64_t saturated() const noexcept { return buckets_[kBuckets - 1]; }
     [[nodiscard]] uint64_t count() const noexcept { return count_; }
 
     /// Reported alongside the percentiles, never instead of them. It is in the

@@ -415,7 +415,8 @@ public:
     [[nodiscard]] Status build_from_video(const Scenario& sc,
                                           const std::filesystem::path& clip,
                                           const VideoMode* mode_override = nullptr,
-                                          const std::filesystem::path* truth_csv = nullptr);
+                                          const std::filesystem::path* truth_csv = nullptr,
+                                          int decode_threads = 0);
 
     /// The video source, or nullptr in synthetic mode. For the log header and
     /// for run.json's provenance.

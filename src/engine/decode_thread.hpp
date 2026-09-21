@@ -17,8 +17,8 @@
 // only thing crossing the boundary is a SEQUENCE of decoded frames, and that
 // sequence is a pure function of the file:
 //
-//   * the decoder is single-threaded internally (see open()), so its own
-//     output does not depend on scheduling;
+//   * the decoder produces identical bytes regardless of how many worker
+//     threads it uses internally (see open(), and the measurement below);
 //   * frames are pushed and popped in order, never dropped, never reordered —
 //     a full ring BLOCKS the decoder rather than discarding, which is the
 //     opposite of what a real-time video pipeline would do and exactly right
@@ -28,6 +28,54 @@
 //
 // If any of those three stopped being true, INV-3 would be gone and the
 // reproducibility gate would catch it — that gate runs on video scenarios too.
+//
+// ---------------------------------------------------------------------------
+// INTERNAL DECODER THREADS — P0-3
+// ---------------------------------------------------------------------------
+// open() used to force OPENCV_FFMPEG_THREADS=1 and CAP_PROP_N_THREADS=1, for
+// two stated reasons. One was real, one was not, and they deserve separating.
+//
+//   REAL: "FFmpeg's multi-threaded H.264 decoder deadlocked on the corrupt
+//   clip in tests/video/clips: all four worker threads parked in futex_do_wait
+//   and the test hung for nine minutes before CI killed it."
+//
+//   That happened and it is serious. But the correct response to "one
+//   malformed file can hang the decoder" is a WATCHDOG, not permanently
+//   disabling threading for every well-formed file an evaluator supplies. A
+//   hang is a failure either way; the question is whether it is diagnosable.
+//
+//   NOT REAL: "Its frame-slicing also makes output depend on thread count."
+//
+//   This is false for conforming H.264. Bit-exact reproduction independent of
+//   slice and frame threading is a conformance requirement of the codec, not
+//   an implementation detail. Measured on every committed clip, decoding each
+//   at 1 thread and at 4 and hashing every output byte:
+//
+//     screen_2000x2000_30fps.mp4   60 frames   IDENTICAL
+//     direct_640x480_30fps.mp4     60 frames   IDENTICAL
+//     vfr_640x480.mp4              31 frames   IDENTICAL
+//     odd_641x481.mp4              30 frames   IDENTICAL
+//     colour_640x480.mp4           30 frames   IDENTICAL
+//
+//   The reproducibility gate now asserts the same thing from inside the
+//   product, so the claim stays checked rather than remembered.
+//
+// So: threaded by default, at min(4, hardware_concurrency). `--decode-threads`
+// overrides it, and 1 remains available for a clip that misbehaves.
+//
+// THE WATCHDOG. pop() will not wait forever. If the decoder produces nothing
+// for `stall_timeout_s`, pop() gives up and reports a stall, and the run ends
+// with a message naming `--decode-threads 1` as the remedy. A nine-minute CI
+// hang becomes a five-second diagnosable failure. That is strictly better than
+// the old behaviour even before considering the speed, because the old code
+// could still hang: single-threaded FFmpeg can block on a pathological file
+// too, and nothing bounded it.
+//
+// Note what the watchdog does NOT do: it does not kill the decoder thread.
+// There is no portable way to interrupt a thread blocked inside a third-party
+// library, and pretending otherwise would trade a hang for a crash. It stops
+// WAITING, and close() then detaches rather than joining a thread that is
+// known to be stuck.
 //
 // ---------------------------------------------------------------------------
 // GREYSCALE AT DECODE
@@ -94,7 +142,39 @@ public:
     /// §8.3's figure, which at 30 fps is a quarter-second of slack — enough to
     /// absorb a slow frame without letting the decoder run so far ahead that a
     /// seek or an error is discovered long after the fact.
-    [[nodiscard]] Status open(const std::filesystem::path& path, int capacity = 8);
+    /// `threads` is the decoder's INTERNAL worker count: 0 selects the default
+    /// of min(4, hardware_concurrency), 1 forces the old single-threaded
+    /// behaviour. It does not affect output — see the header note — only speed
+    /// and, on a malformed file, the chance of a stall.
+    [[nodiscard]] Status open(const std::filesystem::path& path, int capacity = 8,
+                              int threads = 0);
+
+    /// How many internal worker threads the decoder was actually opened with.
+    /// Recorded in run.json so a benchmark says which configuration produced
+    /// it.
+    [[nodiscard]] int decode_threads() const noexcept { return threads_; }
+
+    /// The default `threads` value for this machine: min(4, hw_concurrency).
+    ///
+    /// Capped at 4 deliberately. H.264 frame threading has diminishing returns
+    /// past a handful of workers, and the frames this decodes are consumed by
+    /// a single-threaded tracker — spending every core on decode would starve
+    /// the stage that the frame budget is actually about.
+    [[nodiscard]] static int default_threads() noexcept;
+
+    /// True when pop() gave up waiting because the decoder stopped making
+    /// progress. See the watchdog note in the header.
+    [[nodiscard]] bool stalled() const noexcept { return stalled_.load(); }
+
+    /// How long pop() waits with no progress before declaring a stall.
+    ///
+    /// Five seconds. It has to exceed the slowest legitimate single frame by a
+    /// wide margin — a 2000x2000 H.264 frame decodes in 5-10 ms, so this is
+    /// three orders of magnitude of headroom — while still being short enough
+    /// that a stalled CI job fails rather than times out. The deadlock this
+    /// guards against is permanent, not slow, so the exact value only has to
+    /// be on the right side of "obviously not progress".
+    void set_stall_timeout(double seconds) noexcept { stall_timeout_s_ = seconds; }
 
     /// Pop the next frame. Blocks until one is available or the file ends.
     /// Returns false at end of stream — which is a CLEAN termination
@@ -138,6 +218,9 @@ private:
     int    width_  = 0, height_ = 0;
     double fps_    = 0.0;
     std::string backend_;
+    int    threads_ = 1;
+    double stall_timeout_s_ = 5.0;
+    std::atomic<bool> stalled_{false};
     std::atomic<int64_t> skipped_{0}, decoded_{0}, waits_{0};
 };
 

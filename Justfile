@@ -672,9 +672,84 @@ report scenario="scenarios/compliance.toml" duration="10": build
 # ---------------------------------------------------------------------------
 
 # Track a supplied clip. Mode is auto-detected from its resolution.
-#   just video tests/video/clips/screen_2000x2000_30fps.mp4
+#   just video tests/video/clips/bp2_screen_2000x2000.mp4
+#
+# Scored against truth when a .csv of the same stem sits beside the clip, which
+# is how the bp2_* fixtures are shipped. Without one the run still produces
+# centroid.csv, and the summary says plainly that nothing was scored — an
+# unscored run used to look like a successful one.
 video file: build
-    "{{build_dir}}/sat-tracker" --video "{{file}}" --out logs/video
+    #!/usr/bin/env bash
+    set -euo pipefail
+    truth="${file%.*}.csv"
+    if [ -f "$truth" ]; then
+        "{{build_dir}}/sat-tracker" --video "{{file}}" --truth "$truth" --out logs/video
+    else
+        echo "note: no truth CSV at $truth — centroiding will not be scored."
+        "{{build_dir}}/sat-tracker" --video "{{file}}" --out logs/video
+    fi
+
+# ---------------------------------------------------------------------------
+# just bp2 — BENCHMARK PERFORMANCE-2, END TO END. 30% of the marks.
+# ---------------------------------------------------------------------------
+# The single most heavily graded capability in the problem statement is
+# "Comparison of Centroiding error with predefined error values" on an
+# evaluator-supplied MP4. Until this recipe existed the project had no
+# end-to-end number for it: `just video` passed no --truth, no truth CSV was
+# committed for any clip, and the CP 8.7 self-scoring test deliberately used a
+# plain intensity-weighted centroid rather than the perception pipeline, ran
+# the source alone rather than the closed loop, and only in direct mode.
+#
+# Three clips, each answering a different question:
+#
+#   clean direct   the CONTROL. A noiseless box has an exact centroid, so a
+#                  non-zero result here is a bug in the crop or in the truth,
+#                  not in the centroider. Knowing that first saves an
+#                  afternoon.
+#   noisy direct   the codec and row-22 noise, with the crop taken out: same
+#                  resolution in and out.
+#   screen 2000x2000
+#                  THE REHEARSAL. The shape the PS describes — a complete
+#                  screen with noise and a moving beacon — exercising
+#                  acquisition, the crop, tracking and handover together.
+#
+# Truth is exact by construction: tools/make_test_videos.sh writes it from the
+# same expression that draws the beacon, so the two cannot drift.
+bp2: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    clips="{{justfile_directory()}}/tests/video/clips"
+    out="{{justfile_directory()}}/logs/bp2"
+    mkdir -p "$out"
+    if ! "{{build_dir}}/sat-tracker" --has-video >/dev/null; then
+        echo "This build has no video support, so BP-2 cannot be measured."
+        echo "Install OpenCV and reconfigure with -DSAT_WITH_OPENCV=ON."
+        exit 1
+    fi
+    for name in bp2_clean_direct_640x480 bp2_noisy_direct_640x480 bp2_screen_2000x2000; do
+        echo
+        echo "════════════════════════════════════════════════════════════════"
+        echo "  $name"
+        echo "════════════════════════════════════════════════════════════════"
+        "{{build_dir}}/sat-tracker" --video "$clips/$name.mp4" \
+            --truth "$clips/$name.csv" --out "$out/$name"
+    done
+    echo
+    echo "Artifacts in logs/bp2/. Each carries run.json, centroid.csv and report.html."
+
+# The same three clips with per-stage timings, for the throughput half of the
+# BP-2 question. Separate from `just bp2` because the timing table is long and
+# the accuracy table is what a judge asks for first.
+bp2-stages: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    clips="{{justfile_directory()}}/tests/video/clips"
+    for name in bp2_noisy_direct_640x480 bp2_screen_2000x2000; do
+        echo "── $name ──"
+        "{{build_dir}}/sat-tracker" --video "$clips/$name.mp4" \
+            --truth "$clips/$name.csv" --stages --quiet \
+            --out "{{justfile_directory()}}/logs/bp2/$name"
+    done
 
 # The whole Stage 8 suite, verbose — the numbers ARE the checkpoints: the
 # crop's own centroid error (CP 8.6), the self-scoring accuracy (CP 8.7), and

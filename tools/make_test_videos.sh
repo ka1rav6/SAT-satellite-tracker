@@ -257,6 +257,146 @@ echo
 echo "Done. $(find "${out}" -name '*.mp4' | wc -l) clips in ${out}"
 
 # ---------------------------------------------------------------------------
+# 3. THE BP-2 BENCHMARK FIXTURES — P0-4.
+# ---------------------------------------------------------------------------
+# Benchmark Performance-2 is 30 % of the total marks and consists entirely of
+# running evaluator-supplied MP4s, scored on "Comparison of Centroiding error
+# with predefined error values". Until these existed the project had NO
+# end-to-end number for it at all:
+#
+#   * `just video <file>` did not pass --truth, so nothing was scored;
+#   * no truth CSV was committed for any clip;
+#   * the CP 8.7 self-scoring test deliberately used "a plain
+#     intensity-weighted centroid rather than the perception pipeline", ran the
+#     SOURCE alone rather than the closed loop, and only in direct mode.
+#
+# So the project could say "the decoder works" and "the perception pipeline
+# works" and had never demonstrated clip in -> full pipeline -> centroid.csv ->
+# RMSE against truth.
+#
+# WHY THE EXISTING CLIPS CANNOT SERVE. direct_640x480_30fps.mp4 is a NOISELESS
+# white box on black, and the full pipeline scores 0.0003 px RMSE on it. A
+# perfectly symmetric noiseless box has an exact centroid; measuring it
+# measures nothing. screen_2000x2000_30fps.mp4 is likewise noiseless, and its
+# beacon moves at 13 px/frame across the screen — faster than a 5 deg/s mount
+# can follow — so the loop never achieves a sustained lock and the run reports
+# no centroiding frames.
+#
+# The three below are built to be benchmarks rather than decoder fixtures:
+# noisy, at a beacon speed the mount can actually track, and with truth that is
+# exact BY CONSTRUCTION rather than measured.
+#
+# ---------------------------------------------------------------------------
+# TRUTH IS GENERATED FROM THE SAME EXPRESSION THAT DRAWS THE BEACON
+# ---------------------------------------------------------------------------
+# The beacon's top-left corner at frame N is (x0 + vx*N, y0 + vy*N) and it is
+# `sz` pixels across, so its centre is at
+#
+#     (x0 + vx*N + (sz-1)/2,  y0 + vy*N + (sz-1)/2)
+#
+# The (sz-1)/2 term is the one that is easy to get wrong: between() in geq is
+# INCLUSIVE at both ends, so a beacon spanning [x, x+sz-1] has its centre half
+# a pixel below x + sz/2. The existing beacon_geq() comment records that this
+# cost a spurious +0.498 px of measured bias before it was noticed. The truth
+# writer below uses the identical arithmetic, so a future change to one is a
+# visible inconsistency with the other rather than a silent bias.
+#
+# Truth is written in SCREEN coordinates, which is what --truth expects and
+# what centroid.csv reports, so a truth file and an output file are directly
+# comparable column for column.
+# ---------------------------------------------------------------------------
+
+# bp2_truth <csv> <frames> <fps> <x0> <y0> <vx> <vy> <size>
+bp2_truth() {
+    local csv="$1" frames="$2" fps="$3" x0="$4" y0="$5" vx="$6" vy="$7" sz="$8"
+    python3 - "$csv" "$frames" "$fps" "$x0" "$y0" "$vx" "$vy" "$sz" <<'PYTRUTH'
+import sys
+csv, frames, fps, x0, y0, vx, vy, sz = sys.argv[1:9]
+frames, fps = int(frames), float(fps)
+x0, y0, vx, vy, sz = float(x0), float(y0), float(vx), float(vy), int(sz)
+# The centre of a square spanning [x, x+sz-1] inclusive. See the note above.
+half = (sz - 1) / 2.0
+with open(csv, "w") as f:
+    f.write("frame,time_s,cx_screen,cy_screen\n")
+    for n in range(frames):
+        f.write("%d,%.6f,%.4f,%.4f\n"
+                % (n, n / fps, x0 + vx * n + half, y0 + vy * n + half))
+PYTRUTH
+}
+
+echo
+echo "BP-2 benchmark fixtures…"
+
+# (a) NOISELESS DIRECT. Kept, and kept labelled: it is the control. A run that
+#     does not score ~0 px here has a bug in the crop or the truth, not in the
+#     centroider, and knowing that before looking at the noisy cases saves an
+#     afternoon. 4 px/frame is well inside what the mount can follow.
+$FF -f lavfi -i "color=c=black:s=640x480:r=30:d=4" \
+    -vf "$(beacon_geq '120+N*4' '180+N*2' 10)" \
+    -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 18 \
+    "${out}/bp2_clean_direct_640x480.mp4"
+bp2_truth "${out}/bp2_clean_direct_640x480.csv" 120 30 120 180 4 2 10
+echo "  bp2_clean_direct_640x480.mp4 + .csv"
+
+# (b) NOISY DIRECT. Additive temporal noise at spec row 22's cap of 20 grey
+#     levels, plus real H.264 compression artefacts. This is the one that says
+#     what the centroider does on a picture it did not render, with the crop
+#     taken out of the question — it is 640x480 in and 640x480 out.
+#
+#     CRF 32 for the same size reason as the screen clip: temporal noise is
+#     near-incompressible, and at CRF 18 this is 12 MB. Accuracy is flat across
+#     the range (0.0014 px at CRF 28, 0.0009 at 30, 0.0014 at 32), so the
+#     choice is made on size.
+$FF -f lavfi -i "color=c=black:s=640x480:r=30:d=4" \
+    -vf "$(beacon_geq '120+N*4' '180+N*2' 10),noise=alls=20:allf=t" \
+    -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 32 \
+    "${out}/bp2_noisy_direct_640x480.mp4"
+bp2_truth "${out}/bp2_noisy_direct_640x480.csv" 120 30 120 180 4 2 10
+echo "  bp2_noisy_direct_640x480.mp4 + .csv"
+
+# (c) THE FULL BP-2 REHEARSAL: 2000x2000 screen mode, noisy, with the PTZ loop
+#     engaged. This is the shape the problem statement describes — "a complete
+#     screen with noise and a moving beacon spot" — and it is the only one of
+#     the three that exercises acquisition, tracking, handover and the crop
+#     together.
+#
+#     3 px/frame and 1.5 px/frame: 90 px/s and 45 px/s on the screen, against a
+#     5 deg/s mount that can slew 800 px/s. Comfortably followable, which is
+#     the point — a benchmark the mount cannot physically track measures the
+#     mount's rate limit and calls it a centroiding error.
+#
+#     The beacon starts near the screen centre because spec row 6 puts the
+#     camera there at t=0, so it is in the field from the first frame and the
+#     run measures tracking rather than a cold search (design 10.5's bound).
+#
+#     THE ENCODER SETTINGS ARE A MEASUREMENT, NOT A GUESS. Full-frame temporal
+#     noise over four megapixels is close to incompressible, so the obvious
+#     "noise=alls=18, CRF 20" produces a 144 MB file — uncommittable, and its
+#     decode alone costs 24.6 ms/frame, which is most of a 33.3 ms real-time
+#     budget spent on an artefact of how the fixture was made rather than on
+#     anything the system does. Swept:
+#
+#       crf  noise     size    image RMSE   tracking (steady)
+#        24     12      18M      0.1003 px       0.885 px
+#        26     12     7.1M      0.1033 px       0.890 px
+#        24      8     2.3M      0.1011 px       0.890 px
+#        26      8     176K      0.1037 px       0.888 px   <- chosen
+#        22      6     2.1M      0.1000 px       0.886 px
+#        28     12     644K      0.1107 px      88.080 px   <- loses lock
+#
+#     Accuracy is flat across the whole usable range, so the choice is made on
+#     size. CRF 28 is past the cliff: the blocking artefacts it introduces on a
+#     2000x2000 near-black field feed the CFAR stage enough false candidates to
+#     cost the lock, which is a real and interesting failure but not what this
+#     fixture is for.
+$FF -f lavfi -i "color=c=black:s=2000x2000:r=30:d=6" \
+    -vf "$(beacon_geq '995+N*3' '995+N*1.5' 10),noise=alls=8:allf=t" \
+    -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 26 \
+    "${out}/bp2_screen_2000x2000.mp4"
+bp2_truth "${out}/bp2_screen_2000x2000.csv" 180 30 995 995 3 1.5 10
+echo "  bp2_screen_2000x2000.mp4 + .csv"
+
+# ---------------------------------------------------------------------------
 # VERIFY. Every clip that is supposed to contain a beacon must contain one.
 #
 # This exists because the whole directory was silently black for the entire

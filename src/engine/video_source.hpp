@@ -111,7 +111,8 @@ public:
     /// Open a clip. `mode_override` of nullptr means auto-detect (CP 8.5).
     [[nodiscard]] static Result<std::unique_ptr<VideoSource>>
     open(const std::filesystem::path& path, const Scenario& sc,
-         const VideoMode* mode_override = nullptr);
+         const VideoMode* mode_override = nullptr,
+         int decode_threads = 0);
 
     [[nodiscard]] bool next(Angle2 commanded_boresight, SourceFrame& out) override;
     [[nodiscard]] FrameGeometry geometry() const override;
@@ -124,6 +125,15 @@ public:
     void shutdown() override { decoder_.close(); }
 
     [[nodiscard]] VideoMode mode() const noexcept { return mode_; }
+
+    /// The decoder's internal worker count, for run.json's provenance. A
+    /// throughput figure that does not say how the decoder was configured is
+    /// not reproducible.
+    [[nodiscard]] int decode_threads() const noexcept { return decoder_.decode_threads(); }
+
+    /// True when the decode watchdog fired. The run is over and the summary
+    /// has to say why — see DecodeThread's header.
+    [[nodiscard]] bool decode_stalled() const noexcept { return decoder_.stalled(); }
     [[nodiscard]] double    fps()  const noexcept { return fps_; }
     /// The FILE's dimensions, which in direct mode are not the screen's.
     [[nodiscard]] int source_width()  const noexcept { return src_w_; }

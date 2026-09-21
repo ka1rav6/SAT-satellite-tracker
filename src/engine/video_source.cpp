@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace sat {
 
@@ -138,15 +139,107 @@ void bicubic_crop(const uint8_t* src, int sw, int sh,
     const double x0 = cx - (out_w - 1) * 0.5;
     const double y0 = cy - (out_h - 1) * 0.5;
 
+    if (sw <= 0 || sh <= 0) return;
+
+    // -----------------------------------------------------------------------
+    // ROW-WISE, AND WHY ONLY HALF OF THE OBVIOUS HOISTING IS DONE — P0-3.
+    //
+    // This was a call to bicubic_sample() per output pixel, and that function
+    // recomputes everything from scratch: two floors, EIGHT cr_weight
+    // evaluations, eight clamps and four row-pointer computations, for every
+    // one of 307,200 pixels. Measured on the BP-2 screen fixture,
+    // `frame_acquire` was 22.7 ms per frame — the entire frame budget, and
+    // four times the decode it contains.
+    //
+    // The y half is genuinely constant across an output row: sy = y0 + y is
+    // one value per row, so wy[], the four clamped source rows and their
+    // pointers are hoisted here. That is an exact transformation — the same
+    // doubles, in the same order — and it removes half the per-pixel work.
+    //
+    // THE X HALF IS NOT HOISTED, and the reason is worth writing down because
+    // the opportunity looks identical and is not.
+    //
+    // fx = frac(x0 + x) appears constant across a row, and for every geometry
+    // this project ships it measurably IS: x0 ~ 10^3 and x < 640, so the sum
+    // keeps enough mantissa. But it is not constant in general. A double has
+    // 53 bits; x0 + x crosses a binade partway along the row, the result
+    // rounds to the new ULP, and the fractional part can move in its last bit.
+    // Hoisting wx[] would then silently change a handful of pixels on
+    // geometries nobody has tested — which is exactly the class of bug INV-3
+    // exists to catch, arriving in the one place that would make INV-3's own
+    // fingerprint complicit.
+    //
+    // So wx is not hoisted. It is MEMOISED instead: recomputed whenever fx
+    // differs from the previous pixel's, reused when it does not. That gives
+    // the speed of hoisting on every geometry where fx really is constant —
+    // which is all of them in practice — while remaining bit-identical on a
+    // geometry where it is not, because there the weights are recomputed
+    // exactly as before. Correctness does not depend on the optimisation's
+    // premise being true; only the speed does.
+    //
+    // The arithmetic is otherwise identical to what bicubic_sample() produced,
+    // term for term and in the same order. Tests assert that equality directly
+    // rather than trusting this paragraph.
+    // -----------------------------------------------------------------------
     for (int y = 0; y < out_h; ++y) {
         uint8_t* row = dst + static_cast<ptrdiff_t>(y) * out_w;
         const double sy = y0 + y;
+
+        const int    iy = static_cast<int>(std::floor(sy));
+        const double fy = sy - iy;
+
+        double wy[4];
+        const uint8_t* srow[4];
+        for (int j = 0; j < 4; ++j) {
+            wy[j]   = cr_weight(fy - (j - 1));
+            srow[j] = src + static_cast<ptrdiff_t>(clampi(iy + j - 1, 0, sh - 1)) * sw;
+        }
+
+        // The memo. NaN so the first pixel of every row always misses: a
+        // sentinel that can never compare equal is the only initial value that
+        // cannot accidentally match a real fraction.
+        double last_fx = std::numeric_limits<double>::quiet_NaN();
+        double wx[4] = {0.0, 0.0, 0.0, 0.0};
+
         for (int x = 0; x < out_w; ++x) {
+            const double sx_d = x0 + x;
+            const int    ix   = static_cast<int>(std::floor(sx_d));
+            const double fx   = sx_d - ix;
+
+            if (!(fx == last_fx)) {          // NaN-safe: a NaN memo always misses
+                for (int i = 0; i < 4; ++i) wx[i] = cr_weight(fx - (i - 1));
+                last_fx = fx;
+            }
+
+            double acc = 0.0;
+            if (ix - 1 >= 0 && ix + 2 <= sw - 1) {
+                // Interior: every tap is in range, so the clamps are
+                // no-ops and are skipped. Same values, same order.
+                for (int j = 0; j < 4; ++j) {
+                    const uint8_t* r = srow[j] + (ix - 1);
+                    const double rowacc = wx[0] * r[0] + wx[1] * r[1]
+                                        + wx[2] * r[2] + wx[3] * r[3];
+                    acc += wy[j] * rowacc;
+                }
+            } else {
+                for (int j = 0; j < 4; ++j) {
+                    double rowacc = 0.0;
+                    for (int i = 0; i < 4; ++i) {
+                        rowacc += wx[i] * srow[j][clampi(ix + i - 1, 0, sw - 1)];
+                    }
+                    acc += wy[j] * rowacc;
+                }
+            }
+
+            // Catmull-Rom overshoots at a sharp edge — that is what makes it
+            // sharp — so the result is clamped to the 8-bit range.
+            //
             // +0.5 then truncate: round-to-nearest, so the 8-bit round trip of
             // an identity sample is exact. Truncation alone would bias every
             // pixel down by half a level, which over a beacon is a systematic
             // intensity error and therefore a centroid error.
-            row[x] = static_cast<uint8_t>(bicubic_sample(src, sw, sh, x0 + x, sy) + 0.5f);
+            const float v = static_cast<float>(std::clamp(acc, 0.0, 255.0));
+            row[x] = static_cast<uint8_t>(v + 0.5f);
         }
     }
 }
@@ -156,10 +249,13 @@ void bicubic_crop(const uint8_t* src, int sw, int sh,
 // ---------------------------------------------------------------------------
 Result<std::unique_ptr<VideoSource>>
 VideoSource::open(const std::filesystem::path& path, const Scenario& sc,
-                  const VideoMode* mode_override) {
+                  const VideoMode* mode_override, int decode_threads) {
     auto vs = std::make_unique<VideoSource>();
 
-    if (Status st = vs->decoder_.open(path); !st) {
+    // decode_threads = 0 means "this machine's default", min(4, hw). See
+    // DecodeThread's header for why threaded decode is safe for INV-3 and what
+    // the watchdog does about the one clip that made it look unsafe.
+    if (Status st = vs->decoder_.open(path, 8, decode_threads); !st) {
         return Err(st.error());
     }
 

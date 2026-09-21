@@ -297,13 +297,34 @@ set_tests_properties(frame_budget PROPERTIES
     TIMEOUT ${SAT_TEST_TIMEOUT}
     LABELS "perf")
 
+# --- spec row 20 on the VIDEO path, RUN SERIALLY ---------------------------
+#
+# The BP-2 twin of `frame_budget` above, and registered for the same reason:
+# it is a wall-clock assertion and `ctest --parallel` would have it measuring
+# the scheduler. Benchmark Performance-2 is 30 % of the marks and throughput is
+# half of what it grades, so the figure has to be checked — on a quiet machine.
+#
+# Declared after the `video` suite below creates test_video; CMake resolves the
+# target by name at generate time, so the order here does not matter.
+add_test(NAME bp2_budget
+         COMMAND test_video --no-skip -ts=perf -s)
+set_tests_properties(bp2_budget PROPERTIES
+    PASS_REGULAR_EXPRESSION "assertions: [1-9]")
+set_tests_properties(bp2_budget PROPERTIES
+    RUN_SERIAL TRUE
+    TIMEOUT ${SAT_TEST_TIMEOUT}
+    LABELS "perf")
+
 # --- CP 0.7 ★ GATE: OpenCV can decode MP4 (30% of marks depend on it) ------
 # Runs whether or not OpenCV is present: without it the gate test reports a loud
 # SKIP rather than passing silently, so a build that cannot do video says so.
 sat_add_test(video
     SOURCES video/test_probe.cpp
             video/test_video_source.cpp
-    DEPS    sat_core sat_engine sat_scenario
+    # sat_metrics: the P0-4 cases score a whole run against committed truth,
+    # which is what Benchmark Performance-2 actually grades. They need the
+    # §13.1 collector, not just the decoder.
+    DEPS    sat_core sat_engine sat_scenario sat_metrics
 )
 target_compile_definitions(test_video PRIVATE
     SAT_TEST_CLIP_DIR="${CMAKE_CURRENT_SOURCE_DIR}/video/clips"

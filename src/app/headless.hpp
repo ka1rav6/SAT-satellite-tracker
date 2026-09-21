@@ -85,6 +85,17 @@ struct HeadlessOptions {
     // -----------------------------------------------------------------------
     std::vector<std::pair<std::string, std::string>> overrides;
 
+    /// The video decoder's internal worker thread count — P0-3.
+    ///
+    /// 0 means this machine's default, min(4, hardware_concurrency). 1 forces
+    /// the old single-threaded behaviour, which is the documented remedy if a
+    /// clip stalls the threaded decoder.
+    ///
+    /// It does not change the decoded bytes — that is asserted, not assumed;
+    /// see DecodeThread's header for the measurement and the reproducibility
+    /// test that keeps it checked.
+    int decode_threads = 0;
+
     /// Write the CP 10.x control trace (metrics/trace_log.hpp) as trace.csv.
     /// Off by default: it contains truth, so it is a diagnostic and not a
     /// deliverable, and nothing that is graded should have to be filtered.
