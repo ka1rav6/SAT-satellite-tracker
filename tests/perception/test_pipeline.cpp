@@ -140,6 +140,13 @@ TEST_CASE("CP 5.7: candidates drop from thousands to under 25 under full damage"
     // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
     // per frame and double the suite's runtime for nothing.
     engine.set_detector(PipelineConfig::Detector::BrightestPixel);
+    // These tests take their frames from the PUBLISHED SNAPSHOT so they can
+    // run their own ClassicalPerception over them with varied parameters.
+    // That makes them preview consumers, and since P1-2 a consumer has to
+    // declare itself: the 307 KB copy is skipped otherwise, because the
+    // fingerprint hashes the source frame in place and headless runs have
+    // nothing else that reads it.
+    engine.set_preview_consumers(true);
     REQUIRE(engine.step());
 
     // acquire() BEFORE read_slot(): acquiring swaps the slot, so taking the
@@ -208,6 +215,13 @@ TEST_CASE("★ CP 5.9: the beacon is among the top candidates in >95% of frames"
     // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
     // per frame and double the suite's runtime for nothing.
     engine.set_detector(PipelineConfig::Detector::BrightestPixel);
+    // These tests take their frames from the PUBLISHED SNAPSHOT so they can
+    // run their own ClassicalPerception over them with varied parameters.
+    // That makes them preview consumers, and since P1-2 a consumer has to
+    // declare itself: the 307 KB copy is skipped otherwise, because the
+    // fingerprint hashes the source frame in place and headless runs have
+    // nothing else that reads it.
+    engine.set_preview_consumers(true);
     // Open loop: this measures PERCEPTION, and a control loop chasing clutter
     // would move the beacon out of frame and confound the measurement.
     engine.set_control_enabled(false);
@@ -284,6 +298,13 @@ TEST_CASE("the pipeline survives every atmosphere with one set of parameters") {
     // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
     // per frame and double the suite's runtime for nothing.
     engine.set_detector(PipelineConfig::Detector::BrightestPixel);
+    // These tests take their frames from the PUBLISHED SNAPSHOT so they can
+    // run their own ClassicalPerception over them with varied parameters.
+    // That makes them preview consumers, and since P1-2 a consumer has to
+    // declare itself: the 307 KB copy is skipped otherwise, because the
+    // fingerprint hashes the source frame in place and headless runs have
+    // nothing else that reads it.
+    engine.set_preview_consumers(true);
         engine.set_control_enabled(false);
 
         p.target_size_px = sc.targets[0].size_px;
@@ -326,6 +347,13 @@ TEST_CASE("INV-4: processing a frame allocates nothing after startup") {
     // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
     // per frame and double the suite's runtime for nothing.
     engine.set_detector(PipelineConfig::Detector::BrightestPixel);
+    // These tests take their frames from the PUBLISHED SNAPSHOT so they can
+    // run their own ClassicalPerception over them with varied parameters.
+    // That makes them preview consumers, and since P1-2 a consumer has to
+    // declare itself: the 307 KB copy is skipped otherwise, because the
+    // fingerprint hashes the source frame in place and headless runs have
+    // nothing else that reads it.
+    engine.set_preview_consumers(true);
     engine.set_control_enabled(false);
 
     PerceptionParams p;
@@ -369,6 +397,13 @@ TEST_CASE("the detection pipeline is reproducible") {
     // Leaving the engine's own copy on would run the whole §9.4 pipeline twice
     // per frame and double the suite's runtime for nothing.
     engine.set_detector(PipelineConfig::Detector::BrightestPixel);
+    // These tests take their frames from the PUBLISHED SNAPSHOT so they can
+    // run their own ClassicalPerception over them with varied parameters.
+    // That makes them preview consumers, and since P1-2 a consumer has to
+    // declare itself: the 307 KB copy is skipped otherwise, because the
+    // fingerprint hashes the source frame in place and headless runs have
+    // nothing else that reads it.
+    engine.set_preview_consumers(true);
         engine.set_control_enabled(false);
         PerceptionParams p;
         p.target_size_px = sc.targets[0].size_px;

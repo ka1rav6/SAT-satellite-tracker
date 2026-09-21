@@ -521,6 +521,20 @@ public:
     /// so a pure speed run turns it off — measuring it would mean measuring
     /// the measuring — and anything that has to be reproducible turns it on.
     void set_publish_snapshots(bool on) noexcept { cfg_.publish_snapshots = on; }
+
+    /// Tell the pipeline that something will READ the published snapshots'
+    /// preview image, so the per-frame copy is worth making — P1-2.
+    ///
+    /// Default false. The fingerprint does not need it (it hashes the source
+    /// frame in place), and in headless nothing else does either, so the
+    /// 307 KB copy per frame is pure waste there. The GUI calls this when it
+    /// binds to the triple buffer.
+    ///
+    /// Deliberately explicit rather than inferred from the triple buffer's
+    /// state: a consumer that has not yet called acquire() still needs the
+    /// first frame's preview, so "has anyone read yet" is the wrong question.
+    void set_preview_consumers(bool on) noexcept { preview_consumers_ = on; }
+    [[nodiscard]] bool preview_consumers() const noexcept { return preview_consumers_; }
     [[nodiscard]] PipelineConfig::Detector detector() const noexcept { return cfg_.detector; }
 
     /// Flip the loop open or closed mid-run. Used by the CP 1.8 test and by the
@@ -601,6 +615,9 @@ private:
     int64_t     frame_ = 0;
 
     TripleBuffer<SimSnapshot>    snapshots_{};
+    /// See set_preview_consumers. False in headless, which is where every
+    /// benchmark figure comes from.
+    bool                         preview_consumers_ = false;
     std::vector<FrameFingerprint> fingerprints_;
 };
 

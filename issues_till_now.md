@@ -69,7 +69,20 @@ does not exist in the video path Benchmark Performance-2 grades.
 | `matched_filter` | 2,393 µs | **176 µs** | 120 | [~] 1.5× over |
 | `cfar` (×2) | 4,914 µs each | **362 µs** each | 200 | [~] 1.8× over |
 | `grouping` | 396 µs | **29 µs** | 50 | [x] within budget |
+| `snapshot` | 813 µs | **94 µs** | 30 | [~] 8.7× faster, 3.1× over — P1-2 |
+| `frame_acquire` | — | **1,395 µs** | 740 | [~] 1.9× over (parent of the three above it) |
 | **`frame_total`** | **42,551 µs** | **2,618 µs** | **850** | [-] 3.1× over; see §14.0d |
+
+> **This table used to omit `snapshot` and `frame_acquire`, and the omission
+> mattered.** `snapshot` was **813 µs — 27× its budget and 24 % of the whole
+> frame** — for a memcpy and a hash that produce provenance and would not exist
+> on real hardware. It was on by default in headless, so *every* FPS figure
+> this project has quoted included it, and it appeared in no performance table
+> anywhere. A gap table that lists twelve stages and silently drops the second
+> most expensive one is not a gap table.
+>
+> Both are now listed, with their budgets, whether or not they are comfortable
+> reading.
 
 ### 1.4 What has been done, and what is left
 

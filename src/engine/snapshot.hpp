@@ -115,4 +115,23 @@ struct SimSnapshot {
 // ---------------------------------------------------------------------------
 [[nodiscard]] FrameFingerprint fingerprint(const SimSnapshot& s) noexcept;
 
+/// The same fingerprint, taking the image from an EXTERNAL buffer — P1-2.
+///
+/// The image is the expensive part, and it does not need to live in the
+/// snapshot for the fingerprint to be taken: the frame the detector saw is
+/// already in memory, owned by the source, and hashing it there rather than
+/// hashing a copy of it removes 307 KB of memcpy from every frame.
+///
+/// The copy still happens when a GUI consumer is attached, because a consumer
+/// reads asynchronously and cannot borrow a buffer the next frame will
+/// overwrite. It simply stops happening in headless, which is where every
+/// benchmark number comes from.
+///
+/// `s.preview` is ignored entirely by this overload. Asserted in the tests:
+/// hashing the same bytes from a different buffer must produce the same
+/// digest, or the saving would have been bought with a silent change to every
+/// recorded number.
+[[nodiscard]] FrameFingerprint fingerprint(const SimSnapshot& s,
+                                           std::span<const uint8_t> image) noexcept;
+
 }  // namespace sat

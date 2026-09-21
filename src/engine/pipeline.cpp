@@ -1242,9 +1242,35 @@ bool Pipeline::step() {
         snap.truth_in_fov      = rec.truth_in_fov;
         snap.centroid_error_px = rec.centroid_error_px;
         snap.tracking_error_px = rec.tracking_error_px;
-        snap.set_preview(frame.pixels);
+        // ------------------------------------------------------------------
+        // P1-2: the preview copy happens ONLY for a consumer that will read it.
+        //
+        // This stage was measured at 813 us per frame against §15's 30 us
+        // budget — 27x over and 24 % of the whole frame — for a memcpy and a
+        // hash that produce provenance and would not exist on real hardware.
+        // It is on by default in headless, so every FPS figure this project
+        // has quoted included it.
+        //
+        // Two separate savings, and they are worth distinguishing:
+        //
+        //   The COPY (307,200 bytes, ~25 us). Needed only when something reads
+        //   the snapshot asynchronously, because such a reader cannot borrow a
+        //   buffer the next frame overwrites. In headless nothing does, so it
+        //   is skipped entirely. `preview_consumers_` is set by whoever
+        //   attaches; the GUI sets it when it binds to the triple buffer.
+        //
+        //   The HASH (~790 us). The larger half, and it was never about the
+        //   copy at all: FNV-1a is a serial multiply chain, one byte at a
+        //   time. It now runs over frame.pixels IN PLACE through fnv1a_bulk,
+        //   which is eight independent FNV chains. See core/hash.hpp.
+        //
+        // Hashing the source buffer instead of the copy must produce the same
+        // digest — the bytes are identical — and tests/repro asserts exactly
+        // that rather than leaving it to argument.
+        // ------------------------------------------------------------------
+        if (preview_consumers_) snap.set_preview(frame.pixels);
 
-        fingerprints_.push_back(fingerprint(snap));
+        fingerprints_.push_back(fingerprint(snap, frame.pixels));
         snapshots_.publish();
     }
 

@@ -212,6 +212,12 @@ TEST_CASE("CP 2.3: the snapshot seam is exercised, ready for the GUI at CP 15.0"
     PipelineConfig cfg = base_config();
     Pipeline p;
     p.build(cfg, base_emitters(cfg.synthetic.screen));
+    // THIS TEST IS A CONSUMER, and since P1-2 a consumer has to say so: the
+    // 307 KB preview copy is skipped unless something will read it, which in
+    // practice means the dashboard. The fingerprint does not need it — it
+    // hashes the source frame in place — so a headless run leaves the preview
+    // zeroed and saves the copy on every frame.
+    p.set_preview_consumers(true);
 
     REQUIRE(p.step());
     REQUIRE(p.snapshots().acquire());
@@ -261,4 +267,90 @@ TEST_CASE("track mode names cover every enumerator") {
         INFO("mode " << static_cast<int>(i));
         CHECK(std::string(track_mode_name(static_cast<TrackMode>(i))) != "UNKNOWN");
     }
+}
+
+// ===========================================================================
+// P1-2 — hashing the source frame instead of a copy of it
+//
+// The `snapshot` stage cost 813 us per frame against a 30 us budget: a 307 KB
+// memcpy plus a byte-at-a-time hash of the copy, every frame, for provenance
+// that would not exist on real hardware. Both halves are now avoided in
+// headless — the copy is skipped when nothing will read it, and the hash runs
+// over the source buffer in place.
+//
+// That substitution is only safe if it produces the SAME digest. These tests
+// assert it rather than leaving it to argument, because the alternative is a
+// silent one-off change to every number the project has ever recorded, arriving
+// disguised as a performance fix.
+// ===========================================================================
+
+TEST_CASE("P1-2: hashing an external buffer matches hashing the snapshot's copy") {
+    const SimSnapshot s = make_snapshot();
+
+    // The same bytes, in a completely separate allocation.
+    std::vector<uint8_t> elsewhere(s.preview.begin(), s.preview.end());
+    REQUIRE(elsewhere.data() != s.preview.data());
+
+    const FrameFingerprint from_copy     = fingerprint(s);
+    const FrameFingerprint from_external = fingerprint(s, elsewhere);
+
+    CHECK(from_copy.image     == from_external.image);
+    CHECK(from_copy.boresight == from_external.boresight);
+    CHECK(from_copy.detection == from_external.detection);
+    CHECK(from_copy.track     == from_external.track);
+    CHECK(from_copy.mode      == from_external.mode);
+    CHECK(from_copy.combined() == from_external.combined());
+}
+
+TEST_CASE("P1-2: the external overload ignores the snapshot's own preview") {
+    // The point of the overload is that the snapshot's preview need not be
+    // populated at all. If the digest still depended on it, skipping the copy
+    // in headless would change every digest — which is the failure this whole
+    // change has to avoid.
+    SimSnapshot s = make_snapshot();
+    std::vector<uint8_t> real(s.preview.begin(), s.preview.end());
+
+    // Wipe the snapshot's copy, exactly as a headless run leaves it.
+    std::fill(s.preview.begin(), s.preview.end(), uint8_t{0});
+
+    CHECK(fingerprint(s, real).image == fnv1a_bulk(real.data(), real.size()));
+    // And it is NOT the digest of the zeroed buffer, which is what would come
+    // out if the overload had silently used s.preview.
+    CHECK(fingerprint(s, real).image != fingerprint(s).image);
+}
+
+TEST_CASE("P1-2: a headless run and a GUI-attached run agree bit for bit") {
+    // THE END-TO-END FORM OF THE ASSERTION ABOVE, and the one that actually
+    // protects the invariant: the preview copy is now conditional on
+    // set_preview_consumers(), so the two configurations take different code
+    // paths through publish. They must still produce the same fingerprints, or
+    // a number measured in headless would not describe what the GUI shows.
+    auto digests = [](bool consumers) {
+        PipelineConfig cfg;
+        cfg.synthetic.camera     = CameraGeometry::make(64, 48, 4.0, 3.0);
+        cfg.synthetic.screen     = ScreenGeometry::make(2000, 2000, cfg.synthetic.camera);
+        cfg.synthetic.duration_s = 0.5;
+        cfg.synthetic.seed       = 11;
+        cfg.publish_snapshots    = true;
+
+        EmitterSoA e;
+        e.add(cfg.synthetic.screen.cx + 30.0, cfg.synthetic.screen.cy, 200.0f, 8,
+              ShapeKind::Square, EmitterKind::Target);
+        e.vx[0] = 12.0;
+
+        Pipeline p;
+        p.build(cfg, std::move(e));
+        p.set_preview_consumers(consumers);
+        while (p.step()) {}
+
+        std::vector<uint64_t> out;
+        for (const FrameFingerprint& f : p.fingerprints()) out.push_back(f.combined());
+        return out;
+    };
+
+    const std::vector<uint64_t> headless = digests(false);
+    const std::vector<uint64_t> attached = digests(true);
+
+    REQUIRE(headless.size() > 5);
+    CHECK(headless == attached);
 }

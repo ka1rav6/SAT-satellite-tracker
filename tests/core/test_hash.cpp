@@ -8,6 +8,7 @@
 
 #include "core/hash.hpp"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -135,4 +136,93 @@ TEST_CASE("hashing a frame buffer is stable and sensitive") {
     // pixel it would miss an RNG divergence too.
     img[123456] = 33;
     CHECK(fnv1a(std::span<const uint8_t>(img)) != base);
+}
+
+// ===========================================================================
+// P1-2 — fnv1a_bulk, the eight-lane image hash
+//
+// `snapshot` cost 813 us per frame against a 30 us budget, and nearly all of
+// it was FNV-1a's serial multiply chain over 307,200 bytes. fnv1a_bulk runs
+// eight independent chains instead. These tests pin the properties that make
+// that substitution safe rather than merely fast.
+// ===========================================================================
+
+TEST_CASE("P1-2: fnv1a_bulk is a function of the bytes and the length") {
+    std::vector<uint8_t> a(4096);
+    for (size_t i = 0; i < a.size(); ++i) a[i] = static_cast<uint8_t>(i * 31 + 7);
+
+    // Deterministic.
+    CHECK(fnv1a_bulk(a.data(), a.size()) == fnv1a_bulk(a.data(), a.size()));
+
+    // Sensitive to every byte, including ones deep inside and ones in the
+    // unrolled tail. A lane-striped hash that dropped a lane would still look
+    // fine on a single flipped byte, so this walks several positions.
+    for (size_t pos : {size_t{0}, size_t{1}, size_t{7}, size_t{8}, size_t{2048},
+                       a.size() - 9, a.size() - 1}) {
+        std::vector<uint8_t> b = a;
+        b[pos] ^= 0x01;
+        INFO("flipped byte at " << pos);
+        CHECK(fnv1a_bulk(a.data(), a.size()) != fnv1a_bulk(b.data(), b.size()));
+    }
+
+    // Sensitive to ORDER, which a per-lane sum would not be.
+    std::vector<uint8_t> swapped = a;
+    std::swap(swapped[100], swapped[108]);        // same lane, different index
+    CHECK(fnv1a_bulk(a.data(), a.size()) != fnv1a_bulk(swapped.data(), swapped.size()));
+
+    // Sensitive to LENGTH. Trailing zeros are the case a lane-striped
+    // construction gets wrong if the length is not folded in, and a frame
+    // buffer is full of zeros.
+    std::vector<uint8_t> zeros_a(64, 0), zeros_b(72, 0);
+    CHECK(fnv1a_bulk(zeros_a.data(), zeros_a.size())
+       != fnv1a_bulk(zeros_b.data(), zeros_b.size()));
+}
+
+TEST_CASE("P1-2: fnv1a_bulk handles every tail length") {
+    // The body loop consumes eight bytes at a time and a separate loop
+    // finishes the remainder. Both must assign bytes to the same lanes, or a
+    // buffer whose length is not a multiple of eight hashes differently
+    // depending on where the split lands — and a 641x481 direct-mode frame is
+    // exactly that (308,321 bytes, 1 byte of tail).
+    std::vector<uint8_t> buf(64);
+    for (size_t i = 0; i < buf.size(); ++i) buf[i] = static_cast<uint8_t>(i);
+
+    std::vector<uint64_t> digests;
+    for (size_t n = 0; n <= 24; ++n) digests.push_back(fnv1a_bulk(buf.data(), n));
+
+    // Every prefix length gives a distinct digest. Not a deep property, but it
+    // is the one that fails outright if the tail loop uses a different lane
+    // assignment from the body.
+    for (size_t i = 0; i < digests.size(); ++i) {
+        for (size_t j = i + 1; j < digests.size(); ++j) {
+            INFO("lengths " << i << " and " << j);
+            CHECK(digests[i] != digests[j]);
+        }
+    }
+
+    // Zero length is well defined and not the seed.
+    CHECK(fnv1a_bulk(buf.data(), 0) == fnv1a_bulk(nullptr, 0));
+}
+
+TEST_CASE("P1-2: fnv1a_bulk reads single bytes, so it cannot depend on endianness") {
+    // This is the property that made the obvious optimisation unusable. Eight
+    // bytes read as a uint64 hash differently on a big-endian machine, and
+    // this hash feeds the INV-3 fingerprint, whose whole claim is that two
+    // machines agree.
+    //
+    // Endianness cannot be tested from inside one process. What CAN be tested
+    // is the property it follows from: the digest is a function of the byte
+    // SEQUENCE, so a buffer and its byte-reversal must differ, and building
+    // the same sequence from differently-aligned storage must not.
+    std::vector<uint8_t> fwd(32);
+    for (size_t i = 0; i < fwd.size(); ++i) fwd[i] = static_cast<uint8_t>(i + 1);
+    std::vector<uint8_t> rev(fwd.rbegin(), fwd.rend());
+    CHECK(fnv1a_bulk(fwd.data(), fwd.size()) != fnv1a_bulk(rev.data(), rev.size()));
+
+    // Same bytes, offset storage: identical digest. If any multi-byte load had
+    // crept in, an unaligned copy could differ.
+    std::vector<uint8_t> offset(fwd.size() + 3, 0xAA);
+    std::copy(fwd.begin(), fwd.end(), offset.begin() + 3);
+    CHECK(fnv1a_bulk(fwd.data(), fwd.size())
+       == fnv1a_bulk(offset.data() + 3, fwd.size()));
 }

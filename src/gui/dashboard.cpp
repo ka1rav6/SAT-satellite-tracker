@@ -169,6 +169,11 @@ void Dashboard::rebuild(const Scenario& sc) {
     }
 
     pipeline_.build_from_scenario(scenario_);
+    // P1-2: the dashboard reads the published preview every frame to draw the
+    // camera view, so it is the one consumer that needs the copy. Headless
+    // runs skip it and save 307 KB per frame. Set AFTER the build, which
+    // resets the pipeline's configuration.
+    pipeline_.set_preview_consumers(true);
 
     // Open on the CLEAN preset rather than on the scenario's full damage.
     //

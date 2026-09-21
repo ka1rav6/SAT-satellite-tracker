@@ -1,13 +1,25 @@
 #include "engine/snapshot.hpp"
 
+#include <span>
+
 namespace sat {
 
 FrameFingerprint fingerprint(const SimSnapshot& s) noexcept {
+    return fingerprint(s, std::span<const uint8_t>(s.preview));
+}
+
+FrameFingerprint fingerprint(const SimSnapshot& s,
+                             std::span<const uint8_t> image) noexcept {
     FrameFingerprint f{};
     f.frame = s.frame;
 
     // The image: the most sensitive single summary of everything upstream.
-    f.image = fnv1a(std::span<const uint8_t>(s.preview));
+    //
+    // fnv1a_bulk rather than fnv1a — eight independent FNV chains instead of
+    // one serial dependency chain. See core/hash.hpp for why, and for why the
+    // obvious 8-bytes-at-a-time load would have broken the cross-machine claim
+    // this fingerprint exists to make.
+    f.image = fnv1a_bulk(image);
 
     // Pointing, bit-exact. These are pure arithmetic on our own state, with no
     // libm in the path, so there is nothing to excuse.
