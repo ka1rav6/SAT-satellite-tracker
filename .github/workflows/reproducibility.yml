@@ -50,13 +50,37 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DBUILD_TESTING=OFF
           cmake --build build --target sat-tracker --parallel
 
+      # Since P1-1 this single command checks three things, not one:
+      #   * each run is bit-identical to its repeat        (determinism)
+      #   * the AVX2 and scalar damage chains agree        (dispatch safety)
+      #   * different seeds produce different digests      (the gate is live)
+      #
+      # The third is the one that matters most here. The gate previously ran
+      # with the sensor model disabled, so four of five scenarios produced the
+      # same digest for every seed and every "IDENTICAL" was vacuous.
       - name: Verify reproducibility
         run: ./build/sat-tracker --verify-reproducibility --seeds 3 --duration 2.0 | tee repro-${{ matrix.opt }}.txt
 
+      # Report which paths the runner could actually exercise, so a green tick
+      # cannot stand for a comparison that was skipped.
+      - name: Report the damage-chain dispatch on this runner
+        run: |
+          if ./build/sat-tracker --has-avx2; then
+            echo "AVX2 present: the scalar/vector comparison above is a real two-path check."
+          else
+            echo "::warning title=AVX2 absent::This runner has no AVX2, so the \
+            scalar-vs-vector arm of the INV-3 gate reported n/a. The comparison \
+            is exercised on runners that have it."
+          fi
+
       # The digest lines are what the cross-build job compares. Uploading them
       # rather than recomputing keeps the two jobs comparing the same artifact.
+      # Column 5 is the digest; column 6 is the simd verdict. Both are
+      # compared across optimisation levels: a build where -O2 takes the vector
+      # path and -O0 does not would otherwise compare two different pipelines
+      # and call the agreement meaningful.
       - name: Extract digests
-        run: grep -E '^(static|linear|fast|multi|offset)' repro-${{ matrix.opt }}.txt | awk '{print $1, $2, $5}' > digests-${{ matrix.opt }}.txt
+        run: grep -E '^(static|linear|fast|multi|offset)' repro-${{ matrix.opt }}.txt | awk '{print $1, $2, $5, $6}' > digests-${{ matrix.opt }}.txt
 
       - uses: actions/upload-artifact@v4
         with:

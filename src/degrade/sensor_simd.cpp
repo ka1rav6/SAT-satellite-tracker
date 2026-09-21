@@ -270,11 +270,20 @@ bool cpu_has_avx2() noexcept {
     return ok;
 }
 
+// See the header for why this is a deliberate switch and not an environment
+// variable. Default on: the shipped path is the fast one. File-local, so the
+// only way to change it is the accessor below.
+bool g_simd_enabled = true;
+
 }  // namespace
 
 bool damage_chain_simd_available() noexcept { return cpu_has_avx2(); }
 
+void set_damage_simd_enabled(bool on) noexcept { g_simd_enabled = on; }
+bool damage_chain_simd_enabled() noexcept { return g_simd_enabled && cpu_has_avx2(); }
+
 size_t damage_chain_simd(const DamageArgs& a, Pcg32& g) noexcept {
+    if (!g_simd_enabled) return 0;
     if (!cpu_has_avx2()) return 0;
     if (!a.read && !a.shot) return 0;      // nothing to vectorise
     if (a.rad == nullptr || a.dst == nullptr) return 0;
@@ -285,6 +294,11 @@ size_t damage_chain_simd(const DamageArgs& a, Pcg32& g) noexcept {
 #else   // !SAT_HAVE_AVX2_PATH
 
 bool damage_chain_simd_available() noexcept { return false; }
+bool damage_chain_simd_enabled() noexcept { return false; }
+// Accepted and ignored: a build with no vector path is already scalar-only, so
+// asking for scalar is satisfied. Refusing would make the gate's --no-simd
+// arm fail on exactly the machines where it is redundant.
+void set_damage_simd_enabled(bool) noexcept {}
 size_t damage_chain_simd(const DamageArgs&, Pcg32&) noexcept { return 0; }
 
 #endif

@@ -69,6 +69,37 @@ struct ReproResult {
     /// Digest over every frame's combined hash. This is the number the CI
     /// matrix compares across optimisation levels and machines.
     uint64_t    digest = 0;
+
+    // -----------------------------------------------------------------------
+    // The scalar/vector arm — P1-1.
+    //
+    // The damage chain dispatches to AVX2 at RUNTIME
+    // (degrade/sensor_simd.cpp), which is right for a single shipped binary
+    // and is also the exact hazard INV-3 exists to catch: different machines
+    // execute different code. Running this gate twice on one machine took the
+    // same path both times and said nothing about the other one.
+    //
+    // So every pair is also run once with the vector path forced off and the
+    // digests compared. On a machine with AVX2 that is a genuine two-path
+    // comparison. On a machine without, `simd_compared` is false and the row
+    // says so rather than claiming a check it could not perform — a gate that
+    // silently does nothing is worse than no gate, because it reads as a green
+    // tick.
+    // -----------------------------------------------------------------------
+    bool     simd_compared = false;   ///< was there a vector path to compare?
+    bool     simd_matches  = true;    ///< scalar digest == vector digest
+    uint64_t scalar_digest = 0;
+};
+
+/// Per-scenario checks that need the whole seed sweep to evaluate.
+struct SeedSensitivity {
+    std::string scenario;
+    /// Distinct digests across the seeds swept. Anything less than the number
+    /// of seeds means two different seeds produced identical output, i.e. the
+    /// run has no live stochastic component for the seed to reach.
+    size_t distinct = 0;
+    size_t seeds    = 0;
+    [[nodiscard]] bool ok() const noexcept { return seeds < 2 || distinct == seeds; }
 };
 
 /// Run the built-in scenario set twice each and compare.
@@ -78,8 +109,27 @@ struct ReproResult {
 [[nodiscard]] std::vector<ReproResult> verify_reproducibility(
     const std::vector<uint64_t>& seeds, double duration_s = 2.0);
 
+/// Group the results by scenario and count distinct digests per scenario.
+///
+/// THE CHECK THAT WOULD HAVE CAUGHT THE HOLLOW GATE. For months this tool
+/// printed, on every run:
+///
+///     static   1  IDENTICAL  6e5ea6926c621cbf
+///     static   2  IDENTICAL  6e5ea6926c621cbf     <- same digest, other seed
+///
+/// Four of the five scenarios were seed-invariant, because the sensor model
+/// was never enabled and there was nothing stochastic left for the seed to
+/// reach. Every row said IDENTICAL, which is what the tool was looking for,
+/// and the evidence that it was checking nothing was printed in the adjacent
+/// column with nobody comparing it.
+///
+/// Determinism and sensitivity are opposite failures and a gate needs both:
+/// repeats must agree, and different seeds must NOT.
+[[nodiscard]] std::vector<SeedSensitivity> seed_sensitivity(
+    const std::vector<ReproResult>& results);
+
 /// Print the results as a table and return a process exit code:
-/// 0 if every run was identical, 1 otherwise.
+/// 0 if every check passed, 1 otherwise.
 [[nodiscard]] int report_reproducibility(const std::vector<ReproResult>& results);
 
 }  // namespace sat

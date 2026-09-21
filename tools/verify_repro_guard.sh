@@ -18,6 +18,32 @@
 # rather than something that would break the build outright. It is inserted into
 # the synthetic source's render path, the file is always restored via a trap,
 # and the build tree used is a throwaway.
+#
+# ---------------------------------------------------------------------------
+# PART TWO: THE AVX2 LANE — added with P1-1
+# ---------------------------------------------------------------------------
+# The gate grew a second arm: it now runs each scenario once more with the
+# vector damage chain forced off and requires the digests to agree. That arm
+# needs its own self-test, for exactly the reason this file already argues —
+# a comparison nobody has watched fail proves nothing.
+#
+# So a second injection perturbs the AVX2 kernel's read-noise sigma by one part
+# in a thousand. It is the realistic form of the bug — a constant transcribed
+# slightly differently into the vector path — and it is the hardest kind for
+# the old gate to see: the scalar path is untouched, every repeat is still
+# bit-identical to itself, and the only thing that changes is agreement BETWEEN
+# the two paths.
+#
+# WHY NOT ONE ULP, which was the first attempt. The frame is quantised to 8
+# bits, so a relative perturbation of 1e-7 on a sigma of 20 grey levels moves
+# every pixel by ~2e-6 of a level and not one of them crosses a rounding
+# boundary. The injected build produced byte-identical frames and the self-test
+# reported, correctly, that the gate had not fired. One ULP is below the
+# observable floor of the thing being compared, so it tests nothing. 1e-3 is
+# ~0.02 grey levels, which flips a scattering of pixels per frame — still far
+# subtler than any bug that would be noticed by eye.
+#
+# On a machine without AVX2 this half is skipped and says so.
 
 set -euo pipefail
 
@@ -100,3 +126,73 @@ fi
 echo "  check went red as expected:"
 grep -E "DIVERGED|FAIL:" "${scratch}/dirty.log" | head -4 | sed 's/^/    /'
 echo "INV-3 self-test passed: the reproducibility check detects a clock read."
+
+# Restore before part two, so the two injections cannot compound.
+cp "${backup}" "${target}"
+
+# ---------------------------------------------------------------------------
+# Part two — the scalar/vector arm.
+# ---------------------------------------------------------------------------
+simd_target="${repo_root}/src/degrade/sensor_simd.cpp"
+simd_backup="$(mktemp)"
+cp "${simd_target}" "${simd_backup}"
+cleanup_simd() {
+    cp "${simd_backup}" "${simd_target}"
+    rm -f "${simd_backup}"
+    cleanup
+}
+trap cleanup_simd EXIT INT TERM
+
+if ! "${scratch}/build/sat-tracker" --has-avx2 > /dev/null 2>&1; then
+    echo
+    echo "INV-3 self-test: this CPU has no AVX2, so the scalar/vector arm cannot"
+    echo "                 be exercised here. windows-video.yml and the CI matrix"
+    echo "                 cover other hardware; the arm reports n/a rather than"
+    echo "                 passing when there is nothing to compare."
+    exit 0
+fi
+
+echo
+echo "INV-3 self-test: perturbing the AVX2 read-noise sigma by 1 part in 1000…"
+python3 - "${simd_target}" <<'PYINJECT2'
+import sys
+path = sys.argv[1]
+src = open(path).read()
+
+# The perturbation goes on the read-noise sigma the vector kernel uses. The
+# scalar path keeps the true value, so the two chains now disagree by one part
+# in a thousand — the kind of difference a "looks equivalent" rewrite of a
+# constant actually produces.
+needle = "size_t run_avx2(const DamageArgs& a, Pcg32& g) noexcept {"
+assert needle in src, "run_avx2 signature changed; update this self-test"
+
+injection = needle + """
+    // ---- DELIBERATE AVX2/SCALAR MISMATCH, injected by verify_repro_guard.sh --
+    // Nudges lane 0 of the read-noise sigma by one ULP. The scalar path is
+    // untouched, so every run stays bit-identical to its own repeat and only
+    // the cross-path comparison can see this.
+    DamageArgs a_injected = a;
+    a_injected.sigma = a.sigma * 1.001f;
+    a_injected.rvar  = a_injected.sigma * a_injected.sigma;
+    #define a a_injected
+    // ---- END INJECTION -------------------------------------------------------"""
+
+src = src.replace(needle, injection)
+open(path, "w").write(src)
+PYINJECT2
+
+cmake --build "${scratch}/build" --target sat-tracker --parallel \
+      > "${scratch}/build3.log" 2>&1
+
+if "${scratch}/build/sat-tracker" --verify-reproducibility --seeds 1 --duration 1.0 \
+        > "${scratch}/simd.log" 2>&1; then
+    echo "FAIL: --verify-reproducibility PASSED with the AVX2 damage chain" >&2
+    echo "      disagreeing with the scalar one. The arm added for P1-1 is not" >&2
+    echo "      detecting what it exists to detect." >&2
+    tail -40 "${scratch}/simd.log" >&2
+    exit 1
+fi
+
+echo "  check went red as expected:"
+grep -E "DIFFER|FAIL:" "${scratch}/simd.log" | head -4 | sed 's/^/    /'
+echo "INV-3 self-test passed: the gate detects an AVX2/scalar divergence."

@@ -73,7 +73,45 @@ struct DamageArgs {
 };
 
 /// True if this build and this CPU can take the vector path.
+///
+/// Reports the HARDWARE answer and ignores the switch below, so a caller can
+/// distinguish "no AVX2 here" from "AVX2 deliberately turned off" — which the
+/// reproducibility gate has to do, because only one of those makes the
+/// scalar/vector comparison meaningful.
 [[nodiscard]] bool damage_chain_simd_available() noexcept;
+
+// ---------------------------------------------------------------------------
+// FORCING THE SCALAR PATH — the INV-3 gate's missing half.
+//
+// The dispatch above is RUNTIME, which is the right call (CP 15.5 ships one
+// binary for whatever the evaluators have) and is also precisely the risk
+// INV-3 exists to catch: different machines execute different code. The
+// reproducibility gate ran on one machine, took the AVX2 path both times, and
+// therefore proved nothing at all about the scalar path or about agreement
+// between the two.
+//
+// Proving it needs both paths in ONE process, so the gate can run a scenario
+// twice and compare. Hence an explicit switch.
+//
+// Explicitly a function call and NOT an environment variable, though the
+// obvious `SAT_NO_AVX2=1` was the first idea: an env var makes the rendered
+// frame — and therefore the fingerprint, and therefore every graded number —
+// depend on the ambient environment of whoever ran the binary. That is the
+// same class of hazard as reading the wall clock, and INV-3 exists to keep the
+// output a pure function of the scenario and the seed. A flag the caller sets
+// deliberately, and which run.json records, keeps it a pure function of
+// inputs that are written down.
+//
+// NOT thread-safe by design: it is set once during start-up or between runs,
+// never while frames are in flight. Making it an atomic would suggest
+// otherwise.
+// ---------------------------------------------------------------------------
+
+/// Turn the vector path off (or back on) for this process.
+void set_damage_simd_enabled(bool on) noexcept;
+
+/// Whether the vector path will actually be taken: available AND enabled.
+[[nodiscard]] bool damage_chain_simd_enabled() noexcept;
 
 /// The vector path. Returns the number of pixels it consumed, which is
 /// `n` rounded DOWN to a multiple of the vector width — the caller finishes the
