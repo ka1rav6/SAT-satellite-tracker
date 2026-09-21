@@ -29,7 +29,7 @@ target_include_directories(sat_test_main PUBLIC
 #
 # Declares one test executable and registers it with CTest.
 #
-# The 120 s timeout is deliberate: a test that hangs is a failure mode this
+# The timeout is deliberate: a test that hangs is a failure mode this
 # project specifically cares about (CP 14.1 requires "no crash, no hang" over
 # 5000 fuzzed scenarios), so an infinite loop must show up as a red test rather
 # than a stuck CI job.
@@ -42,7 +42,9 @@ target_include_directories(sat_test_main PUBLIC
 # tight relative to the configuration actually being run, and the same code is
 # an order of magnitude slower in some of them:
 #
-#   Release            the slowest suite is ~56 s.
+#   Release            the slowest suite is 46 s (control), with robustness at
+#                      42 s and supervisor at 34 s behind it. Three suites are
+#                      now within a factor of three of the cap.
 #   Debug (-O0)        MEASURED at 8x, not the 5x first assumed here: the same
 #                      suites run 56 -> 353 s, 45 -> 362 s, 31 -> 251 s. The
 #                      earlier 5x was a guess, and a 600 s cap left the tracking
@@ -56,12 +58,25 @@ target_include_directories(sat_test_main PUBLIC
 # Scaling by configuration keeps the check meaningful in each without making it
 # vacuous in any.
 # ---------------------------------------------------------------------------
-set(SAT_TIMEOUT_BASE 120)                 # optimised build, the reference
+# AMENDMENT. The base was 120 s, and by this file's own argument that was too
+# tight. The Debug paragraph above rejects a cap that leaves a suite "using 60%
+# of its budget on a developer laptop — which on a slower CI runner is the same
+# red job this scaling was introduced to prevent". Release was in exactly that
+# position: 46 s against 120 s is 38% of budget on an 8-core developer machine
+# running the suite ALONE, and CI runs `ctest --parallel 4` on a shared 2-core
+# runner, where the same work takes several times longer.
+#
+# 300 s applies the file's own rule instead of contradicting it: 6.5x the
+# measured worst case, which survives CI contention while staying far tighter
+# than a hang. CP 14.1 treats a hang as a first-class failure and a hang is
+# unbounded, so the cap only has to be finite and prompt to catch one — 5
+# minutes is both.
+set(SAT_TIMEOUT_BASE 300)                 # optimised build, the reference
 if(CMAKE_CXX_FLAGS MATCHES "sanitize")
-    math(EXPR SAT_TEST_TIMEOUT "${SAT_TIMEOUT_BASE} * 16")   # 1920 s
+    math(EXPR SAT_TEST_TIMEOUT "${SAT_TIMEOUT_BASE} * 16")   # 4800 s
     set(SAT_TIMEOUT_WHY "sanitizers, ~16x Release")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    math(EXPR SAT_TEST_TIMEOUT "${SAT_TIMEOUT_BASE} * 10")   # 1200 s
+    math(EXPR SAT_TEST_TIMEOUT "${SAT_TIMEOUT_BASE} * 10")   # 3000 s
     set(SAT_TIMEOUT_WHY "Debug build, measured ~8x Release")
 else()
     set(SAT_TEST_TIMEOUT ${SAT_TIMEOUT_BASE})

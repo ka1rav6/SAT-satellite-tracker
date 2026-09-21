@@ -33,6 +33,25 @@ jobs:
       - name: 'INV-1 and INV-3: static source checks'
         run: ./tools/check_source_invariants.py
 
+      # Documentation is a deliverable here, not a courtesy, and this gate was
+      # being run by hand. It checks two different kinds of rot:
+      #
+      #   structure  every `just <recipe>`, repository path, relative link and
+      #              cross-reference in the documented set resolves. This is
+      #              what caught the Technical Report claiming `just dist` for
+      #              a recipe named `just package`.
+      #
+      #   numbers    every figure a document ANCHORS still matches
+      #              docs/baseline/run.json (P3-4). A dead link is obvious the
+      #              moment somebody clicks it; a stale measurement is not, and
+      #              the report's graded table was quoting 394 FPS for a run
+      #              that measures 306.
+      #
+      # It needs no build and no dependencies: it reads the repository and a
+      # committed JSON file, so it costs seconds.
+      - name: 'Documentation: links, recipes and anchored numbers'
+        run: ./tools/check_docs.py
+
   link-boundary:
     name: INV-1 link boundary
     runs-on: ubuntu-latest

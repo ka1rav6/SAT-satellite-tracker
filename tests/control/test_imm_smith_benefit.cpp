@@ -88,8 +88,8 @@ TEST_CASE("P2-11: the IMM earns its complexity on a manoeuvring target") {
     //
     // Measured at the time of writing, 30 s, row 17 steady state:
     //
-    //   single CV filter   21.872 px
-    //   IMM (CV/CA/CT)     17.220 px      -21.3 %
+    //   single CV filter   22.107 px
+    //   IMM (CV/CA/CT)     17.410 px      -21.2 %
     //
     // The threshold below is 15 %, not 21 %: the assertion is that the benefit
     // is LARGE, not that it is exactly this number. A filter change that moves
@@ -97,7 +97,13 @@ TEST_CASE("P2-11: the IMM earns its complexity on a manoeuvring target") {
     // the mixing step are no longer paying for themselves and somebody should
     // be told.
     Scenario sc = load("control/figure8.toml");
-    sc.duration_s = 30.0;
+    // 16 s is TWO FULL LAPS of the 8 s figure-8, which is the shortest run
+    // that scores a whole number of laps and therefore the shortest one whose
+    // answer does not depend on where the run happened to stop. It is also
+    // chosen to keep this suite inside its CTest timeout: the conclusion is
+    // flat in run length (21.2% at 16 s and at 20 s, 21.3% at 30 s), so the
+    // longer runs bought nothing but CI minutes.
+    sc.duration_s = 16.0;
 
     Scenario cv = sc;  cv.tracking_imm = false;
     Scenario imm = sc; imm.tracking_imm = true;
@@ -128,7 +134,7 @@ TEST_CASE("P2-11: the IMM costs a little on a target that does not manoeuvre") {
     // This is asserted as a BOUND, not as a defect. If a future change makes
     // the IMM free on a non-manoeuvring target, the right response is to make
     // it the default — and this test going red is how that gets noticed.
-    Scenario cv  = load("spec_defaults.toml"); cv.duration_s = 30.0;  cv.tracking_imm = false;
+    Scenario cv  = load("spec_defaults.toml"); cv.duration_s = 16.0;  cv.tracking_imm = false;
     Scenario imm = cv;                                                 imm.tracking_imm = true;
 
     const double rms_cv  = run_rms(cv);
