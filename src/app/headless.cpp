@@ -14,6 +14,7 @@
 #include "metrics/run_report.hpp"
 #include "scenario/overlay.hpp"
 #include "scenario/schema.hpp"
+#include "app/resources.hpp"
 #include "engine/decode_thread.hpp"
 #include "sat/version.hpp"
 
@@ -284,8 +285,31 @@ int run_headless(const HeadlessOptions& opt) {
 
     log.close();
 
-    const RunMetrics m = metrics.finish(pipe.timers(), wall_s,
-                                        pipe.gimbal().saturation_frac());
+    RunMetrics m = metrics.finish(pipe.timers(), wall_s,
+                                  pipe.gimbal().saturation_frac());
+
+    // --- P2-9: end-to-end latency ------------------------------------------
+    // The exposure and the mount's transport delay are properties of the
+    // configuration, not of the frames, so they are supplied here rather than
+    // discovered by the collector. Both come from the resolved pipeline
+    // config, which is what actually ran — reading them from the Scenario
+    // would miss a --set override.
+    MetricCollector::fill_latency(m, sc.exposure_ms * 1e-3,
+                                  pipe.gimbal().az().params().latency_s);
+
+    // --- P2-8: CPU and peak memory -----------------------------------------
+    // Read here, outside the simulation, for the same reason the wall clock
+    // is: INV-3 forbids the simulation from seeing anything that varies
+    // between runs, and measuring it from outside is not the same as letting
+    // it look.
+    {
+        const ResourceUsage ru = current_resource_usage();
+        m.resources_known  = ru.available;
+        m.cpu_user_s       = ru.cpu_user_s;
+        m.cpu_system_s     = ru.cpu_system_s;
+        m.peak_rss_bytes   = ru.peak_rss_bytes;
+        m.hardware_threads = hardware_threads();
+    }
 
     // --- run.json (CP 7.4) --------------------------------------------------
     if (opt.write_artifacts) {

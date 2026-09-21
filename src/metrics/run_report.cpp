@@ -216,6 +216,24 @@ nlohmann::ordered_json metrics_json(const RunMetrics& m) {
             {"time_s",         m.handover_time_s},
             {"best_rms_urad",  m.handover_rms_urad_best},
         }},
+        // P2-9. The PS asks for "processing time"; this is the other half of
+        // that question — how stale the command is when it reaches the mount.
+        // Broken out because which term dominates is the actionable part.
+        {"latency", {
+            {"exposure_ms",  m.latency_exposure_ms},
+            {"compute_ms",   m.latency_compute_ms},
+            {"transport_ms", m.latency_transport_ms},
+            {"total_ms",     m.latency_total_ms},
+        }},
+        // P2-8. A throughput figure with no statement of how much machine it
+        // used is a throughput figure divided by an unknown.
+        {"resources", {
+            {"known",            m.resources_known},
+            {"cpu_user_s",       m.cpu_user_s},
+            {"cpu_system_s",     m.cpu_system_s},
+            {"peak_rss_bytes",   m.peak_rss_bytes},
+            {"hardware_threads", m.hardware_threads},
+        }},
         {"speed", {
             {"frame_ms_p50", m.frame_ms_p50},
             {"frame_ms_p95", m.frame_ms_p95},
@@ -373,6 +391,23 @@ Result<RunMetrics> metrics_from_json(std::string_view json_text) {
         r.frames_post_acq        = integer(f, "frames_post_acq");
         r.frames_in_fov_post_acq = integer(f, "frames_in_fov_post_acq");
         r.frames_held_post_acq   = integer(f, "frames_held_post_acq");
+    }
+    if (m.contains("latency")) {
+        const auto& l = m["latency"];
+        r.latency_exposure_ms  = num(l, "exposure_ms");
+        r.latency_compute_ms   = num(l, "compute_ms");
+        r.latency_transport_ms = num(l, "transport_ms");
+        r.latency_total_ms     = num(l, "total_ms");
+    }
+    if (m.contains("resources")) {
+        const auto& u = m["resources"];
+        if (u.contains("known") && u["known"].is_boolean()) {
+            r.resources_known = u["known"].get<bool>();
+        }
+        r.cpu_user_s     = num(u, "cpu_user_s");
+        r.cpu_system_s   = num(u, "cpu_system_s");
+        r.peak_rss_bytes = static_cast<uint64_t>(integer(u, "peak_rss_bytes"));
+        r.hardware_threads = static_cast<unsigned>(integer(u, "hardware_threads"));
     }
     if (m.contains("plant")) r.saturation_frac = num(m["plant"], "saturation_frac");
     if (m.contains("handover")) {

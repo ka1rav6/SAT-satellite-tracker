@@ -423,6 +423,7 @@ sat_add_module(sat_app
         src/app/bench_kernels.cpp
         src/app/fuzz.cpp
         src/app/headless.cpp
+        src/app/resources.cpp
         src/app/timestamp.cpp
         src/app/sweep.cpp
         src/app/calibrate.cpp

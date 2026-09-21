@@ -437,7 +437,52 @@ the boresight *in the image*: the frame is rendered at the true boresight, so
 per-run acquisition times become a distribution. See
 [`RESULTS.md` §7](RESULTS.md) for what row 23's jitter does to it.
 
-### 2.16 Not yet implemented
+### 2.16 End-to-end latency, and why it is not `processing_ms`
+
+`processing_ms` is COMPUTE time: how long `Pipeline::step` took. That is not
+the latency a pointing system cares about, and reporting it as if it were is a
+category error. The question is *how stale is the command when it reaches the
+mount*, and the answer has three terms:
+
+| Term | Value on the spec defaults | Why |
+|---|---:|---|
+| exposure ÷ 2 | 2.500 ms | The frame is an **integral** over the exposure window, so its effective instant is the middle of that window. Half the exposure is already in the past before any processing begins. |
+| compute | 3.064 ms | `frame_ms_p50`. |
+| transport delay | 10.000 ms | The mount's dead time before a command has any effect (design §10.3). |
+| **total** | **15.564 ms** | |
+
+The terms are printed separately rather than only as a sum, because which one
+dominates is the actionable part. Here the transport delay is **3.3× the
+compute time** — so making the tracker faster would barely move the latency,
+which is worth knowing before optimising it. That is also why the Smith
+predictor exists: it compensates the term that dominates.
+
+Reported, never graded. The PS states no latency requirement; this exists
+because *"what is your latency budget?"* was a question the project could not
+previously answer at all.
+
+### 2.17 CPU and peak memory
+
+*"292 FPS"* on an unstated number of cores is a throughput figure divided by an
+unknown, and *"what hardware does this need?"* had no answer anywhere in the
+artifacts.
+
+| Field | Meaning |
+|---|---|
+| `cpu_user_s`, `cpu_system_s` | CPU seconds, from `getrusage` / `GetProcessTimes`. |
+| `peak_rss_bytes` | The **high-water mark**, not the value at exit. A run that allocated 2 GB and freed it still needs a machine with 2 GB. |
+| `hardware_threads` | So the CPU figure can be read as a fraction of the machine. |
+
+Measured outside the simulation ([`src/app/resources.cpp`](../src/app/resources.cpp)),
+for the same reason the wall clock is: INV-3 forbids the simulation from seeing
+anything that varies between runs, and measuring it from outside is not the
+same as letting it look.
+
+`ru_maxrss` is **kilobytes on Linux and bytes on macOS**. Getting that wrong by
+1024× in a performance log is the kind of error nobody notices until someone
+sizes a machine from it, so the conversion is per-platform and commented.
+
+### 2.18 Not yet implemented
 
 | Metric | Status |
 |---|---|
@@ -445,7 +490,7 @@ per-run acquisition times become a distribution. See
 | `fps` with the GUI on | §13.1 asks for it "reported separately". The headless figure is produced now; the GUI-on figure arrives with the Stage 15 packaging work. |
 | `saturation_frac` broken out per axis | Reported as the worse of the two, which is what a single compliance row can carry. The per-axis figures exist on `GimbalAxis` and are plotted by `just cp106`. |
 
-### 2.17 Where these numbers come from
+### 2.19 Where these numbers come from
 
 | Artifact | Produced by | Contains |
 |---|---|---|

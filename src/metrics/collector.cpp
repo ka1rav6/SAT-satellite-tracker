@@ -347,6 +347,19 @@ RunMetrics MetricCollector::finish(const StageTimers& timers,
     return m;
 }
 
+void MetricCollector::fill_latency(RunMetrics& m, double exposure_s,
+                                   double transport_s) {
+    // The frame is an INTEGRAL over the exposure window, so its effective
+    // instant is the middle of that window, not its end. Half the exposure is
+    // therefore already in the past by the time the frame exists, before any
+    // processing has happened at all.
+    m.latency_exposure_ms  = 0.5 * exposure_s * 1e3;
+    m.latency_compute_ms   = m.frame_ms_p50;
+    m.latency_transport_ms = transport_s * 1e3;
+    m.latency_total_ms     = m.latency_exposure_ms + m.latency_compute_ms
+                           + m.latency_transport_ms;
+}
+
 // ---------------------------------------------------------------------------
 // format_summary — the §13.1 numbers as a block a person reads.
 //
@@ -579,6 +592,43 @@ std::string format_summary(const RunMetrics& m) {
     line("  wall time         %8.2f s for %.2f s simulated  (%.2fx real time)\n",
          m.wall_time_s, m.duration_s,
          (m.wall_time_s > 0.0) ? (m.duration_s / m.wall_time_s) : 0.0);
+
+    // -----------------------------------------------------------------------
+    // END-TO-END LATENCY — P2-9.
+    //
+    // The block above is COMPUTE time. This is the number a pointing system
+    // cares about: how stale the command is when it reaches the mount. The
+    // three terms are printed rather than just the sum, because which one
+    // dominates is the actionable part — on the synthetic path the transport
+    // delay is several times the compute time, so making the tracker faster
+    // would barely move the latency.
+    // -----------------------------------------------------------------------
+    if (m.latency_total_ms > 0.0) {
+        out += "\nLATENCY      (sensor to command; reported, the PS sets no requirement)\n";
+        line("  exposure/2        %8.3f ms   the frame's effective instant is mid-exposure\n",
+             m.latency_exposure_ms);
+        line("  compute           %8.3f ms   Pipeline::step, p50\n", m.latency_compute_ms);
+        line("  transport delay   %8.3f ms   the mount's dead time (design 10.3)\n",
+             m.latency_transport_ms);
+        line("  total             %8.3f ms\n", m.latency_total_ms);
+    }
+
+    // --- resources — P2-8 --------------------------------------------------
+    // "292 FPS" on an unstated number of cores is a throughput figure divided
+    // by an unknown, and "what hardware does this need?" was a question the
+    // project could not answer.
+    if (m.resources_known) {
+        out += "\nRESOURCES\n";
+        const double cpu = m.cpu_user_s + m.cpu_system_s;
+        line("  cpu time          %8.2f s   (%.2f user + %.2f system)\n",
+             cpu, m.cpu_user_s, m.cpu_system_s);
+        if (m.wall_time_s > 0.0) {
+            line("  cores used        %8.2f     (cpu time / wall time, of %u available)\n",
+                 cpu / m.wall_time_s, m.hardware_threads);
+        }
+        line("  peak memory       %8.1f MB  (high-water RSS, not the value at exit)\n",
+             static_cast<double>(m.peak_rss_bytes) / (1024.0 * 1024.0));
+    }
 
     return out;
 }
