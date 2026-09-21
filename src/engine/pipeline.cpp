@@ -35,6 +35,7 @@ void Pipeline::build_stage6() {
     tracker_.weights() = cfg_.priority;
 
     dets_.clear();
+    dets_band_.clear();
     meas_.clear();
     // -----------------------------------------------------------------------
     // INV-4 (CP 14.3): sized for the PRE-TRUNCATION count, not for
@@ -55,7 +56,39 @@ void Pipeline::build_stage6() {
     // that survive truncation, so max_candidates really is its bound.
     // -----------------------------------------------------------------------
     dets_.reserve(ClassicalPerception::kMaxDetections);
-    meas_.reserve(static_cast<size_t>(std::max(1, cfg_.perception.max_candidates)));
+    // P1-7's sweep runs a SECOND process() pass, and process() transiently
+    // holds the pre-truncation blob list in whatever vector it is handed. The
+    // band's vector therefore needs the same bound as dets_, for the same
+    // reason, and it is a member rather than a local so it only pays for it
+    // once instead of on every frame.
+    dets_band_.reserve(ClassicalPerception::kMaxDetections);
+
+    // -----------------------------------------------------------------------
+    // TWICE max_candidates, not max_candidates.
+    //
+    // One measurement is built per surviving detection, and with P1-7's sweep
+    // enabled `dets_` is the merge of TWO independent process() calls — the
+    // tracking window and the row-band — each of which truncates to
+    // max_candidates on its own, afterwards and separately. 2 * the cap is
+    // therefore the real bound on the merged list, and a reserve has to be
+    // made against the bound.
+    //
+    // HONESTY ABOUT WHAT WAS AND WAS NOT OBSERVED. No fixture in this
+    // repository has actually driven the merge past the single cap. Probed
+    // across 150-500 clutter sources and 2, 3 and 7 bands, the observed
+    // maximum is exactly 24 — the cap itself — and it comes from frames where
+    // the track is NOT confirmed, on which the window is the whole frame and
+    // refresh_band() skips the sweep entirely. On the banded frames the window
+    // is small, yields few, and the merge stays well under the cap.
+    //
+    // The reserve is against the bound anyway, for the same reason `dets_`
+    // above reserves 16,384 against an observed maximum of 24: INV-4 is a
+    // statement about what the code CAN do, and CP 14.1's fuzzer exists
+    // because legal scenarios reach places no hand-written fixture does. The
+    // factor is unconditional so that toggling the sweep at runtime cannot
+    // invalidate a reserve made at build time.
+    // -----------------------------------------------------------------------
+    meas_.reserve(2 * static_cast<size_t>(std::max(1, cfg_.perception.max_candidates)));
 
     // -----------------------------------------------------------------------
     // The filter's process noise.
@@ -352,12 +385,17 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
 // §14.0b for the design amendment. The rules, in order:
 //
 //   1. Windowing off, or no confirmed track           -> the whole frame.
-//   2. A refresh frame, if one is configured          -> the whole frame.
-//   3. Otherwise: centred on the PREDICTED image position, half-size the
+//   2. Otherwise: centred on the PREDICTED image position, half-size the
 //      larger of the configured floor and the filter's own position sigma
 //      times the configured margin.
 //
-// Rule 3's two halves do different jobs. The floor is about CFAR, not about the
+// There used to be a rule between those two: "a refresh frame -> the whole
+// frame". P1-7 removed it. The background sweep it implemented is now
+// refresh_band() below, which runs ALONGSIDE this window instead of replacing
+// it for a frame; see RoiParams::refresh_frames for the measurement that
+// motivated the change.
+//
+// Rule 2's two halves do different jobs. The floor is about CFAR, not about the
 // target: §9.4.5's training annulus is 61 px across, and a window narrower than
 // that estimates the background from almost nothing. The sigma term is about
 // the target: a filter that is losing confidence widens its own window, so a
@@ -376,11 +414,6 @@ DetectRoi Pipeline::detect_window(int width, int height,
 
     const Track& trk = tracker_.track();
     if (trk.state() != TrackState::Confirmed) return full;
-
-    if (cfg_.roi.refresh_frames > 0 &&
-        (frame_ % cfg_.roi.refresh_frames) == 0) {
-        return full;
-    }
 
     // Where the tracker thinks the target will be when this frame is exposed,
     // expressed in the camera's pixels via the COMMANDED boresight — the same
@@ -417,6 +450,62 @@ DetectRoi Pipeline::detect_window(int width, int height,
     if (w < 8 || h < 8) return full;
 
     return DetectRoi{cx0, cy0, w, h};
+}
+
+// ---------------------------------------------------------------------------
+// refresh_band — P1-7's background sweep, one horizontal band per frame.
+//
+// WHAT THIS IS FOR. The tracking window is a bet that the target is where the
+// filter says it is. When that bet is wrong — the classic case is a lock onto
+// a decoy — nothing outside the window is ever examined again, so nothing
+// outside the window can ever be recovered. The sweep is the hedge: it
+// guarantees that every row of the sensor is looked at at least once every N
+// frames no matter where the window is.
+//
+// WHY A BAND AND NOT A FRAME. See RoiParams::refresh_frames for the full
+// amendment note. In one line: a full-frame sweep costs 19.0 ms of perception
+// on 640x480 against a 1.39 ms budget, and paying that on one frame in N puts
+// a 14x spike into the p99 of every run that enables it. Splitting the same
+// coverage across N frames costs 1/N of that, every frame, with no spike.
+//
+// THE BAND IS ADDITIONAL, NOT ALTERNATIVE. The window still runs; this is a
+// second pass. Sweeping instead of windowing would show the target to the
+// tracker only once every N frames, and tracking/track.hpp's M-of-N promotion
+// wants 3 hits in 5 frames — it would never confirm. Acquisition is graded by
+// specification row 16 and the perception tail is graded by nothing, so
+// trading the former for the latter would be the wrong way round.
+//
+// WHICH BAND. frame_ % N, so the bands rotate in raster order and the sweep is
+// a pure function of the frame index. INV-3: no state, no randomness, nothing
+// that depends on what the previous frames found.
+// ---------------------------------------------------------------------------
+DetectRoi Pipeline::refresh_band(int width, int height,
+                                 DetectRoi window) const noexcept {
+    const int n = cfg_.roi.refresh_frames;
+    if (n <= 0) return DetectRoi{0, 0, 0, 0};
+
+    // The window is already the whole frame — during search, or whenever the
+    // track is not confirmed. Every row is being examined this frame anyway,
+    // so a band would be a second pass over pixels that were just processed.
+    if (window.is_full(width, height)) return DetectRoi{0, 0, 0, 0};
+
+    // Integer band edges that tile the frame EXACTLY: band i covers
+    // [i*H/N, (i+1)*H/N). Computing the height as H/N and multiplying would
+    // leave the last H%N rows never swept, which is the kind of gap that only
+    // shows up as "the one time it failed, the target was near the bottom".
+    const int i  = static_cast<int>(frame_ % static_cast<uint64_t>(n));
+    const int y0 = static_cast<int>(static_cast<int64_t>(i)     * height / n);
+    const int y1 = static_cast<int>(static_cast<int64_t>(i + 1) * height / n);
+    const int h  = y1 - y0;
+
+    // A band thinner than the CFAR training annulus estimates its background
+    // from almost nothing and reports noise as detections. Refusing to sweep
+    // is better than sweeping badly: the caller treats an invalid band as "no
+    // sweep this frame", and the scenario schema caps refresh_frames so a
+    // legal scenario cannot silently land here on every frame.
+    if (h < 8 || width < 8) return DetectRoi{0, 0, 0, 0};
+
+    return DetectRoi{0, y0, width, h};
 }
 
 // ---------------------------------------------------------------------------
@@ -775,6 +864,44 @@ bool Pipeline::step() {
             rec.roi = detect_window(frame.width, frame.height, commanded);
             perception_.process(frame.pixels, frame.width, frame.height, rec.roi,
                                 ws_, dets_, &timers_);
+
+            // -------------------------------------------------------------
+            // P1-7's background sweep. A second detector pass over one
+            // horizontal band, so that the rows the tracking window is not
+            // looking at are still examined once every N frames. Off unless
+            // the scenario sets perception.roi_refresh_frames.
+            // -------------------------------------------------------------
+            rec.roi_band = refresh_band(frame.width, frame.height, rec.roi);
+            if (rec.roi_band.valid()) {
+                perception_.process(frame.pixels, frame.width, frame.height,
+                                    rec.roi_band, ws_, dets_band_, &timers_);
+
+                // The band and the window overlap wherever the window's rows
+                // fall inside this band, and a target sitting in the overlap
+                // is found by BOTH passes. Handing the tracker the same blob
+                // twice would let it associate one of them to the track and
+                // treat the other as a rival — a self-inflicted decoy, in the
+                // feature whose entire purpose is to survive decoys.
+                //
+                // The window's copy is the one that is kept. It is not an
+                // arbitrary choice: the window is centred on the prediction,
+                // so a target in the overlap sits near the middle of the
+                // window with its CFAR annulus complete, while in the band it
+                // may be hard against a horizontal edge with half its
+                // background context clipped away.
+                //
+                // Detections come back in FULL-FRAME coordinates from both
+                // passes (see ClassicalPerception::process), so this compares
+                // like with like.
+                for (const Detection& d : dets_band_) {
+                    const double x = d.centroid_image.x;
+                    const double y = d.centroid_image.y;
+                    const bool inside_window =
+                        x >= rec.roi.x0 && x < rec.roi.x0 + rec.roi.width &&
+                        y >= rec.roi.y0 && y < rec.roi.y0 + rec.roi.height;
+                    if (!inside_window) dets_.push_back(d);
+                }
+            }
         } else {
             // The CP 4.11 ablation arm. §9.4 is explicit that this "must never
             // be the default", and it is not — but it has to be runnable

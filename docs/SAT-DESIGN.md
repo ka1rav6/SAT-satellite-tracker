@@ -1699,6 +1699,94 @@ sat-tracker --bench
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
 
+## 14.0f AMENDMENT — §14.0b's periodic full-frame sweep is now a rotating
+## row-band, and the reason it was disabled no longer applies
+
+**Status:** adopted, superseding `RoiParams::refresh_frames` as §14.0b defined
+it. **Applies to:** §14.0b (the detection window), §15 (the frame budget).
+
+§14.0b gave a confirmed track a detection window and added one hedge against
+the window's single failure mode. If the track is following a decoy, the true
+beacon is outside the window forever, and **nothing outside the window is ever
+examined, so nothing outside the window can ever be recovered.**
+`refresh_frames = N` meant "process the whole frame every N frames", which gives
+the association logic a chance to see both.
+
+It shipped disabled, and the reason was the tail. Measured on
+`scenarios/spec_defaults.toml`, 20 s:
+
+| Detector pass | perception p50 | perception p99 |
+|---|---:|---:|
+| Tracking window only | 1,352 µs | 1,633 µs |
+| Full frame | 19,024 µs | 20,260 µs |
+
+Against §15's 1,390 µs perception budget a full-frame pass is **13.7×** over.
+Enabling the old sweep at `N = 16` therefore put a 19 ms frame into every
+sixteenth frame — and since one frame in 16 is 6.25 % of the run, that spike
+landed in the **p95**, not merely the p99. A feature that cannot be switched on
+is not a feature, and this one could not be.
+
+**The amendment.** `refresh_frames = N` now means "divide the frame into N
+horizontal bands and sweep ONE of them each frame, rotating". The coverage
+claim is identical — every row is examined once per N frames either way — and
+the cost is `1/N` of the peak, paid as a flat addition to every frame instead
+of a spike on one of them. Measured, same scenario and same 20 s:
+
+| `refresh_frames` | perception p50 | perception p99 | p99 / p50 |
+|---|---:|---:|---:|
+| 0 (no sweep) | 1,352 µs | 1,633 µs | 1.21 |
+| 16, old full-frame meaning | 1,352 µs | ~19,024 µs | ~14 |
+| 16, rotating band | 2,537 µs | 2,877 µs | **1.13** |
+| 8, rotating band | 3,701 µs | 3,942 µs | **1.07** |
+
+The tail falls by **6.6×** and the distribution becomes flat. A tail you can
+predict is worth more than a mean you cannot, which is the whole argument for
+making the change.
+
+**Two things this amendment deliberately does NOT do.**
+
+*The band is swept in addition to the tracking window, never instead of it.*
+Sweeping instead would cost less still, and it would break acquisition:
+`tracking/track.hpp` promotes on 3 hits in 5 frames, and a scheme that shows
+the target to the tracker once every N frames cannot supply them. Specification
+row 16 grades acquisition; nothing grades the perception tail. Buying the
+second with the first would be the wrong way round, and
+`tests/perception/test_refresh_band.cpp` asserts that the window, the track
+state and the lock frame are byte-for-byte unchanged when the sweep is enabled.
+
+*The sweep does not extend to unwindowed frames.* When the track is not
+confirmed the window is already the whole frame, every row is being examined,
+and a band would be a second pass over pixels just processed. `refresh_band()`
+returns an invalid rectangle in that case. This is also why the 19 ms figure
+still appears in the p99 of a cold-start run: those are **search** frames, and
+banding a search is the same bad trade as banding the window.
+
+**The overlap is deduplicated.** Where a band crosses the window a source is
+inside both passes. Handing the tracker two copies of one blob would
+manufacture a rival track — a self-inflicted decoy, in the feature whose whole
+purpose is surviving decoys. The window's copy is kept, because the window is
+centred on the prediction and the target's CFAR annulus is complete there,
+where in the band it may be hard against a horizontal edge with half its
+background context clipped away.
+
+**Still 0 by default.** The band costs real time on every frame — roughly
++1.2 ms at `N = 16` — and the decoy case it defends against does not arise in
+the specification scenarios, which have one emitter. What has changed is that
+it is now *affordable to turn on*, and `scenarios/hard/clutter_field.toml` is
+where turning it on is worth the money.
+
+**On the audit's diagnosis.** `docs/SIH_26169_CRITICAL_AUDIT.md` P1-7 attributes
+an 18,938 µs perception **p95** to "the ROI refresh frame". Two corrections,
+both from measurement. It is the **p99**, not the p95. And it cannot have been
+a refresh frame: `refresh_frames` is 0 in every scenario committed to this
+repository, so no refresh frame has ever run. The figure is the **unwindowed
+search** path — the frames before the track confirms — which is confirmed by
+running with `perception.roi=false`, where that same 19 ms becomes the p50. The
+audit's prescribed remedy is still the right shape and is adopted above; its
+stated cause is not the cause.
+
+---
+
 ## 14.0e AMENDMENT — §9.4.6's blob table is bounded, and the earlier decision
 ## to let it grow was wrong
 

@@ -84,10 +84,15 @@ int64_t run(const Scenario& sc) {
 // Whether CP 14.3's trap is actually armed in THIS build. Written once, here,
 // so no test has to put a #if inside a macro argument list — which is
 // undefined behaviour ([cpp.replace]/11) and which GCC warns about.
+//
+// std::string, NOT const char*. doctest's MESSAGE streams a raw `const char*`
+// through its own stringifier, which prints the POINTER: the note came out as
+// "no allocation in any of them0x5f203a9e0157", so the one thing it exists to
+// say — whether the trap was armed — was the one thing it did not say.
 #if defined(SAT_ALLOC_TRAP)
-constexpr const char* kTrapNote = " (trap ARMED)";
+const std::string kTrapNote = " (trap ARMED)";
 #else
-constexpr const char* kTrapNote =
+const std::string kTrapNote =
     " (trap not armed — Release; `just test-debug` is where this bites)";
 #endif
 
@@ -105,6 +110,40 @@ TEST_CASE("CP 14.3: a full run completes with no steady-state allocation") {
     // trap was armed is worth keeping, so it is a variable instead.
     MESSAGE(frames << " frames with 120 clutter sources, no allocation in any "
                       "of them" << kTrapNote);
+    CHECK(frames > 150);
+}
+
+TEST_CASE("CP 14.3: P1-7's background sweep does not allocate") {
+    // The sweep (design §14.0f) runs a SECOND detector pass over one row-band
+    // per frame and merges its detections into the same list. Two reserves
+    // have to be right for that to be free, and getting either wrong hides the
+    // allocation on exactly the rare frames where the band finds something:
+    //
+    //   dets_band_  process() transiently holds the PRE-truncation blob list
+    //               in whatever vector it is handed, so the band's vector
+    //               needs the same bound as dets_, not max_candidates.
+    //
+    //   meas_       one measurement is built per surviving detection, and with
+    //               the sweep on `dets_` is the merge of two passes that each
+    //               truncate to max_candidates independently, so 2x the cap is
+    //               the bound.
+    //
+    // This test does NOT currently drive the merge past the single cap — see
+    // the note at that reserve for the probe that established as much — so it
+    // would stay green if the factor of two were removed. It is here for the
+    // first reserve, which the sweep does exercise on every banded frame, and
+    // as the place a future denser fixture belongs.
+    //
+    // Clutter and a decoy are on deliberately: the sweep's whole job is
+    // finding sources outside the tracking window, so a scene with nothing
+    // outside the window would exercise the merge path and never the reserve.
+    Scenario sc = base(6.0);
+    sc.static_sources     = 120;
+    sc.decoy_beacons      = 1;
+    sc.roi_refresh_frames = 7;   // coprime with 480, so the bands do not tile evenly
+    const int64_t frames = run(sc);
+    MESSAGE(frames << " frames with the sweep across 7 bands, no allocation in "
+                      "any of them" << kTrapNote);
     CHECK(frames > 150);
 }
 

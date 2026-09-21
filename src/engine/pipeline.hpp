@@ -170,6 +170,11 @@ struct FrameRecord {
     /// GUI can draw it, the trace can log it, and a reviewer can see for
     /// themselves that a fast frame searched less rather than searched worse.
     DetectRoi  roi{};
+    /// P1-7's sweep band, when one ran. Invalid (width or height 0) when the
+    /// sweep is off, which is the default. Recorded for the same reason `roi`
+    /// is: the claim "the detector covers the whole frame every N frames" is
+    /// only checkable if the bands it actually swept are on the record.
+    DetectRoi  roi_band{};
     TrackMode  mode        = TrackMode::Idle;
     TrackState track_state = TrackState::Deleted;
     bool       has_lock    = false;   ///< Confirmed or Coasting
@@ -572,6 +577,14 @@ private:
     [[nodiscard]] DetectRoi detect_window(int width, int height,
                                           Angle2 commanded) const noexcept;
 
+    /// P1-7's background sweep: the one horizontal band of the frame that gets
+    /// swept THIS frame, in addition to detect_window()'s tracking window.
+    /// Returns an invalid DetectRoi when the sweep is off or when the window
+    /// is already the whole frame and a second pass would be redundant.
+    /// See RoiParams::refresh_frames for why this is a band and not a frame.
+    [[nodiscard]] DetectRoi refresh_band(int width, int height,
+                                         DetectRoi window) const noexcept;
+
     PipelineConfig  cfg_{};
     SyntheticSource source_{};
     std::unique_ptr<VideoSource> video_{};   ///< non-null in video modes
@@ -584,6 +597,11 @@ private:
     PerceptionWorkspace ws_{};
     ClassicalPerception perception_{};
     std::vector<Detection>   dets_;
+    /// The sweep band's detections, before they are merged into dets_. A
+    /// MEMBER rather than a local so its capacity survives between frames:
+    /// INV-4 forbids the allocation a function-local vector would make on
+    /// every single frame the sweep is enabled.
+    std::vector<Detection>   dets_band_;
     std::vector<Measurement> meas_;
     Tracker             tracker_{};
     ModeFsm             fsm_{};

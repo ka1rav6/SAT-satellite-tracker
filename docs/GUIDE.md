@@ -355,6 +355,7 @@ The knobs most worth turning:
 | `tracking.priority` | §10.2's policy; `false` reverts to "take the brightest" |
 | `supervisor.enabled` | the adaptation the project is named for |
 | `perception.roi` | the detection window; `false` searches the whole frame |
+| `perception.roi_refresh_frames` | the background sweep: split the frame into N row-bands and sweep one per frame, so every row is examined once per N frames even while the window is elsewhere. 0 (the default) disables it. See `SAT-DESIGN.md` §14.0f |
 | `perception.min_snr_factor` | the candidate SNR gate, as a multiple of CFAR's `k` |
 
 A bad key is a clear error with the specification row it belongs to, not a

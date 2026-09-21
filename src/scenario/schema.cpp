@@ -184,8 +184,15 @@ const std::vector<FieldSpec>& schema() {
          "background estimate comes from almost nothing"},
         {"perception.roi_sigma_margin", ValueKind::Float, false, 0.0, 1000.0, "",
          "how many of the filter's own position sigmas of margin beyond the floor"},
-        {"perception.roi_refresh_frames", ValueKind::Int, false, 0, 100000, "",
-         "full-frame sweep every N frames even while confirmed; 0 disables it"},
+        // P1-7: N is now the number of row-bands the background sweep is split
+        // across, one band per frame, NOT "sweep the whole frame every N".
+        // The upper bound used to be 100000, which on any real sensor makes
+        // every band less than one row tall; refresh_band() refuses to sweep a
+        // band under 8 rows, so those values silently did nothing at all. 512
+        // is already under one row per band on a 480-row frame, and is a bound
+        // rather than a recommendation.
+        {"perception.roi_refresh_frames", ValueKind::Int, false, 0, 512, "",
+         "background sweep split across N row-bands, one per frame; 0 disables it"},
 
         // --- [requirements] — rows 16-20 -----------------------------------
         {"requirements.acquisition_s",     ValueKind::Float, false, 0.0, kInf, "row 16",

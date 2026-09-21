@@ -270,14 +270,39 @@ struct RoiParams {
     /// How many position sigmas of margin beyond the floor.
     double sigma_margin = 6.0;
 
-    /// A full-frame sweep every N frames even while confirmed; 0 disables it.
-    ///
-    /// The failure this guards against is real but rare: if the tracker has
-    /// locked onto a decoy, the window follows the DECOY and the true beacon is
-    /// never looked at again. A periodic full sweep gives the association logic
-    /// a chance to see both. It is off by default because it puts a full-frame
-    /// frame into the p99 and the same failure exists without windowing — a
-    /// tracker locked onto a decoy stays locked onto it either way.
+    // -----------------------------------------------------------------------
+    // The background sweep, in row-bands. 0 disables it.
+    //
+    // The failure this guards against is real but rare: if the tracker has
+    // locked onto a decoy, the window follows the DECOY and the true beacon is
+    // never looked at again. Nothing outside the window is ever looked at, so
+    // nothing outside the window can ever be recovered. A sweep gives the
+    // association logic a chance to see both.
+    //
+    // AMENDMENT (P1-7). This used to mean "process the WHOLE FRAME every N
+    // frames", and it was off by default because of what that did to the tail:
+    // one frame in N paid the full-frame cost while the other N-1 paid the
+    // window cost. Measured full-frame on 640x480, that one frame is 19.0 ms
+    // of perception against a 1.39 ms budget, so the feature could not be
+    // turned on without putting a 14x spike into the p99 of every run.
+    //
+    // It now means "divide the frame into N horizontal bands and sweep ONE of
+    // them each frame, rotating". Identical total coverage — every row is
+    // looked at once per N frames either way — at 1/N of the peak cost, and
+    // the cost is now a flat addition to every frame instead of a spike on one
+    // of them. A tail you can predict is worth more than a mean you cannot.
+    //
+    // The band is swept IN ADDITION TO the tracking window, not instead of it,
+    // which is what keeps this from touching acquisition. The M-of-N promotion
+    // in tracking/track.hpp needs 3 hits in 5 frames; a scheme that showed the
+    // target only once every N frames could never satisfy that, and banding
+    // the tracking window rather than adding to it would have broken row 16 to
+    // improve a number the specification does not grade.
+    //
+    // Still 0 by default -- see docs/RESULTS.md for the measurement that
+    // decides it. The band costs real time on every frame, and the decoy case
+    // it defends against does not arise in the specification scenarios.
+    // -----------------------------------------------------------------------
     int   refresh_frames = 0;
 };
 

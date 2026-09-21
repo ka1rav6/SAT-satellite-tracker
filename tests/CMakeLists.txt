@@ -231,6 +231,7 @@ sat_add_test(repro
 sat_add_test(perception
     SOURCES perception/test_pipeline.cpp
             perception/test_roi_and_snr_gate.cpp
+            perception/test_refresh_band.cpp
     DEPS    sat_core sat_perception sat_camera sat_engine sat_scenario
 )
 target_compile_definitions(test_perception PRIVATE
