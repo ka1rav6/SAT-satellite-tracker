@@ -147,19 +147,26 @@ TEST_CASE("CP 7.6: an undefined metric is shown as undefined, not as a pass") {
     MESSAGE(h.substr(h.find("<h1>"), 1200));
 
     CHECK(h.find("the centroiding metric is undefined") != std::string::npos);
+    // Rows 17 and 18 both. Since P0-2 row 18 is graded over post-acquisition
+    // frames rather than in-FOV ones, so a run with no Confirmed frame has no
+    // denominator for either and both give the same reason.
     CHECK(h.find("the track was never Confirmed") != std::string::npos);
-    CHECK(h.find("the beacon was never in view") != std::string::npos);
     // Speed is the only row that can legitimately be judged here, and with a
     // zero frame rate it must not be a pass either.
     CHECK(h.find(">PASS<") == std::string::npos);
 }
 
 TEST_CASE("CP 7.6: row 17 is reported against its derived floor when one applies") {
-    // Rows 17 and 23 are in tension (docs/METRICS.md §2.10). When the floor
+    // Rows 17 and 23 are in tension (docs/METRICS.md §2.11). When the floor
     // exceeds the requirement the row must not read FAIL, or a property of the
     // specification is presented as a defect in the loop.
     ReportInput in = sample();
-    in.metrics.tracking_rms_px = 17.1;
+    // Row 17 is graded on the STEADY-STATE figure since P1-9, so that is the
+    // field the floor logic has to be exercised through. The whole-run RMS is
+    // set to match so the fixture stays self-consistent.
+    in.metrics.tracking_rms_px        = 17.1;
+    in.metrics.tracking_rms_steady_px = 17.1;
+    in.metrics.tracking_p95_steady_px = 17.1;
     in.requirements.tracking_error_px = 10.0;
     in.requirements.tracking_floor_px = 16.33;
     const std::string h = render_report(in);

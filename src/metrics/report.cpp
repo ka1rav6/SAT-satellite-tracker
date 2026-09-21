@@ -36,6 +36,17 @@ std::string fmt(const char* f, double v) {
     return b;
 }
 
+/// The same, for the rows whose "target" column is a sentence about frame
+/// counts rather than a single number ("583 / 600 frames after first lock").
+/// Separate from fmt() rather than a variadic template so that the format
+/// string stays a literal at the call site and -Wformat-security keeps
+/// working; there are only two shapes needed and this is one of them.
+std::string fmt2(const char* f, long long a, long long b_) {
+    char b[96];
+    std::snprintf(b, sizeof b, f, a, b_);
+    return b;
+}
+
 /// A metric row with a status pill.
 std::string metric_row(const std::string& name, const std::string& value,
                        const std::string& requirement, const char* status) {
@@ -218,24 +229,63 @@ std::string render_report(const ReportInput& in) {
 
     if (m.tracking_frames > 0) {
         const bool floored = q.tracking_floor_px > q.tracking_error_px;
-        s << metric_row("17 · tracking error (RMS)", fmt("%.3f px", m.tracking_rms_px),
+        // Graded on the STEADY-STATE figure (P1-9). The whole-run RMS is
+        // dominated by the post-lock slew — on a jitter-free run it is
+        // 3.36 px against a p95 of 0.97 px, which measures the mount getting
+        // there rather than the loop holding it. Both rows are shown.
+        s << metric_row("17 · tracking error (steady RMS)",
+                        fmt("%.3f px", m.tracking_rms_steady_px),
                         floored ? fmt("floor %.2f px — rows 17 vs 23", q.tracking_floor_px)
                                 : fmt("≤ %.0f px", q.tracking_error_px),
                         floored ? "n/a"
-                                : verdict(m.tracking_rms_px, m.tracking_p95_px,
+                                : verdict(m.tracking_rms_steady_px, m.tracking_p95_steady_px,
                                           q.tracking_error_px, false));
-        s << metric_row("17 · tracking error (p95)", fmt("%.3f px", m.tracking_p95_px), "", "");
+        s << metric_row("17 · tracking error (steady p95)",
+                        fmt("%.3f px", m.tracking_p95_steady_px), "", "");
+        s << metric_row("17 · tracking error (mean)", fmt("%.3f px", m.tracking_mean_px),
+                        "PS Performance Log asks for the average", "");
+        if (m.tracking_frames_transient > 0) {
+            s << metric_row("— · acquisition transient (RMS)",
+                            fmt("%.3f px", m.tracking_rms_transient_px),
+                            fmt2("first %lld frames after lock (of %lld scored)",
+                                 static_cast<long long>(m.settle_frames),
+                                 static_cast<long long>(m.tracking_frames_transient)), "");
+        }
+        s << metric_row("— · tracking error (whole run RMS)",
+                        fmt("%.3f px", m.tracking_rms_px), "transient included", "");
     } else {
         s << metric_row("17 · tracking error", "n/a", "the track was never Confirmed", "n/a");
     }
 
-    if (m.frames_in_fov > 0) {
-        s << metric_row("18 · target loss", fmt("%.2f %%", 100.0 * m.target_loss_frac),
+    // P0-2: the PS's own objective, above row 18 because row 18 is
+    // conditional on it.
+    if (m.frames_with_truth > 0) {
+        s << metric_row("★ · FOV containment (whole run)",
+                        fmt("%.2f %%", 100.0 * m.fov_containment_frac),
+                        "PS: \"maintain the terminal within its FOV\"", "");
+        if (m.post_acq_valid) {
+            s << metric_row("★ · FOV containment (post-acq)",
+                            fmt("%.2f %%", 100.0 * m.fov_containment_post_acq),
+                            fmt2("%lld / %lld frames after first lock",
+                                 static_cast<long long>(m.frames_in_fov_post_acq),
+                                 static_cast<long long>(m.frames_post_acq)), "");
+        }
+    }
+
+    // Row 18, graded post-acquisition. See compliance.cpp for the argument.
+    if (m.post_acq_valid) {
+        s << metric_row("18 · target loss (post-acq)",
+                        fmt("%.2f %%", 100.0 * m.target_loss_post_acq),
                         fmt("< %.0f %%", 100.0 * q.target_loss_frac),
-                        verdict(100.0 * m.target_loss_frac, 100.0 * m.target_loss_frac,
+                        verdict(100.0 * m.target_loss_post_acq,
+                                100.0 * m.target_loss_post_acq,
                                 100.0 * q.target_loss_frac, false));
     } else {
-        s << metric_row("18 · target loss", "n/a", "the beacon was never in view", "n/a");
+        s << metric_row("18 · target loss", "n/a", "the track was never Confirmed", "n/a");
+    }
+    if (m.frames_in_fov > 0) {
+        s << metric_row("— · target loss (in-FOV)", fmt("%.2f %%", 100.0 * m.target_loss_frac),
+                        "detector-centric denominator; not graded", "");
     }
 
     if (m.reacquisitions > 0) {

@@ -94,11 +94,11 @@ TEST_CASE("CP 7.5: an overridden scenario still goes through the schema") {
     // The reason the overlay works on TOML rather than on struct fields: an
     // out-of-range override must produce §7.5's error, with the file, the
     // value and the specification row, exactly as a hand-written file would.
-    auto base = load_scenario(std::string(SAT_SCENARIO_DIR) + "/baseline.toml");
+    auto base = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
     REQUIRE(base.has_value());
     std::string text;
     {
-        std::ifstream in(std::string(SAT_SCENARIO_DIR) + "/baseline.toml", std::ios::binary);
+        std::ifstream in(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml", std::ios::binary);
         text.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
 
@@ -118,7 +118,7 @@ TEST_CASE("CP 7.5: an overridden scenario still goes through the schema") {
 TEST_CASE("CP 7.5: a spec expands to the full cartesian product, at every seed") {
     const std::string toml =
         "[sweep]\n"
-        "base = \"scenarios/baseline.toml\"\n"
+        "base = \"scenarios/spec_defaults.toml\"\n"
         "seed_count = 4\n"
         "[[axis]]\nkey = \"atmosphere.mode\"\nvalues = [\"clear\", \"fog\"]\n"
         "[[axis]]\nkey = \"noise.salt_pepper\"\nvalues = [0.0, 0.05, 0.10]\n";
@@ -288,10 +288,80 @@ TEST_CASE("CP 7.7: a metric with no samples reports n/a and never PASS") {
     MESSAGE("\n" << out);
 
     CHECK(out.find("n/a") != std::string::npos);
+    // Rows 17 and 18 both say so, and after P0-2 they say so with the SAME
+    // reason: row 18 is now graded over post-acquisition frames, so a run with
+    // no Confirmed frame has no denominator for it either. Before that change
+    // row 18's reason was "the beacon was never in view", which was the in-FOV
+    // denominator talking.
     CHECK(out.find("the track was never Confirmed") != std::string::npos);
-    CHECK(out.find("the beacon was never in view") != std::string::npos);
     // Nothing in this matrix may claim a pass.
     CHECK(out.find("PASS") == std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// P0-2. The defect this test exists for is a DENOMINATOR, and a denominator
+// defect cannot be caught by any assertion on a single number — the number is
+// computed correctly. It is caught by constructing the exact situation the
+// wrong denominator flatters and asserting the matrix refuses to flatter it.
+//
+// The situation, taken from the measured behaviour of
+// scenarios/hard/cold_start_in_clutter with clutter and decoys removed: the
+// beacon was inside the FOV for 79 of 1800 frames (4.4 % of the run) and the
+// system spent the remaining 95.6 % pointing at empty sky.
+//
+// The fixture holds 78 of those 79 frames rather than the measured 73. That is
+// deliberate and it is what makes the test bite: at 73/79 the in-FOV figure is
+// 7.59 %, which already fails row 18 for the wrong reason and would let this
+// test pass even with the old definition restored. At 78/79 it is 1.27 % — a
+// clean PASS on the in-FOV denominator — while the post-acquisition figure is
+// 94.9 %. That is the exact shape of the defect: a detector that holds
+// beautifully the handful of frames it can see, on a run that was a total
+// failure, scoring a pass.
+// ---------------------------------------------------------------------------
+TEST_CASE("P0-2: a run that is out of FOV for 95% of its length cannot pass row 18") {
+    RunMetrics m;
+    m.frames_total        = 1800;
+    m.frames_in_fov       = 79;
+    m.frames_held_in_fov  = 78;
+    m.lock_retention_rate = 78.0 / 79.0;
+    m.target_loss_frac    = 1.0 - m.lock_retention_rate;       // 1.27 %
+
+    // The post-acquisition window: 1419 frames from the first lock onward, of
+    // which 76 had the beacon in view and 72 were both in view and held.
+    m.post_acq_valid           = true;
+    m.frames_post_acq          = 1419;
+    m.frames_in_fov_post_acq   = 76;
+    m.frames_held_post_acq     = 72;
+    m.fov_containment_frac     = 79.0 / 1800.0;
+    m.fov_containment_post_acq = 76.0 / 1419.0;
+    m.target_loss_post_acq     = 1.0 - 72.0 / 1419.0;          // 94.9 %
+
+    // Sanity on the fixture itself: the old definition really would have
+    // passed. If this ever stops being true the test below is no longer
+    // testing anything.
+    REQUIRE(m.target_loss_frac < 0.05);
+    REQUIRE(m.target_loss_post_acq > 0.90);
+
+    const std::string out = compliance_matrix({m}, {}, Requirements{}, "p0-2");
+    MESSAGE("\n" << out);
+
+    // The graded row is the post-acquisition one and it must FAIL.
+    const size_t graded = out.find("Target loss (post-acq)");
+    REQUIRE(graded != std::string::npos);
+    const size_t eol = out.find('\n', graded);
+    CHECK(out.substr(graded, eol - graded).find("FAIL") != std::string::npos);
+
+    // The in-FOV figure is still reported — hiding it would trade one
+    // misleading number for another — but it must not carry a verdict, because
+    // a "PASS" anywhere on this run is the defect.
+    const size_t in_fov = out.find("Target loss (in-FOV)");
+    REQUIRE(in_fov != std::string::npos);
+    const size_t in_fov_eol = out.find('\n', in_fov);
+    CHECK(out.substr(in_fov, in_fov_eol - in_fov).find("PASS") == std::string::npos);
+
+    // And the PS's own objective is on the page, so a reader can see WHY the
+    // graded row failed rather than having to divide two frame counts.
+    CHECK(out.find("FOV containment") != std::string::npos);
 }
 
 TEST_CASE("CP 7.7: the matrix breaks out per condition") {

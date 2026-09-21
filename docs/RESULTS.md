@@ -205,7 +205,7 @@ fitting noise and subtracting it made the estimate 2–5 % *worse*.
 | 80 | 0.063 px | 0.11 px | 1.69× |
 
 **CP 9.6 asks for 1.5× at every bin and we do not meet it below SNR 20.** See
-[`METRICS.md` §2.11](METRICS.md) for why and what would close it. The graded
+[`METRICS.md` §2.12](METRICS.md) for why and what would close it. The graded
 scenarios run in the upper half of this table — a 10 px beacon at spec row 22's
 maximum noise integrates to about SNR 60.
 

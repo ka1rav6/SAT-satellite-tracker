@@ -82,12 +82,66 @@ struct RunMetrics {
     double centroid_max_image_px   = 0.0;
     int64_t centroid_frames        = 0;     ///< the denominator, stated
 
+    /// The third column — see the note on FrameRecord::centroid_error_boresight_px.
+    /// Screen pixels, but with the unobservable platform displacement D(t)
+    /// cancelled, so it stays bounded where the screen column grows as
+    /// integral|D|dt. This is the figure a reader should compare against a
+    /// sub-pixel expectation.
+    double centroid_rmse_boresight_px = 0.0;
+    double centroid_p95_boresight_px  = 0.0;
+    double centroid_max_boresight_px  = 0.0;
+
+    /// RMS of |B_true - B_cmd| over every truth-bearing frame: the disturbance
+    /// the screen column is really measuring. Printed beside the screen RMSE so
+    /// the two can be seen to agree.
+    double pointing_drift_rms_px = 0.0;
+    double pointing_drift_max_px = 0.0;
+
     // --- tracking — spec row 17 -------------------------------------------
     double tracking_rms_px    = 0.0;
     double tracking_p95_px    = 0.0;
     double tracking_max_px    = 0.0;
     double tracking_rms_urad  = 0.0;        ///< §13.1: "in px AND urad"
     int64_t tracking_frames   = 0;          ///< frames scored, i.e. Confirmed
+
+    /// The PS's Performance Log deliverable asks in so many words for
+    /// "average and maximum tracking error". §13.1 reports RMS, p95 and max
+    /// and argues correctly that the mean hides a heavy tail — but the
+    /// deliverable is a literal requirement and the two numbers are different
+    /// enough to be worth printing together. On a jitter-free compliance run
+    /// the mean is ~0.5 px where the RMS is 3.36 px, and the gap IS the
+    /// acquisition transient; seeing both side by side is what makes that
+    /// legible. Reported, never graded — row 17 is graded on the steady-state
+    /// RMS below.
+    double tracking_mean_px   = 0.0;
+
+    // --- transient vs steady state — P1-9 ---------------------------------
+    //
+    // A 20 s jitter-free compliance run used to print:
+    //
+    //     TRACKING  RMS 3.357 px   p95 0.973   max 45.886
+    //
+    // RMS greater than p95 is arithmetically fine for a heavy-tailed sample —
+    // a handful of 45 px samples from the acquisition slew dominate the sum of
+    // squares — but it reads as a bug, and the honest reading is that two
+    // different regimes are being averaged into one number. The first frames
+    // after a lock are the mount still slewing onto the target; they measure
+    // the SLEW, not the loop.
+    //
+    // So the sample is split at a fixed settle window after the first
+    // Confirmed frame (`kSettleFrames` in collector.cpp) and both halves are
+    // reported. Row 17 is graded on the steady-state figure, with the split
+    // stated inline so the choice cannot be mistaken for cherry-picking.
+    double  tracking_rms_steady_px    = 0.0;
+    double  tracking_p95_steady_px    = 0.0;
+    double  tracking_max_steady_px    = 0.0;
+    double  tracking_mean_steady_px   = 0.0;
+    int64_t tracking_frames_steady    = 0;
+    double  tracking_rms_transient_px = 0.0;
+    double  tracking_max_transient_px = 0.0;
+    int64_t tracking_frames_transient = 0;
+    /// How many frames after the first lock are counted as transient.
+    int64_t settle_frames             = 0;
 
     // --- acquisition — spec rows 16 and 19 --------------------------------
     // Two acquisition numbers, always reported together and always labelled.
@@ -112,6 +166,49 @@ struct RunMetrics {
     int64_t frames_in_fov       = 0;
     int64_t frames_confirmed    = 0;   ///< every Confirmed frame, in view or not
     int64_t frames_held_in_fov  = 0;   ///< Confirmed AND in view — the numerator
+
+    // --- FOV containment — THE PROBLEM STATEMENT'S OWN OBJECTIVE ----------
+    //
+    // PS 26169 asks the system to "first locate and MAINTAIN the remote
+    // terminal within its camera Field-of-View". That sentence names a
+    // quantity, and until this block existed the project did not report it.
+    //
+    // Why it has to be its own metric rather than an inference from the two
+    // above: lock_retention_rate is normalised over in-FOV frames ONLY, which
+    // is the right denominator for the question "when the beacon was there to
+    // be seen, did we hold it?" but is silent on the question "was it there to
+    // be seen at all?". The two questions come apart badly. A 60 s run of the
+    // old baseline scenario had the beacon inside the FOV for 79 of 1800
+    // frames and reported "7.59 % target loss" — a PASS against row 18's 5 %
+    // — while the mount spent 95.6 % of the run pointing at empty sky. The
+    // denominator was hiding the failure, not causing it.
+    //
+    // So: three numbers, each with its denominator printed beside it.
+    //
+    //   fov_containment_frac      in-FOV frames / ALL frames. The blunt,
+    //                             whole-run answer. Includes the initial
+    //                             search, during which the beacon genuinely
+    //                             cannot be in view, so it is pessimistic on
+    //                             a cold start by construction.
+    //   fov_containment_post_acq  in-FOV frames / frames after first lock.
+    //                             The fair form: it asks how well the system
+    //                             MAINTAINED containment once it had achieved
+    //                             it, which is the verb the PS uses.
+    //   target_loss_post_acq      1 - (held frames / frames after first lock).
+    //                             Row 18 is graded on THIS, because it is the
+    //                             only one of the three loss figures that
+    //                             cannot be flattered by never acquiring.
+    //
+    // Both post-acquisition figures are undefined before the first Confirmed
+    // frame; `post_acq_valid` says so rather than letting a zero denominator
+    // print as a perfect score.
+    double  fov_containment_frac     = 0.0;
+    double  fov_containment_post_acq = 0.0;
+    double  target_loss_post_acq     = 0.0;
+    bool    post_acq_valid           = false;
+    int64_t frames_post_acq          = 0;   ///< frames from the first lock onward
+    int64_t frames_in_fov_post_acq   = 0;
+    int64_t frames_held_post_acq     = 0;
 
     double  false_track_rate_per_min = 0.0; ///< §13.1, per minute
     int64_t false_tracks            = 0;
@@ -185,9 +282,15 @@ public:
 
 private:
     // Per-frame series. Magnitudes for RMSE/p95/max, signed components for bias.
-    Series centroid_screen_, centroid_image_;
+    Series centroid_screen_, centroid_image_, centroid_boresight_;
     Series centroid_dx_, centroid_dy_;
-    Series tracking_px_;
+    Series drift_px_;
+    /// Every Confirmed frame's pointing error, and the subset of those frames
+    /// that fall outside the post-lock settle window. Two series rather than
+    /// one plus an index because Series is append-only and the split point is
+    /// known at push time — the frame index is compared against the settle
+    /// deadline as each frame arrives.
+    Series tracking_px_, tracking_steady_px_, tracking_transient_px_;
     Series reacq_s_;
 
     std::string name_;
@@ -202,6 +305,16 @@ private:
     /// Confirmed AND in view — the retention numerator. See collector.cpp.
     int64_t frames_held_in_fov_ = 0;
 
+    // --- FOV containment, post-acquisition counters ------------------------
+    // "Post-acquisition" starts on the FIRST Confirmed frame and runs to the
+    // end of the run — it is never re-opened by a later re-acquisition,
+    // because the question is "once you had it, how much of the remaining run
+    // did you keep it?" and restarting the window on each re-lock would make
+    // every dropout invisible.
+    int64_t frames_post_acq_        = 0;
+    int64_t frames_in_fov_post_acq_ = 0;
+    int64_t frames_held_post_acq_   = 0;
+
     // CP 10.7. First entry only — see the note at the call site.
     bool    handover_reached_   = false;
     double  handover_time_s_    = 0.0;
@@ -211,6 +324,9 @@ private:
     // --- acquisition and re-acquisition state ------------------------------
     bool   have_first_confirm_ = false;
     double first_confirm_s_    = 0.0;
+    /// Frame index of the first Confirmed frame. The transient/steady split
+    /// and the post-acquisition window both hang off this.
+    int64_t first_confirm_frame_ = 0;
     bool   have_first_in_fov_  = false;
     double first_in_fov_s_     = 0.0;
 

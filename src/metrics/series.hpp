@@ -32,6 +32,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <vector>
@@ -46,6 +47,25 @@ public:
     void push(double x) {
         v_.push_back(x);
         sorted_ = false;
+    }
+
+    /// Remove the most recently pushed sample.
+    ///
+    /// Exists for exactly one caller: the collector's transient/steady split
+    /// has to classify a frame before it knows whether that frame is the one
+    /// that acquired the lock, and the acquiring frame belongs to the
+    /// transient. Reclassifying one sample is cheaper and much clearer than
+    /// buffering every frame to decide later.
+    ///
+    /// NOTE the interaction with sort_if_needed(): once a quantile has been
+    /// taken the series is in sorted order, so "the most recently pushed
+    /// sample" is no longer at the back. The collector only ever calls this
+    /// during add(), before any quantile is read, and the assertion below
+    /// makes that a loud failure rather than a silently wrong number if a
+    /// future caller gets it wrong.
+    void pop_back() {
+        assert(!sorted_ && "pop_back after a quantile would remove the wrong sample");
+        if (!v_.empty()) v_.pop_back();
     }
 
     [[nodiscard]] size_t count() const noexcept { return v_.size(); }

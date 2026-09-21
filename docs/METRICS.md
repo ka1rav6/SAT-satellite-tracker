@@ -25,7 +25,11 @@ acquisition_cold_s   : run start → first Confirmed track, beacon at random pos
 acquisition_in_fov_s : beacon first enters FOV → first Confirmed track
 reacquisition_s      : Confirmed→lost → Confirmed again
 lock_retention_rate  : frames Confirmed ÷ frames beacon within FOV
-target_loss_frac     : 1 − lock_retention_rate                          ← spec row 18
+target_loss_frac     : 1 − lock_retention_rate                          ← reported
+target_loss_post_acq : 1 − (frames held ÷ frames after the first lock)  ← spec row 18 GRADED
+fov_containment      : frames beacon within FOV ÷ frames total          ← THE PS OBJECTIVE
+fov_containment_post_acq
+                     : frames beacon within FOV ÷ frames after first lock
 false_track_rate     : Confirmed tracks on non-beacons, per minute
 handover_success     : fraction of runs holding error < capture range for 30 frames
 saturation_frac      : frames at the rate limit ÷ total frames
@@ -46,8 +50,9 @@ the one the specification names for it:
 
 | Denominator | Used by |
 |---|---|
-| every frame | `saturation_frac`, `fps`, `processing_ms` |
+| every frame | `saturation_frac`, `fps`, `processing_ms`, `fov_containment` |
 | frames with the beacon inside the FOV | `lock_retention_rate`, `target_loss_frac` |
+| frames from the first lock onward | `target_loss_post_acq`, `fov_containment_post_acq` |
 | frames while the track is Confirmed | `tracking_error` |
 | frames with a detection | `centroiding_error` |
 
@@ -56,7 +61,51 @@ flattering number. A run that loses the beacon for half its length and tracks
 perfectly for the other half has excellent tracking error and poor lock
 retention; either figure reported alone misrepresents it.
 
-### 2.2 `centroiding_error` — two frames, both reported
+### 2.2 FOV containment — the objective the problem statement actually states
+
+PS 26169 asks the system to *"first locate and **maintain** the remote terminal
+within its camera Field-of-View"*. That sentence names a quantity, and it was
+for a long time the one quantity this project did not report.
+
+`lock_retention_rate` was standing in for it and is not a substitute. It
+normalises over in-FOV frames, which is the right denominator for *"given that
+the beacon was there to be seen, did we hold it?"* and is silent on *"was it
+there to be seen at all?"*. The two come apart badly. Measured on
+`scenarios/hard/cold_start_in_clutter.toml` with clutter and decoys removed,
+60 s:
+
+| Figure | Value | Denominator |
+|---|---:|---|
+| FOV containment, whole run | **4.39 %** | 79 / 1800 frames |
+| FOV containment, post-acquisition | **5.36 %** | 76 / 1419 frames |
+| `target_loss_frac` (in-FOV) | **7.59 %** | 6 lost / 79 in-FOV |
+| `target_loss_post_acq` | **94.93 %** | 1347 lost / 1419 post-lock |
+
+Both loss figures are computed correctly. The first one describes a run in
+which the mount pointed at empty sky for 95.6 % of its length and reports a
+number a reader would take for a near-pass.
+
+So:
+
+* **`fov_containment_frac`** — in-FOV frames over *all* frames. Blunt, and
+  deliberately pessimistic during a cold search, because during a cold search
+  the beacon genuinely is not in view.
+* **`fov_containment_post_acq`** — in-FOV frames over frames from the first
+  lock onward. The fair form, and the one that matches the PS's verb.
+* **`target_loss_post_acq`** — held frames over frames from the first lock
+  onward, subtracted from one. **Spec row 18 is graded on this.** It is the
+  only one of the three loss figures that a run which never acquires cannot
+  flatter: failing to acquire leaves it *undefined* rather than small.
+
+The post-acquisition window opens on the first Confirmed frame and never
+closes. It is not re-opened by a later re-acquisition — if it were, every
+dropout would be excluded from the very metric that exists to count dropouts.
+
+A run that never locks reports both post-acquisition figures as undefined
+(`post_acq_valid = false`) rather than as 0 % or 100 %, either of which would
+be a lie in opposite directions.
+
+### 2.3 `centroiding_error` — two frames, both reported
 
 §13.1 says "in SCREEN pixels". The implementation reports **both** the screen
 and the image figure, labelled, because they measure different things (INV-6):
@@ -79,7 +128,7 @@ In video modes the two coincide: INV-8 disables the disturbances and the crop
 offset is known exactly (§8.3 requirement 6). That is the mode Benchmark
 Performance-2 grades centroiding in.
 
-### 2.3 `centroiding_error` — one added condition
+### 2.4 `centroiding_error` — one added condition
 
 The specification says "computed ONLY on frames with a detection". The
 implementation adds a second condition: **the beacon must also be within the
@@ -91,7 +140,7 @@ is not there, and whatever it reported is a *false alarm*, which is a different
 metric. Without this condition an early ablation measured 38 px of "centroiding
 error" that was really the distance to an off-screen target.
 
-### 2.4 `bias` is signed, everything else is a magnitude
+### 2.5 `bias` is signed, everything else is a magnitude
 
 RMSE, p95 and max are computed over `|error|`. `bias` is the mean of the
 **signed** per-axis error, reported as a pair.
@@ -101,7 +150,7 @@ bias is *noisy*; one with 0.5 px RMSE and 0.5 px bias is *broken in a fixable
 way* — subtract a constant. §10.1.3's S-curve correction is that fix, so the
 metric that reveals it has to exist before the fix can be justified.
 
-### 2.5 `reacquisition_s` is measured from the loss, not from the reappearance
+### 2.6 `reacquisition_s` is measured from the loss, not from the reappearance
 
 The clock starts when a Confirmed track is lost and stops when one is Confirmed
 again. It is deliberately not started when the beacon becomes visible again:
@@ -111,7 +160,7 @@ how long the *system* takes, not how lucky it was.
 An episode is recorded on the transition, so a run that ends mid-episode
 contributes no sample at all. A half-finished re-acquisition is not a fast one.
 
-### 2.6 `lock_retention_rate` — the numerator intersects the denominator
+### 2.7 `lock_retention_rate` — the numerator intersects the denominator
 
 §13.1 says "frames Confirmed ÷ frames beacon in view". The numerator is frames
 Confirmed **and in view**, not every Confirmed frame.
@@ -157,7 +206,7 @@ When the beacon is never in view the ratio is 0/0. It is reported as zero with
 `frames_in_fov = 0` printed beside it, so a reader can see the ratio is
 undefined rather than bad.
 
-### 2.7 `false_track_rate`
+### 2.8 `false_track_rate`
 
 §13.1: "Confirmed tracks on non-beacons, per minute". Counted as frames where
 the system claims a **Confirmed** lock while the beacon is not within the field
@@ -169,7 +218,7 @@ measured false-alarm probability (CP 5.5) guarantees several such candidates per
 frame at any useful threshold. Counting them would penalise the pipeline for the
 thing it does right.
 
-### 2.8 `fps` is derived from percentiles, never from a mean
+### 2.9 `fps` is derived from percentiles, never from a mean
 
 §13.1 says "NEVER the mean" of `processing_ms`, and decision 17 explains why:
 "A 0.3 ms mean hiding a 25 ms p99 is a broken control loop."
@@ -182,7 +231,7 @@ The same reasoning applies to the frame rate derived from it, so:
 Spec row 20's "≥ 20 FPS" is a floor, so the number that decides compliance is
 the slow one.
 
-### 2.9 Quantiles are exact, by the nearest-rank definition
+### 2.10 Quantiles are exact, by the nearest-rank definition
 
 The p-th quantile is the smallest sample `x` such that at least a fraction `p`
 of the samples are `≤ x`, i.e. element `ceil(p·n) − 1` of the sorted series.
@@ -197,7 +246,7 @@ Every sample is kept rather than estimated by a streaming quantile algorithm. A
 computed exactly, to save 29 KB, is a poor trade when the output is a compliance
 matrix.
 
-### 2.10 A derived floor on `tracking_error` (spec rows 17 vs 23)
+### 2.11 A derived floor on `tracking_error` (spec rows 17 vs 23)
 
 Spec row 17 caps tracking error at **10 px**. Spec row 23 independently
 specifies a camera jitter of up to **±20 px per frame**, applied to the *true*
@@ -222,7 +271,7 @@ against the true boresight.
 
 This is reported rather than engineered around, exactly as §10.5's acquisition
 bound is. The controllable part is measured by running the same scenario with
-the disturbance removed. Measured on `scenarios/baseline.toml`, beacon in view,
+the disturbance removed. Measured on `scenarios/spec_defaults.toml`, beacon in view,
 10 s:
 
 | Configuration | tracking RMS |
@@ -235,7 +284,7 @@ The loop contributes ~0.8 px on top of the disturbance, and meets row 17 with
 room to spare once the disturbance is removed. Both figures are reported in the
 compliance matrix, labelled.
 
-### 2.11 Centroiding accuracy against the theoretical bound (Stage 9)
+### 2.12 Centroiding accuracy against the theoretical bound (Stage 9)
 
 §10.1.1 gives a limit for an ideal estimator:
 
@@ -279,7 +328,7 @@ The regime the graded scenarios actually run in is the upper half of this
 table: a 10 px beacon at spec row 22's maximum noise integrates to about
 SNR 60, where the ratio is 1.7–1.9×.
 
-### 2.12 The S-curve correction (CP 9.3)
+### 2.13 The S-curve correction (CP 9.3)
 
 §10.1.3's procedure, run by `sat-tracker --calibrate-centroid`: 200 sub-pixel
 offsets × 6 sizes × 8 SNR bins × 3 estimators, fitting
@@ -304,7 +353,7 @@ Measured gain, `WindowedCoM`, 5 px beacon:
 
 §10.1.3 expects 2–5× at high SNR; we are at the bottom of that range.
 
-### 2.13 Frame budget (CP 14.2, spec row 20)
+### 2.14 Frame budget (CP 14.2, spec row 20)
 
 Spec row 20 requires **≥ 20 FPS**. §15 additionally sets an internal budget of
 **≈ 0.85 ms per frame**. The first is met with margin; the second is not, and
@@ -362,7 +411,7 @@ requirement is met; the internal budget is not, and closing it would need a
 different processing strategy (a decimated response grid, or a region of
 interest around the track) rather than faster arithmetic.
 
-### 2.14 `handover` (CP 10.7)
+### 2.15 `handover` (CP 10.7)
 
 Not one of §13.1's metrics — it is added because coarse alignment's deliverable
 is the handover, and a coarse tracker with no such moment has no definition of
@@ -388,15 +437,15 @@ the boresight *in the image*: the frame is rendered at the true boresight, so
 per-run acquisition times become a distribution. See
 [`RESULTS.md` §7](RESULTS.md) for what row 23's jitter does to it.
 
-### 2.15 Not yet implemented
+### 2.16 Not yet implemented
 
 | Metric | Status |
 |---|---|
-| `handover_success` as a single figure | Per run it is a bool and a time (§2.14); the *rate* is a sweep aggregate, produced by `just cp107` rather than stored in `run.json`. Putting a rate in a single run's artifact would be a number with one sample behind it. |
+| `handover_success` as a single figure | Per run it is a bool and a time (§2.15); the *rate* is a sweep aggregate, produced by `just cp107` rather than stored in `run.json`. Putting a rate in a single run's artifact would be a number with one sample behind it. |
 | `fps` with the GUI on | §13.1 asks for it "reported separately". The headless figure is produced now; the GUI-on figure arrives with the Stage 15 packaging work. |
 | `saturation_frac` broken out per axis | Reported as the worse of the two, which is what a single compliance row can carry. The per-axis figures exist on `GimbalAxis` and are plotted by `just cp106`. |
 
-### 2.16 Where these numbers come from
+### 2.17 Where these numbers come from
 
 | Artifact | Produced by | Contains |
 |---|---|---|

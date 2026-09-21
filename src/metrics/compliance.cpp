@@ -134,17 +134,66 @@ std::string compliance_matrix(const std::vector<RunMetrics>& overall,
         }
 
         // --- row 18 ---------------------------------------------------------
+        //
+        // GRADED ON THE POST-ACQUISITION DEFINITION — P0-2.
+        //
+        // The in-FOV definition normalises over frames where the beacon was
+        // visible, which is the right denominator for "did the detector hold
+        // what it could see" and the wrong one for spec row 18. A run that
+        // never finds the beacon has almost no in-FOV frames, so a handful of
+        // lucky ones set the ratio: the old baseline scenario scored 7.59 %
+        // and PASSED row 18 on a run where the mount pointed at empty sky for
+        // 95.6 % of its length.
+        //
+        // The post-acquisition figure normalises over every frame from the
+        // first lock onward. It cannot be flattered by failing to acquire,
+        // because failing to acquire leaves it undefined rather than small.
+        // Both are printed — the in-FOV one as an unGRADED companion row —
+        // so the difference is visible instead of being a silent redefinition.
         {
             std::vector<RunMetrics> scored;
-            for (const RunMetrics& m : runs) if (m.frames_in_fov > 0) scored.push_back(m);
+            for (const RunMetrics& m : runs) if (m.post_acq_valid) scored.push_back(m);
             out += prefix;
             if (scored.empty()) {
-                out += no_data("18", "Target loss", "the beacon was never in view");
+                out += no_data("18", "Target loss", "the track was never Confirmed");
             } else {
                 const Series s = field(scored, [](const RunMetrics& m) {
-                    return 100.0 * m.target_loss_frac; });
-                out += row("18", "Target loss", "%", s.mean(), s.p95(), "p95",
+                    return 100.0 * m.target_loss_post_acq; });
+                out += row("18", "Target loss (post-acq)", "%", s.mean(), s.p95(), "p95",
                            verdict(s.mean(), s.p95(), 100.0 * req.target_loss_frac, false));
+            }
+            std::vector<RunMetrics> in_fov;
+            for (const RunMetrics& m : runs) if (m.frames_in_fov > 0) in_fov.push_back(m);
+            if (!in_fov.empty()) {
+                const Series s = field(in_fov, [](const RunMetrics& m) {
+                    return 100.0 * m.target_loss_frac; });
+                out += prefix;
+                out += row("18", "Target loss (in-FOV)", "%", s.mean(), s.p95(), "p95",
+                           "reported — row 18 is graded on post-acq above");
+            }
+        }
+
+        // --- FOV containment: the PS's own objective ------------------------
+        //
+        // Not a numbered spec row — the PS states it as prose rather than in
+        // the table — but it is the sentence the whole problem statement is
+        // built on: "first locate and MAINTAIN the remote terminal within its
+        // camera Field-of-View". A compliance matrix that grades five numbered
+        // rows and never reports the objective they exist to serve is
+        // measuring the proxy instead of the thing.
+        //
+        // No threshold, so no verdict: the PS gives none, and inventing one
+        // would be this project asserting its own pass mark. Reported as a
+        // number, which is what makes the row-18 pair above interpretable.
+        {
+            std::vector<RunMetrics> scored;
+            for (const RunMetrics& m : runs) if (m.post_acq_valid) scored.push_back(m);
+            if (!scored.empty()) {
+                const Series s = field(scored, [](const RunMetrics& m) {
+                    return 100.0 * m.fov_containment_post_acq; });
+                out += prefix;
+                out += row("--", "FOV containment (post-acq)", "%", s.mean(), s.p95(), "p95",
+                           "PS objective - reported, not graded");
             }
         }
 

@@ -22,8 +22,8 @@
 //                         than assumed
 //
 // The scenario is echoed in full rather than referenced. A path is not
-// provenance: `scenarios/baseline.toml` today is not necessarily
-// `scenarios/baseline.toml` next week, and a results directory that silently
+// provenance: `scenarios/spec_defaults.toml` today is not necessarily
+// `scenarios/spec_defaults.toml` next week, and a results directory that silently
 // depends on the working tree is exactly the trap this is avoiding.
 
 #pragma once

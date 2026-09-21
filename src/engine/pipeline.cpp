@@ -1099,6 +1099,18 @@ bool Pipeline::step() {
                 // boresight.
                 rec.centroid_error_screen_px =
                     (rec.detection_screen - t->screen_pos).norm();
+                // BORESIGHT-RELATIVE: the same error, still in screen pixels,
+                // but with each side referenced to the boresight it was formed
+                // through. detection_screen was built from the COMMANDED
+                // boresight and truth_screen sits at the TRUE one, so
+                // subtracting each from its own reference cancels the
+                // unobservable platform displacement D(t) exactly and leaves
+                // the detector's own error. See the long note on the field in
+                // pipeline.hpp for the algebra.
+                const Pixel2 cmd_screen  = cfg_.synthetic.screen.to_pixel(rec.boresight_cmd);
+                const Pixel2 true_screen = cfg_.synthetic.screen.to_pixel(rec.boresight_true);
+                rec.centroid_error_boresight_px =
+                    ((rec.detection_screen - cmd_screen) - (t->screen_pos - true_screen)).norm();
                 rec.centroid_error_valid = true;
             } else if (rec.detected) {
                 rec.false_alarm = true;
@@ -1107,6 +1119,12 @@ bool Pipeline::step() {
             // Independent of whether we detected it this frame.
             const Pixel2 bore_screen = cfg_.synthetic.screen.to_pixel(rec.boresight_true);
             rec.tracking_error_px = (bore_screen - t->screen_pos).norm();
+            // D(t): what the screen-frame centroiding column is actually
+            // measuring whenever row 25 platform motion is active. Recorded on
+            // every truth-bearing frame, not just detected ones, so the
+            // expectation the summary prints is over the whole run.
+            rec.pointing_drift_px =
+                (bore_screen - cfg_.synthetic.screen.to_pixel(rec.boresight_cmd)).norm();
         }
     }
 
