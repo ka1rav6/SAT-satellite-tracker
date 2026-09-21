@@ -183,7 +183,11 @@ THIRD_PARTY = [
     ("toml++",         r'#\s*include\s*[<"]toml\+\+/',      ("src/scenario",)),
     ("nlohmann/json",  r'#\s*include\s*[<"]nlohmann/',        ("src/metrics",)),
     ("Eigen",          r'#\s*include\s*[<"]Eigen/',           ("src/tracking",)),
-    ("OpenCV",         r'#\s*include\s*[<"]opencv2?/',        ("src/engine",)),
+    # src/gui as well as src/engine: the dashboard's `--gui --shot` writes a
+    # PNG with cv::imwrite, and cmake/modules.cmake links opencv_imgcodecs
+    # PRIVATE to sat_gui for it. Design §4.2's boundary sanctions OpenCV for
+    # "decode, file I/O and test oracles"; that is the file I/O.
+    ("OpenCV",         r'#\s*include\s*[<"]opencv2?/',        ("src/engine", "src/gui")),
     ("Dear ImGui",     r'#\s*include\s*[<"](imgui|implot)',   ("src/gui", "src/third_party")),
     ("GLFW",           r'#\s*include\s*[<"]GLFW/',            ("src/gui",)),
 ]
