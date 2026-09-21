@@ -1,0 +1,13 @@
+// sat/build_stamp.hpp — GENERATED AT BUILD TIME. Do not edit.
+//
+// Written by cmake/stamp_git.cmake on every build. See that file for why the
+// hash cannot be stamped at configure time: it freezes, and a run.json that
+// attributes a benchmark to the wrong commit is worse than one that attributes
+// it to nothing.
+//
+// A "-dirty" suffix means the tracked files differed from HEAD when this was
+// built, i.e. the binary contains code that exists in no commit.
+
+#pragma once
+
+#define SAT_GIT_HASH "@SAT_GIT_HASH@"

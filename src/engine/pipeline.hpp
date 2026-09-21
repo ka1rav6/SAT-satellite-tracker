@@ -467,10 +467,28 @@ public:
     //
     // So the filter sees the target at T - D moving at v - D', and driving
     // B_cmd there puts B_true exactly on the beacon. Subtracting a second
-    // estimate removes the drift twice. tests/loop/test_feedforward.cpp
-    // measures both directions: sweeping the drift to four times the
-    // specification leaves the residual flat, and feeding the controller the
-    // TRUE drift rate — a perfect estimator — more than doubles the error.
+    // estimate removes the drift twice.
+    //
+    // Measured both directions in tests/control/test_stage10.cpp — "CP 10.3:
+    // platform drift is already cancelled by the measurement frame" and "CP
+    // 10.3: cancelling the drift a second time makes it worse": sweeping the
+    // drift to four times the specification leaves the residual flat, and
+    // feeding the controller the TRUE drift rate — a perfect estimator — makes
+    // the error 1.75x worse.
+    //
+    // A-7: this used to cite a feedforward test under tests/loop/ that does
+    // not exist and, from the git history, never did. The argument was sound
+    // and the evidence was real; only the pointer was wrong. In a project
+    // whose credibility rests on every claim having a checkable citation, a
+    // citation that does not resolve is worse than no citation at all — it
+    // invites a reader to check, and what they find is a missing file.
+    //
+    // tools/check_source_invariants.py now resolves every repository path
+    // mentioned in a source comment, so this cannot recur silently. It found
+    // two more the moment it was written: a splat comment pointing at a
+    // tests/camera/ directory that does not exist (the file is under
+    // tests/render/), and a schema example naming an illustrative bad-config
+    // file that was never committed.
     //
     // It would be needed if the measurement were reconstructed through the
     // true boresight, as an IMU-stabilised mount reporting real attitude would

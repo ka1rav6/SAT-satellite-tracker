@@ -122,7 +122,14 @@ sat_add_test(loop
     SOURCES loop/test_gimbal.cpp
             loop/test_controller.cpp
             loop/test_closed_loop.cpp
-    DEPS    sat_core sat_plant sat_control sat_engine sat_perception
+    # sat_scenario: the A-3 regression loads a real scenario file, because the
+    # platform motion stack it needs only exists on the scenario path.
+    DEPS    sat_core sat_plant sat_control sat_engine sat_perception sat_scenario
+)
+# The A-3 regression loads scenarios/spec_defaults.toml from disk for the same
+# reason the robustness suite does: the committed FILE is what has to work.
+target_compile_definitions(test_loop PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 
 # --- Stage 10: the control checkpoints -------------------------------------

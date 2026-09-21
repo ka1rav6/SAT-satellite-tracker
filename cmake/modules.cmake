@@ -40,11 +40,21 @@ function(sat_add_module name)
     endif()
 
     # Every module includes its siblings as "module/file.hpp" from src/, and the
-    # public headers under include/ as "sat/file.hpp".
+    # public headers under include/ as "sat/file.hpp". The third entry is the
+    # build tree's generated/ directory, which holds sat/build_stamp.hpp — the
+    # git provenance, regenerated on every build (A-5, cmake/stamp_git.cmake).
     target_include_directories(${name} ${vis}
         "${CMAKE_SOURCE_DIR}/include"
         "${CMAKE_SOURCE_DIR}/src"
+        "${SAT_BUILD_STAMP_DIR}"
     )
+
+    # Ordering: the stamp must be written before anything that could include it
+    # compiles. An INTERFACE library cannot carry a dependency, and does not
+    # need one — nothing compiles as part of it.
+    if(ARG_SOURCES)
+        add_dependencies(${name} sat_build_stamp)
+    endif()
 
     if(ARG_PUBLIC_DEPS)
         target_link_libraries(${name} ${vis} ${ARG_PUBLIC_DEPS})

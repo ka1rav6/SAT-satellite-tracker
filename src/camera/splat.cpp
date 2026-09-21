@@ -52,7 +52,7 @@ namespace {
 // one, it is the same double. That matters for two reasons: INV-3 (a run must
 // reproduce bit for bit) and CP 14.2's acceptance criterion, which asks a faster
 // kernel to be bit-identical to the scalar one rather than merely equivalent.
-// tests/camera/test_splat.cpp checks it directly against the coverage functions.
+// tests/render/test_splat.cpp checks it directly against the coverage functions.
 // ---------------------------------------------------------------------------
 
 /// Largest footprint span this file will factorise, in pixels. Beyond it the

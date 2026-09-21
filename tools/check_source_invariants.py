@@ -270,6 +270,72 @@ CHECKS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Citations in comments must resolve.
+#
+# This project's comments are unusually dense and unusually specific: they cite
+# the test that measures a claim, the file that enforces an invariant, the
+# script that regenerates a figure. That is the single biggest reason a reader
+# can trust the numbers — and it inverts the moment a citation stops resolving.
+# A comment pointing at a file that does not exist invites a reader to check
+# and hands them a missing file, which costs more credibility than the comment
+# ever bought.
+#
+# Two were found by hand on the same day:
+#
+#   src/engine/pipeline.hpp cited tests/loop/test_feedforward.cpp, which never
+#   existed; the measurement it describes is in tests/control/test_stage10.cpp.
+#   src/camera/splat.cpp cited tests/camera/test_splat.cpp, which lives under
+#   tests/render/.
+#
+# Both arguments were sound and both measurements were real. Only the pointers
+# were wrong, and nothing in the build could tell.
+#
+# Scope: paths under tests/, tools/, scenarios/, docs/ or cmake/ mentioned in a
+# COMMENT, with a file extension. Restricted to those roots because they are
+# the ones that are stable enough for a citation to be meaningful, and to
+# extensioned paths so that a prose mention of a directory ("see tests/loop/")
+# is not treated as a file reference.
+# ---------------------------------------------------------------------------
+CITATION_ROOTS = ("tests", "tools", "scenarios", "docs", "cmake")
+CITATION_RE = re.compile(
+    r"\b((?:" + "|".join(CITATION_ROOTS) + r")/[A-Za-z0-9_./+-]*"
+    r"\.(?:cpp|hpp|h|cc|py|sh|toml|md|cmake|json|yml|yaml|csv|mp4))"
+)
+
+
+def check_citations(root: pathlib.Path):
+    """Every tests/... style path named in a source comment must exist."""
+    hits = []
+    for path in sources(root, ("src", "include")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        # The inverse of the other checks: here the COMMENTS are the subject,
+        # so strip the code and keep them. strip_comments_only() removes
+        # comments, so the comment text is recovered by differencing against
+        # the original line by line.
+        code_only = strip_comments_only(text).splitlines()
+        for lineno, line in enumerate(text.splitlines(), 1):
+            code = code_only[lineno - 1] if lineno <= len(code_only) else ""
+            # Anything present in the source line and absent from the stripped
+            # line is comment.
+            #
+            # NOTE the comparison is on CONTENT, not on length.
+            # strip_comments_only() blanks comments with spaces so that column
+            # numbers survive, which means the stripped line is always exactly
+            # as long as the original — an earlier version of this tested
+            # `len(code) == len(line)` and therefore skipped every line in the
+            # repository while printing "ok". It was caught by injecting a
+            # citation to a file that does not exist and watching the check
+            # stay green, which is the only way that class of bug ever shows.
+            if code == line:
+                continue
+            for m in CITATION_RE.finditer(line):
+                rel = m.group(1)
+                if not (root / rel).exists():
+                    hits.append((path.relative_to(root).as_posix(), lineno, rel))
+    return hits
+
+
 def self_test() -> bool:
     """Prove the stripper does what the checks depend on.
 
@@ -348,6 +414,22 @@ def main() -> int:
             print(file=sys.stderr)
         else:
             print(f"ok — {c['name']}")
+
+    cites = check_citations(root)
+    name = "docs: every file a source comment cites actually exists"
+    if cites:
+        failures += 1
+        print(f"VIOLATION — {name}", file=sys.stderr)
+        print("  A comment citing a file that does not exist is worse than no\n"
+              "  comment: it invites a reader to check the claim and hands them a\n"
+              "  missing file. Repoint it at the file that really measures the\n"
+              "  claim, or describe the evidence without naming a path.",
+              file=sys.stderr)
+        for rel, lineno, cited in cites:
+            print(f"    {rel}:{lineno}: cites {cited}", file=sys.stderr)
+        print(file=sys.stderr)
+    else:
+        print(f"ok — {name}")
 
     tp = check_third_party(root)
     name = "build: no third-party include outside the module that links it"

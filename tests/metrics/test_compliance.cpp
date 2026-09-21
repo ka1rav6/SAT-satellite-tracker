@@ -69,10 +69,113 @@ TEST_CASE("CP 7.5: the value's TYPE comes from TOML, not from a guess") {
     REQUIRE(str_back.has_value());
     CHECK(str_back->find("two") != std::string::npos);
 
-    // And a value that is not valid TOML is rejected, naming the key.
-    auto bad = apply_overrides(base, {{"a.x", "two"}});
+    // And a value that is not valid TOML *and* is not a bare word is
+    // rejected, naming the key. `two` is now accepted as a string — see the
+    // A-6 cases below — so the malformed example has to be something that
+    // cannot be read as a name.
+    auto bad = apply_overrides(base, {{"a.x", "[1,"}});
     CHECK_FALSE(bad.has_value());
     CHECK(bad.error().find("a.x") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// A-6 — the command a judge is most likely to type live
+// ---------------------------------------------------------------------------
+
+TEST_CASE("A-6: a bare word is accepted as a string") {
+    // THE DEFECT. `--set atmosphere.mode=lowlight` — changing the weather in
+    // front of an audience, the single most likely live command — failed with:
+    //
+    //     sweep: override 'atmosphere.mode = lowlight' is not valid TOML:
+    //     Error while parsing value: could not determine value type
+    //
+    // True, unhelpful, wrongly prefixed (this was a --headless run, not a
+    // sweep), and silent about the fix.
+    //
+    // A bare word is not valid TOML on the right-hand side of an assignment
+    // under any reading, so retrying it quoted cannot change the meaning of
+    // anything that previously parsed. That is what makes this safe rather
+    // than a guess.
+    const std::string base = "[atmosphere]\nmode = \"clear\"\n";
+
+    auto r = apply_overrides(base, {{"atmosphere.mode", "lowlight"}});
+    REQUIRE_MESSAGE(r.has_value(), r.error());
+    CHECK(r->find("lowlight") != std::string::npos);
+    CHECK(r->find("clear") == std::string::npos);
+
+    // It must survive as a STRING. toml++ may emit it as "lowlight" or
+    // 'lowlight' — both are correct TOML and pinning one would be testing the
+    // serialiser's taste — so the assertion is that it round-trips.
+    auto round_trip = apply_overrides(*r, {});
+    REQUIRE(round_trip.has_value());
+    CHECK(round_trip->find("lowlight") != std::string::npos);
+}
+
+TEST_CASE("A-6: values that already parse keep their own types") {
+    // The retry must be a LAST resort. If it ran first, or ran on values that
+    // parse, `--set control.smith=true` would become the string "true" and
+    // `--set sim.seed=7` the string "7" — both of which the schema would then
+    // reject, turning a fix for one command into a break for every other.
+    const std::string base = "[a]\nx = 1\n";
+
+    auto b = apply_overrides(base, {{"a.x", "true"}});
+    auto n = apply_overrides(base, {{"a.x", "2.5"}});
+    auto v = apply_overrides(base, {{"a.x", "[1, 2]"}});
+    REQUIRE(b.has_value());
+    REQUIRE(n.has_value());
+    REQUIRE(v.has_value());
+    // Unquoted in the output, i.e. still a bool / float / array.
+    CHECK(b->find("true") != std::string::npos);
+    CHECK(b->find("\"true\"") == std::string::npos);
+    CHECK(b->find("'true'") == std::string::npos);
+    CHECK(n->find("2.5") != std::string::npos);
+    CHECK(v->find("[") != std::string::npos);
+}
+
+TEST_CASE("A-6: a bare word that is not a legal value still fails, with the schema's error") {
+    // The layering that makes the retry safe: the overlay decides SYNTAX, the
+    // schema decides MEANING. Quoting a misspelling must not make it legal —
+    // it must reach the schema and be rejected there, with the key, the legal
+    // values and the specification row, exactly as a hand-written file would.
+    auto base = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+    REQUIRE(base.has_value());
+    std::string text;
+    {
+        std::ifstream in(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml",
+                         std::ios::binary);
+        text.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+
+    auto applied = apply_overrides(text, {{"atmosphere.mode", "lowlite"}}, "--set");
+    REQUIRE_MESSAGE(applied.has_value(), applied.error());   // syntax is fine now
+
+    auto parsed = parse_scenario(*applied, "swept.toml");
+    REQUIRE_FALSE(parsed.has_value());                       // meaning is not
+    MESSAGE(parsed.error());
+    CHECK(parsed.error().find("atmosphere.mode") != std::string::npos);
+    CHECK(parsed.error().find("lowlight") != std::string::npos);   // the legal set
+    CHECK(parsed.error().find("row 24") != std::string::npos);
+}
+
+TEST_CASE("A-6: the error names the flag the user typed, not the sweep") {
+    // Every message from this function used to begin "sweep:", including
+    // during a plain `--headless --set ...`. The word names a subsystem the
+    // user is not using and sends them to the wrong documentation.
+    const std::string base = "[a]\nx = 1\n";
+
+    auto sweep = apply_overrides(base, {{"a.x", "[1,"}});
+    auto set   = apply_overrides(base, {{"a.x", "[1,"}}, "--set");
+    REQUIRE_FALSE(sweep.has_value());
+    REQUIRE_FALSE(set.has_value());
+    CHECK(sweep.error().rfind("sweep:", 0) == 0);
+    CHECK(set.error().rfind("--set:", 0) == 0);
+
+    // And a value that could have been fixed by quoting says so; one that
+    // could not does not offer advice it knows to be wrong.
+    auto word = apply_overrides(base, {{"a.x", "two words"}}, "--set");
+    REQUIRE_FALSE(word.has_value());
+    CHECK(word.error().find("needs quotes") != std::string::npos);
+    CHECK(set.error().find("needs quotes") == std::string::npos);
 }
 
 TEST_CASE("CP 7.5: an override can create a table the base file never mentions") {

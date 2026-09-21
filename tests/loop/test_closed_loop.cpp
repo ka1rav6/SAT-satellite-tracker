@@ -26,6 +26,7 @@
 #include <doctest/doctest.h>
 
 #include "engine/pipeline.hpp"
+#include "scenario/schema.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -353,4 +354,212 @@ TEST_CASE("the loop is reproducible: same config, same frames, bit for bit") {
         REQUIRE(a[i].detection_img.y == b[i].detection_img.y);
         REQUIRE(a[i].centroid_error_px == b[i].centroid_error_px);
     }
+}
+
+// ===========================================================================
+// A-4 — the encoder model must reach the MEASUREMENT path, not only control
+// ===========================================================================
+
+TEST_CASE("A-4: a coarse encoder degrades the reported screen-frame position") {
+    // THE DEFECT. pipeline.cpp reconstructed perception's view of the world
+    // through `gimbal_.true_position()` on the synthetic path — the exact mount
+    // angle — rather than through `gimbal_.position()`, the quantised encoder
+    // reading. plant/gimbal.hpp states the rule directly ("position() is what
+    // the controller is allowed to read... Mixing them up is the bug §10.3
+    // exists to make impossible") and design §14 CP 4.10's acceptance criterion
+    // is "the controller reads only the quantised value".
+    //
+    // The consequence was not subtle. Sweeping encoder_lsb_urad from 20 to
+    // 4000 µrad — 0.18 px to 36.67 px, 3.7x the ENTIRE row-17 budget — moved
+    // the reported centroiding error by ZERO, because the measurement path
+    // never saw the encoder at all.
+    //
+    // This test sweeps the LSB and requires the reported screen-frame error to
+    // GROW. It is the assertion that was missing: a model whose parameter
+    // changes nothing observable is indistinguishable from a model that is not
+    // wired up.
+    //
+    // Disturbances are off so the screen-frame error isolates the encoder.
+    // With row 25 platform motion active the column is dominated by the
+    // accumulated pointing drift D(t) (see FrameRecord::pointing_drift_px) and
+    // a 36 px encoder effect is invisible under 300 px of drift.
+    std::vector<double> screen_rmse;
+    const double lsbs[] = {20.0, 500.0, 4000.0};
+
+    for (double lsb : lsbs) {
+        Scene s = make_scene(/*offset_px=*/40.0, /*vx_px_s=*/10.0, /*duration_s=*/6.0);
+        s.cfg.pan.encoder_lsb_urad  = lsb;
+        s.cfg.tilt.encoder_lsb_urad = lsb;
+        // make_scene builds a PipelineConfig directly, which carries no
+        // DisturbanceGenerator: there is no row-23 jitter and no row-25
+        // platform motion here at all. That is exactly what this test needs —
+        // the screen-frame error then isolates the encoder. With the shipped
+        // disturbances active the column is dominated by the accumulated
+        // pointing drift D(t) and a 36 px encoder effect is invisible beneath
+        // 300 px of drift.
+
+        Pipeline p;
+        p.build(s.cfg, s.emitters);
+        p.set_publish_snapshots(false);
+
+        double sum = 0.0;
+        int    n   = 0;
+        while (p.step()) {
+            const FrameRecord& r = p.last();
+            if (!r.centroid_error_valid) continue;
+            sum += r.centroid_error_screen_px * r.centroid_error_screen_px;
+            ++n;
+        }
+        REQUIRE(n > 30);
+        screen_rmse.push_back(std::sqrt(sum / n));
+        MESSAGE("encoder_lsb " << lsb << " urad -> screen RMSE "
+                << screen_rmse.back() << " px");
+    }
+
+    // Monotone in the LSB, which is the property a wired-up model has and an
+    // ignored one does not.
+    CHECK(screen_rmse[1] > screen_rmse[0]);
+    CHECK(screen_rmse[2] > screen_rmse[1]);
+
+    // And the magnitude is right, not merely the ordering. A uniform
+    // quantiser with step q has error RMS q/sqrt(12) per axis, so over two
+    // independent axes the magnitude RMS is q*sqrt(2/12) = 0.408 q. At
+    // 4000 urad the step is 4000/109.083 = 36.67 px, predicting ~15.0 px.
+    // Generous bounds: this is one term added to the detector's own 0.2 px and
+    // to whatever the loop contributes, and the point is the order of
+    // magnitude, not a calibration.
+    CHECK(screen_rmse[2] > 5.0);
+    CHECK(screen_rmse[2] < 40.0);
+
+    // The IMAGE-frame error must NOT move. An encoder cannot change where
+    // light lands on the focal plane, and a "fix" that contaminated the
+    // detector's own accuracy with a quantisation it has no access to would be
+    // a different bug in the opposite direction.
+    //
+    // Asserted here rather than assumed, because the first attempt at this fix
+    // routed the RENDERING through the encoder too, which is exactly that bug:
+    // it makes the camera point where the encoder thinks the mount is instead
+    // of where the mount is.
+    {
+        Scene fine   = make_scene(40.0, 10.0, 6.0);
+        Scene coarse = make_scene(40.0, 10.0, 6.0);
+        fine.cfg.pan.encoder_lsb_urad = fine.cfg.tilt.encoder_lsb_urad = 20.0;
+        coarse.cfg.pan.encoder_lsb_urad = coarse.cfg.tilt.encoder_lsb_urad = 4000.0;
+
+        auto image_rmse = [](Scene& sc) {
+            Pipeline p;
+            p.build(sc.cfg, sc.emitters);
+            p.set_publish_snapshots(false);
+            double sum = 0.0; int n = 0;
+            while (p.step()) {
+                const FrameRecord& r = p.last();
+                if (!r.centroid_error_valid) continue;
+                sum += r.centroid_error_px * r.centroid_error_px;
+                ++n;
+            }
+            return n ? std::sqrt(sum / n) : 0.0;
+        };
+        const double a = image_rmse(fine), b = image_rmse(coarse);
+        MESSAGE("image RMSE: " << a << " px at 20 urad, " << b << " px at 4000 urad");
+
+        // A 200x change in the encoder step moves the image-frame error by
+        // under 10 %, against the 19x it moves the screen-frame error by. That
+        // gap IS the assertion: the encoder reaches the reconstruction and
+        // does not reach the focal plane.
+        //
+        // Not asserted EQUAL, because it is not: a coarser encoder feeds the
+        // controller a slightly different error, the mount follows a slightly
+        // different path, and the beacon therefore lands on different
+        // sub-pixel phases with a different S-curve bias residual. A tolerance
+        // of 25 % covers that second-order coupling without covering a
+        // first-order contamination.
+        CHECK(std::abs(a - b) < 0.25 * a);
+
+        // Both are around 1 px rather than the 0.2 px the shipped pipeline
+        // achieves, because make_scene selects the STRAW-MAN detector — see
+        // its comment. These cases measure the control loop, and running the
+        // full §9.4 pipeline on every frame took this suite past its timeout.
+        CHECK(a < 2.0);
+        CHECK(b < 2.0);
+    }
+}
+
+// ===========================================================================
+// A-3 — the exposure smear must sample the platform rate at the REAL frame time
+// ===========================================================================
+
+TEST_CASE("A-3: motion blur is correct at a camera rate above row 5's minimum") {
+    // THE DEFECT. pipeline.cpp read the platform's analytic rate as
+    // `platform_rate(frame_ / 30.0)` — spec row 5's MINIMUM camera rate,
+    // hardcoded as if it were fixed. scenario/schema.cpp permits camera_hz from
+    // 30 to 1000, and the PS explicitly allows a higher rate.
+    //
+    // At camera_hz = 60 the blur therefore sampled the platform rate at TWICE
+    // the true elapsed time. For a constant-velocity platform that happens to
+    // be harmless — the rate is the same at every t — which is why every
+    // shipped scenario hid it: they all use linear platform motion at 30 Hz.
+    // For any PERIODIC platform motion (row 25 permits circular, figure-8 and
+    // sinusoidal, and §7.2 gives all three in closed form) it is wrong in both
+    // direction and magnitude, and wrong by more as the run goes on.
+    //
+    // Built from a real Scenario rather than from a hand-made PipelineConfig,
+    // because the platform motion stack only exists on the scenario path.
+    auto loaded = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+    REQUIRE_MESSAGE(loaded.has_value(), loaded.error());
+    Scenario sc = *loaded;
+
+    sc.duration_s = 2.0;
+    sc.camera_hz  = 60;        // above row 5's minimum, which the PS permits
+    sc.truth_hz   = 600;       // must stay an exact multiple (schema.cpp)
+    sc.control_hz = 60;
+
+    // A platform that REVERSES inside the run, so sampling its rate at the
+    // wrong time gives a genuinely different answer rather than the same
+    // constant. A 1 s period at 60 Hz means the buggy sampling (t = frame/30)
+    // reaches a full period ahead by the halfway point.
+    sc.platform.clear();
+    MotionSpec ms;
+    ms.kind            = "sinusoid";
+    ms.amplitude_px[0] = 30.0;
+    ms.period_s        = 1.0;
+    ms.axis            = 0;
+    sc.platform.push_back(ms);
+
+    Pipeline p;
+    p.build_from_scenario(sc);
+    p.set_publish_snapshots(false);
+
+    int  checked   = 0;
+    int  divergent = 0;
+    while (p.step()) {
+        const FrameRecord& r = p.last();
+        const Rate2 expected = p.source().disturbance().platform_rate(r.time_s);
+        // What the old code would have used: the frame index over a hardcoded
+        // 30, which at camera_hz = 60 is twice the elapsed time.
+        const Rate2 wrong = p.source().disturbance().platform_rate(
+                                static_cast<double>(r.frame) / 30.0);
+
+        // The source is told gimbal rate + platform rate; subtract the former
+        // to recover the platform component that was actually used. The gimbal
+        // is stepped at the top of the frame and not again, so its rate here
+        // is the one the blur was built from.
+        const Rate2 blur = p.source().blur_rate();
+        const Rate2 gr   = p.gimbal().rate();
+        const Rate2 used{blur.x - gr.x, blur.y - gr.y};
+
+        CHECK(used.x == doctest::Approx(expected.x).epsilon(1e-9));
+        CHECK(used.y == doctest::Approx(expected.y).epsilon(1e-9));
+
+        // Count the frames where the right and wrong answers genuinely differ.
+        // Without this the test would pass on the buggy code whenever the two
+        // sampling times happened to agree, and prove nothing.
+        if (std::abs(expected.x - wrong.x) > 1.0) ++divergent;
+        ++checked;
+    }
+
+    MESSAGE(checked << " frames at " << sc.camera_hz << " Hz, " << divergent
+            << " of them where the hardcoded-30 sampling would have differed");
+    REQUIRE(checked > 60);
+    // The bug has to be VISIBLE on most frames for this to be a real guard.
+    CHECK(divergent > checked / 2);
 }

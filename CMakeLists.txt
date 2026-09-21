@@ -63,26 +63,45 @@ endif()
 # --- Build provenance -----------------------------------------------------------
 # Every run.json and centroid.csv header carries the commit it was produced by
 # (design §13.2). Without it a benchmark number cannot be traced to code.
-find_package(Git QUIET)
-set(SAT_GIT_HASH "unknown")
-if(GIT_FOUND)
-    execute_process(
-        COMMAND "${GIT_EXECUTABLE}" rev-parse --short=7 HEAD
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        OUTPUT_VARIABLE SAT_GIT_HASH
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-    )
-    if(NOT SAT_GIT_HASH)
-        set(SAT_GIT_HASH "unknown")
-    endif()
-endif()
-message(STATUS "SAT: build provenance ${PROJECT_VERSION}+${SAT_GIT_HASH}")
+#
+# A-5: the commit hash is stamped at BUILD time, not at configure time.
+#
+# It used to be an `execute_process` right here, injected as a compile
+# definition. CMake does not re-configure because HEAD moved, so the stamp
+# froze at whatever was checked out when the build directory was created —
+# observed two commits stale, with `--version` and every run.json confidently
+# naming the wrong code. See cmake/stamp_git.cmake for the full argument and
+# for why this is a generated header rather than CMAKE_CONFIGURE_DEPENDS.
+#
+# The version number stays a compile definition: it comes from project(), so it
+# changes only when this file does, and this file is a configure dependency by
+# definition.
+set(SAT_BUILD_STAMP_DIR "${CMAKE_BINARY_DIR}/generated")
+set(SAT_BUILD_STAMP "${SAT_BUILD_STAMP_DIR}/sat/build_stamp.hpp")
+
+# Generate it once at configure time as well, so that the file exists before
+# any compiler runs — a header that appears only after the first build would
+# break a from-scratch parallel build and confuse every IDE.
+execute_process(COMMAND "${CMAKE_COMMAND}"
+    "-DSAT_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DSAT_OUT=${SAT_BUILD_STAMP}"
+    -P "${CMAKE_SOURCE_DIR}/cmake/stamp_git.cmake")
+
+# And re-generate it on EVERY build. ALL puts it in the default target;
+# everything else depends on it below.
+add_custom_target(sat_build_stamp ALL
+    COMMAND "${CMAKE_COMMAND}"
+            "-DSAT_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "-DSAT_OUT=${SAT_BUILD_STAMP}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/stamp_git.cmake"
+    BYPRODUCTS "${SAT_BUILD_STAMP}"
+    COMMENT "Stamping build provenance from git HEAD"
+    VERBATIM)
 
 add_compile_definitions(
     SAT_VERSION="${PROJECT_VERSION}"
-    SAT_GIT_HASH="${SAT_GIT_HASH}"
 )
+# The generated header lives here; sat_add_module puts this on every module's
+# include path so that <sat/version.hpp> can pull it in.
+include_directories("${SAT_BUILD_STAMP_DIR}")
 
 # --- Dependencies ---------------------------------------------------------------
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/dependencies.cmake")

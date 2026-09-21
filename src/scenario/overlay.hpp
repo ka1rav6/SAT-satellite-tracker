@@ -51,7 +51,30 @@ struct Override {
 /// Creates intermediate tables as needed, so an override can set a key whose
 /// table the base file never mentions. Fails if `toml_text` does not parse, or
 /// if a key's path runs through something that is not a table.
+///
+/// `context` prefixes every error message. It exists because every message
+/// here used to begin "sweep:" unconditionally, including during a plain
+/// `--headless --set ...`, where the word names a subsystem the user is not
+/// using and sends them to the wrong documentation (A-6).
+///
+/// BARE WORDS ARE ACCEPTED AS STRINGS. `--set atmosphere.mode=lowlight` is the
+/// single most likely thing to be typed live in front of judges, and it used
+/// to fail with:
+///
+///     sweep: override 'atmosphere.mode = lowlight' is not valid TOML:
+///     Error while parsing value: could not determine value type
+///
+/// which is true, unhelpful, and does not mention the fix. A bare word is not
+/// valid TOML on the right-hand side of an assignment under ANY reading, so
+/// re-trying it as a quoted string cannot change the meaning of anything that
+/// previously worked — there is nothing to be ambiguous with. Values that DO
+/// parse (`true`, `0.1`, `[1, 2]`, `inf`) are untouched and keep their types.
+///
+/// Semantic validation stays where it belongs: the quoted value goes through
+/// the one schema, which rejects `atmosphere.mode = "lowlite"` naming the key,
+/// its legal values and its specification row. This function does syntax.
 [[nodiscard]] Result<std::string> apply_overrides(std::string_view toml_text,
-                                                  const std::vector<Override>& ov);
+                                                  const std::vector<Override>& ov,
+                                                  std::string_view context = "sweep");
 
 }  // namespace sat

@@ -3,8 +3,13 @@
 // Design §7.5 fixes the error format, and the requirement is unusual enough to
 // be worth restating:
 //
-//     scenarios/bad.toml:41: gimbal.max_pan_dps = 14.0 is outside the permitted
-//       range [5.0, 10.0] (specification row 13).
+//     tests/bad_configs/01_pan_speed_too_high.toml:41: gimbal.max_pan_dps =
+//       14.0 is outside the permitted range [5.0, 10.0] (specification row 13).
+//
+// That is a real file and a real message: `just test-one schema` produces it.
+// The example used to name an invented bad-config file under scenarios/ that
+// was never committed — an illustrative filename reads exactly like a
+// citation, and a reader who tries to run it finds nothing.
 //
 // Four things in one line: the file, the LINE, the offending value, and the
 // specification row that makes it wrong.

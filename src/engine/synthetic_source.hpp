@@ -106,6 +106,14 @@ public:
     /// §9.2). Set by the engine from the gimbal's rate plus the platform's
     /// analytic rate; it deliberately excludes jitter (see render_frame).
     void set_blur_rate(Rate2 r) noexcept { blur_rate_ = r; }
+    /// The rate the last frame's exposure smear was integrated along.
+    ///
+    /// Read-back for tests and for the GUI's timing panel. A-3 was a defect in
+    /// the ARGUMENT to set_blur_rate — the platform rate was sampled at a
+    /// hardcoded 30 Hz regardless of camera_hz — and a write-only setter gave
+    /// a test no way to see it. A value that cannot be observed cannot be
+    /// asserted, and this one was wrong for every camera_hz except 30.
+    [[nodiscard]] Rate2 blur_rate() const noexcept { return blur_rate_; }
 
     /// Attach the engine's stage timers so the render can be broken down the
     /// way design §15's budget table is written — background, splat and damage

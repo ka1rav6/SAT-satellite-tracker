@@ -50,7 +50,9 @@ Result<Scenario> load_with_overrides(const HeadlessOptions& opt) {
     ov.reserve(opt.overrides.size());
     for (const auto& [k, v] : opt.overrides) ov.push_back(Override{k, v});
 
-    auto text = apply_overrides(buf.str(), ov);
+    // "--set": the flag the user actually typed, so the error names it rather
+    // than naming the sweep subsystem they are not using (A-6).
+    auto text = apply_overrides(buf.str(), ov, "--set");
     if (!text) return Err(text.error());
     return parse_scenario(*text, opt.scenario_path);
 }
