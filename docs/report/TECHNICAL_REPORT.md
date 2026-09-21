@@ -297,6 +297,51 @@ stale the command is when it reaches the mount:
 The transport delay is **3.3× the compute time**, so making the tracker faster
 would barely move the latency. That is why the Smith predictor exists.
 
+### 3.6 What happens when processing is slower than the camera
+
+This is the robustness question we expect to be asked, and until recently the
+honest answer was *"it cannot happen"* — the loop is a synchronous pull, so a
+slow frame simply slowed the simulated clock down with it. That is not a
+real-time argument, it is the absence of one.
+
+There is now a deadline model. Each frame is measured against a budget (by
+default one camera period, 33.33 ms, because that is when the next frame
+arrives whether this one has finished or not), overruns are counted, and work
+is shed to get back inside it. Two rungs: skip the 3×3 median, then halve the
+detection window.
+
+```bash
+./build/sat-tracker --headless --duration 20                                # no deadline
+./build/sat-tracker --headless --duration 20 --realtime --frame-budget-ms 4 # 8x tighter
+```
+
+| | no deadline | 4 ms budget |
+|---|---:|---:|
+| frames shed | 0 | **597** |
+| retention | 99.67 % | **99.67 %** |
+| row 18 target loss | 0.00 % | **0.00 %** |
+| centroiding RMSE | 0.2010 px | 0.4018 px |
+| row 17 steady state | 17.063 px | **17.063 px** |
+
+Under a budget roughly eight times tighter than the measured frame time, the
+loop **keeps the target**. It pays 0.2 px of centroiding accuracy, and row 17
+does not move at all — because row 17 is jitter-limited at §1.1's 16.33 px
+floor, and a fifth of a pixel of detector noise is invisible underneath it.
+
+Two findings are worth more than the feature. Shedding during **acquisition**
+destroys the run: search frames legitimately cost 19 ms, and charging them
+against the deadline degraded the detector before any track existed, taking
+retention to 20 %. And a third rung we tried — falling back to the straw-man
+detector — traded the target for the frame rate under sustained load, taking
+retention to 26.7 %. It was removed. **A loop that has lost the beacon is not
+degraded, it has failed**, and no throughput figure is worth that.
+
+For reproducibility the clock is separated from the policy:
+`--inject-stall 50@60` drives the same policy from a deterministic schedule
+and never reads the wall clock, so INV-3 holds and the tests assert exact
+numbers. `--realtime` runs report that they are not bit-reproducible rather
+than leaving a reader to assume they are.
+
 ---
 
 ## 4. What does not work, and why
