@@ -56,7 +56,7 @@ std::vector<std::string> split(const std::string& s) {
 
 CentroidLogHeader make_header() {
     CentroidLogHeader h;
-    h.source      = "scenarios/baseline.toml";
+    h.source      = "scenarios/spec_defaults.toml";
     h.mode        = "synthetic";
     h.build       = "a3f21c9";
     h.utc         = "2026-09-14T10:22:31Z";
@@ -99,7 +99,7 @@ TEST_CASE("CP 7.2: the header alone suffices to interpret the file") {
     CHECK(h.find("# SAT centroid log v1") == 0);      // versioned, and first
 
     // Provenance: which run produced this, from which build, when.
-    CHECK(h.find("source=scenarios/baseline.toml") != std::string::npos);
+    CHECK(h.find("source=scenarios/spec_defaults.toml") != std::string::npos);
     CHECK(h.find("mode=synthetic") != std::string::npos);
     CHECK(h.find("build=a3f21c9") != std::string::npos);
     CHECK(h.find("utc=2026-09-14T10:22:31Z") != std::string::npos);

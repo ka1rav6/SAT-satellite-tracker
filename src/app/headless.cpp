@@ -341,7 +341,7 @@ int run_headless(const HeadlessOptions& opt) {
 
 int headless_command(int argc, char* argv[], int& i) {
     HeadlessOptions opt;
-    opt.scenario_path = std::string(SAT_SCENARIO_DIR) + "/baseline.toml";
+    opt.scenario_path = std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml";
 
     for (int k = i + 1; k < argc; ++k) {
         const char* a = argv[k];

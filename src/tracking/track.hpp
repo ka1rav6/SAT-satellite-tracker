@@ -175,8 +175,8 @@ struct TrackParams {
     // A PHYSICAL CAP ON THE GATE, on top of the chi-square one.
     //
     // Added at Stage 7, because the metrics found the failure the chi-square
-    // gate cannot prevent on its own. The trace, from scenarios/baseline.toml
-    // with the beacon pinned in view:
+    // gate cannot prevent on its own. The trace, from
+    // scenarios/hard/clutter_field.toml (the beacon in view, clutter on):
     //
     //   frame 3   the beacon is briefly missed during the approach slew
     //             (motion blur at ~18 px/frame), the only candidates are CFAR

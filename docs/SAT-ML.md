@@ -352,7 +352,7 @@ TEST_CASE("CentroidNet C++ matches PyTorch fixture") {
 
 ```cpp
 TEST_CASE("missing model falls back, does not crash") {
-    Scenario s = load("scenarios/baseline.toml");
+    Scenario s = load("scenarios/spec_defaults.toml");
     s.ai.centroid_net = "models/does_not_exist.onnx";
     s.ai.fallback_on_fail = true;
     auto result = run_headless(s, /*seed=*/1);

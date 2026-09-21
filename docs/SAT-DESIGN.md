@@ -365,7 +365,9 @@ sat-tracker/
 │       ├── fuzz.cpp
 │       └── bench.cpp
 ├── scenarios/
-│   ├── baseline.toml
+│   ├── spec_defaults.toml
+│   ├── compliance.toml
+│   ├── hard/               # named failures, each isolating one cause
 │   ├── fog_figure8.toml
 │   ├── maxnoise_random.toml
 │   ├── decoy_beacon.toml

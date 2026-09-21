@@ -35,7 +35,7 @@ Scenario load(const char* name) {
 }  // namespace
 
 TEST_CASE("CP 6.1: a stationary emitter holds a constant angle while the camera slews") {
-    Scenario sc = load("baseline.toml");
+    Scenario sc = load("spec_defaults.toml");
 
     // A stationary beacon, pinned well off the boresight so that the slew below
     // drags it right across the frame.

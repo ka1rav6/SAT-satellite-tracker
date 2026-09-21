@@ -319,7 +319,7 @@ package: build
         echo
         echo "Start here: QUICKSTART.md"
         echo "  ./bin/sat-tracker --help"
-        echo "  ./bin/sat-tracker --headless --scenario scenarios/baseline.toml --out logs"
+        echo "  ./bin/sat-tracker --headless --scenario scenarios/spec_defaults.toml --out logs"
     } > "$stage/BUILD-INFO.txt"
 
     (cd dist && tar czf "$name.tar.gz" "$name")
@@ -342,7 +342,7 @@ verify-package archive:
     echo "unpacked to $root"
     cat "$root/BUILD-INFO.txt"
     echo
-    ( cd "$root" && ./bin/sat-tracker --headless         --scenario scenarios/baseline.toml --duration 3 --out logs --no-report )
+    ( cd "$root" && ./bin/sat-tracker --headless         --scenario scenarios/spec_defaults.toml --duration 3 --out logs --no-report )
     echo
     echo "  package verified: it runs from its own copy of everything."
 
@@ -750,11 +750,11 @@ screenshots: build
             rm -f "/tmp/sat-pal-$out.png"
         fi
     }
-    shot 01-overview  --scenario scenarios/baseline.toml --shot-after 150
+    shot 01-overview  --scenario scenarios/spec_defaults.toml --shot-after 150
     shot 02-imm       --scenario scenarios/fog_figure8.toml --shot-after 400                       --shot-imm --shot-damage --shot-focus imm
     shot 03-priority  --scenario scenarios/compliance.toml --shot-after 200                       --shot-clutter 120 --shot-damage --shot-focus priority
     shot 04-strategy  --scenario scenarios/supervisor/weather_change.toml                       --shot-after 500 --shot-supervisor --shot-damage                       --shot-focus strategy
-    shot 05-fsm       --scenario scenarios/baseline.toml --shot-after 60                       --shot-focus fsm --shot-random
+    shot 05-fsm       --scenario scenarios/hard/cold_start_in_clutter.toml --shot-after 60                       --shot-focus fsm --shot-random
     # CP 4.11's ablation. Identical to 03-priority's configuration except for
     # --shot-strawman, so the figure IS the comparison: same scenario, same
     # seed, same damage, same clutter, only the detector differs.

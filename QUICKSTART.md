@@ -42,7 +42,7 @@ five minutes rather than the last five.
 
 ```bash
 just gui                                    # the live dashboard
-just headless "--scenario scenarios/baseline.toml --duration 20"
+just headless "--scenario scenarios/spec_defaults.toml --duration 20"
 just video tests/video/clips/screen_2000x2000_30fps.mp4
 ```
 

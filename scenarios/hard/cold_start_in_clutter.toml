@@ -1,15 +1,67 @@
-# baseline.toml — the reference scenario.
+# hard/cold_start_in_clutter.toml — A KNOWN FAILURE, KEPT ON PURPOSE.
 #
-# Every value here is the specification's default (design §3.2), so this file
-# doubles as documentation: each key is annotated with the specification row it
-# implements, which is what CP 3.6 asks for.
+# This file was `scenarios/baseline.toml` and was the default for `--gui` and
+# `--headless`, the first entry in the GUI picker, the source of the README's
+# hero screenshot, the `just smoke` sanity scenario, and — per docs/DEMO.md —
+# "the known-good fallback (CP 15.3)".
 #
-# This is also the "known-good scenario preloaded as a fallback" that CP 15.3
-# requires for the live demo.
+# It is not known-good. It is the worst-performing scenario in the repository,
+# and it was the first thing anyone typing the obvious command would see.
+#
+# ---------------------------------------------------------------------------
+# WHAT IT ACTUALLY SCORES
+# ---------------------------------------------------------------------------
+# Measured, 60 s, seed 42, on the shipped parameters below:
+#
+#   FOV CONTAINMENT  time on target     0.00 %   (0 / 1800 frames)
+#   CENTROIDING      frames scored      0        (no frame had both a
+#                                                 detection and the beacon
+#                                                 in view)
+#   TRACKING         RMS              913.05 px  (spec row 17 is 10 px)
+#   LOCK             false tracks    1777.99 /min
+#   HANDOVER         not reached
+#
+# Removing the clutter does not rescue it:
+#
+#   configuration                 frames scored   tracking RMS   time on target
+#   as shipped                                0       913.05 px          0.00 %
+#   clutter = 0                              76       508.36 px          -
+#   clutter = 0, decoy = 0                   79       196.32 px          4.39 %
+#
+# In that last row the IMAGE-frame centroiding error is a healthy 0.347 px.
+# The detector is fine. The beacon is simply inside the field of view for
+# 79 of 1800 frames.
+#
+# ---------------------------------------------------------------------------
+# WHY IT FAILS, AND WHY THAT IS NOT A BUG
+# ---------------------------------------------------------------------------
+# Spec row 11 says the target's initial location defaults to RANDOM, and spec
+# row 16 asks for acquisition within 2 s. Those two requirements are mutually
+# inconsistent and the design says so (§10.5): a random position on a 12.5 deg
+# screen viewed through a 4x3 deg camera gives P(visible at t=0) = 7.68 %, and
+# a full search at row 13's 5 deg/s takes 15-19 s. There is no controller that
+# closes that gap.
+#
+# So the geometry is understood and the run is honestly reported — the
+# compliance matrix marks cold acquisition "BOUND DERIVED" rather than FAIL.
+# What was wrong was shipping this as the DEFAULT, where its failure reads as
+# the system not working rather than as a specification tension.
+#
+# ---------------------------------------------------------------------------
+# WHAT IT IS FOR NOW
+# ---------------------------------------------------------------------------
+# It is the hard case, and it earns its place: it is the scenario the
+# acquisition work (Stage 13) and the appearance-discrimination work (the ML
+# component) exist to solve, and it is the honest demonstration of the
+# clutter failure. docs/DEMO.md step 6 runs it deliberately.
+#
+# The defaults now point at scenarios/spec_defaults.toml, which is this file
+# with row 11's random position pinned inside the field of view and nothing
+# else changed.
 
 [meta]
-name        = "baseline"
-description = "Specification defaults: 10 px square beacon on a straight line, clear air"
+name        = "cold_start_in_clutter"
+description = "HARD CASE: spec row 11 random start in a 120-source clutter field. Known failure — see the header."
 
 [input]
 mode = "synthetic"                  # design §8.3

@@ -307,7 +307,7 @@ TEST_CASE("CP 4.12: every scenario in scenarios/ runs to completion") {
     // The spec-complete checkpoint. Not "tracks well" — that is Stage 5's job —
     // but "runs", which means every row of the parameter table is wired to
     // something that executes without crashing or producing a NaN.
-    for (const char* name : {"baseline.toml", "fog_figure8.toml",
+    for (const char* name : {"spec_defaults.toml", "fog_figure8.toml",
                              "maxnoise_random.toml"}) {
         INFO("scenario = " << std::string(name));
         auto r = load_scenario(std::string(SAT_SCENARIO_DIR) + "/" + name);

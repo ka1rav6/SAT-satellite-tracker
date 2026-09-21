@@ -147,9 +147,10 @@ only shows the answer teaches nobody where the 16× came from.
 
 ### 2.0 Four defects found by running the scenarios for THIRTY seconds
 
-Every scenario in this project had been exercised at six seconds. Running
-`scenarios/baseline.toml` — the specification's own defaults, its own seed — for
-thirty produced this:
+Every scenario in this project had been exercised at six seconds. Running the
+specification's own defaults at its own seed — the file that is now
+[`scenarios/hard/cold_start_in_clutter.toml`](scenarios/hard/cold_start_in_clutter.toml)
+— for thirty produced this:
 
 ```
 retention      n/a   (the beacon was never in view)
@@ -263,14 +264,43 @@ system and each is now a different statement about the system.
 
 ### 2.4 Still open
 
-- [ ] **Acquisition from cold, in clutter.** `scenarios/baseline.toml` starts
-      the beacon at a random screen position (row 11), so the camera sees 9.8 %
-      of the screen and must search. With 120 clutter sources the policy
-      correctly refuses to commit to any of them, but the spiral has not swept
-      back over the beacon within 30 s. The beacon is never acquired.
-      This is Stage 13's problem, not §10.2's: the sweep bound is 18.72 s at
-      5 °/s and the target moves while it runs.
+- [ ] **Acquisition from cold, in clutter.**
+      [`scenarios/hard/cold_start_in_clutter.toml`](scenarios/hard/cold_start_in_clutter.toml)
+      starts the beacon at a random screen position (row 11), so the camera
+      sees **7.68 %** of the screen ((640x480)/(2000x2000)) and must search.
+      The spiral has not swept back over the beacon within **60 s** — it was
+      recorded as 30 s here and re-measuring at 60 s did not change the
+      outcome. The beacon is never acquired. This is Stage 13's problem, not
+      §10.2's: the sweep bound is 18.72 s at 5 °/s and the target moves while
+      it runs.
       *With `clutter.static_sources = 0` the same scenario acquires and holds.*
+
+      > **RETRACTED — this entry used to say "with 120 clutter sources the
+      > policy correctly refuses to commit to any of them".** That is false and
+      > it was the most flattering possible reading of the run. The policy does
+      > not refuse. Measured, 60 s, seed 42:
+      >
+      > ```
+      > LOCK  false tracks 1777.99 /min
+      >       (1777 of 1800 frames Confirmed with no beacon in view)
+      > ```
+      >
+      > It commits to a clutter source within the first second, holds it for
+      > the whole run, and drives the mount at it. What the claim was probably
+      > reaching for — that the beacon itself is never falsely re-associated —
+      > is true and is not what it said.
+      >
+      > The two halves of this failure have since been split into separate
+      > scenarios so that a single number cannot hide one behind the other:
+      > [`hard/clutter_field.toml`](scenarios/hard/clutter_field.toml) has the
+      > beacon in view and fails on discrimination alone, while this file adds
+      > row 11's random start on top. Reproduce with:
+      >
+      > ```bash
+      > ./build/sat-tracker --headless \
+      >     --scenario scenarios/hard/cold_start_in_clutter.toml \
+      >     --duration 60 --out /tmp/cold
+      > ```
 - [ ] **A moving decoy is not separated.** It moves, it is bright, it is
       stable, and it is placed 60–300 px from the beacon. The motion term cannot
       help — the decoy really is moving. Owner: Stage 11's `CandidateNet`

@@ -172,12 +172,25 @@ void Dashboard::rebuild(const Scenario& sc) {
 
     // Open on the CLEAN preset rather than on the scenario's full damage.
     //
-    // Not to flatter the system - the scenario is loaded exactly as written and
-    // one click restores it - but because the current detector is the Stage 1
-    // straw man, and at row 21's 10% impulse noise it fails outright (CP 4.11).
-    // Opening on a failure would show nothing about the parts that work, and
-    // the far more useful demonstration is to start clean and dial damage up
-    // until it breaks, which is also §14.1's running order.
+    // THE REASON THIS COMMENT USED TO GIVE IS NO LONGER TRUE, and it is worth
+    // recording why rather than silently rewriting it. It said the default
+    // detector was "the Stage 1 straw man, and at row 21's 10% impulse noise
+    // it fails outright (CP 4.11)". The default detector has been Classical
+    // since Stage 4 — the straw man survives only as an ablation arm, selected
+    // from the Detector menu — and Classical handles row 21's impulse noise
+    // through its median stage at 0.20 px.
+    //
+    // The DECISION is still right, for a different and better reason: §14.1's
+    // running order. A demonstration that opens on full damage shows a number
+    // and no context. One that opens clean and dials damage up shows the
+    // system responding, which is the only way to tell a working adaptive loop
+    // from a lucky constant. The judge watches the error curve move.
+    //
+    // It is also not flattery, and the GUI now makes sure it cannot be
+    // mistaken for it: the damage group carries a persistent "DAMAGE
+    // OVERRIDDEN: CLEAN" banner while this preset is active, every row of the
+    // specification table reads the LIVE chain rather than the scenario file,
+    // and one click on "Full spec" restores the scenario exactly as written.
     if (start_clean_) {
         SensorChain& c = pipeline_.source().sensor();
         c.set_atmosphere(Atmosphere::Clear);
@@ -288,19 +301,42 @@ void Dashboard::draw_menu_bar() {
     ImGui::Separator();
 
     if (ImGui::BeginMenu("Scenario")) {
-        // The shipped scenarios, loadable live. CP 15.3 requires a known-good
-        // fallback preloaded for the demo; baseline is it.
-        for (const char* name : {"baseline.toml", "fog_figure8.toml",
-                                 "maxnoise_random.toml"}) {
-            if (ImGui::MenuItem(name)) {
-                auto r = load_scenario(std::string(SAT_SCENARIO_DIR) + "/" + name);
-                if (r) {
-                    rebuild(*r);
-                } else {
-                    status_ = "load failed: " + r.error();
-                }
-            }
-        }
+        // -------------------------------------------------------------------
+        // The shipped scenarios, loadable live, IN TWO GROUPS.
+        //
+        // The split is not cosmetic. This menu used to open with
+        // baseline.toml — a scenario that scores 913 px tracking RMS, zero
+        // centroiding frames and 1778 false tracks a minute — listed first and
+        // unlabelled, directly beneath a comment calling it the known-good
+        // fallback. A judge picking the top entry saw the worst run in the
+        // repository and had no way to know that was the intent.
+        //
+        // Now the working scenarios are first and the failing ones are behind
+        // a separator that says what they are. Both groups are still one click
+        // away: hiding the hard cases would be the opposite mistake, and
+        // docs/DEMO.md step 6 deliberately runs one in front of the judges.
+        // -------------------------------------------------------------------
+        auto load = [&](const char* name) {
+            if (!ImGui::MenuItem(name)) return;
+            auto r = load_scenario(std::string(SAT_SCENARIO_DIR) + "/" + name);
+            if (r) rebuild(*r);
+            else   status_ = "load failed: " + r.error();
+        };
+
+        // CP 15.3's "known-good scenario preloaded as a fallback". This one
+        // really is known-good: 0.20 px centroiding, 0.067 s acquisition,
+        // 100 % FOV containment, rows 16/18/19/20 all PASS.
+        load("spec_defaults.toml");
+        load("fog_figure8.toml");
+        load("maxnoise_random.toml");
+
+        ImGui::Separator();
+        ImGui::TextColored(kMutedCol, "Hard cases — known failures");
+        // Each of these fails, each fails for ONE reason, and each says so in
+        // its own file header with the measured numbers.
+        load("hard/clutter_field.toml");            // discrimination
+        load("hard/cold_start_in_clutter.toml");    // + acquisition geometry
+
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {

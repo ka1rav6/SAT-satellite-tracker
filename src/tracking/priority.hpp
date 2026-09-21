@@ -15,7 +15,7 @@
 // beacon starts at a random position (spec row 11), and so on almost every run
 // the first thing the tracker ever locks onto is a clutter source.
 //
-// Measured on scenarios/baseline.toml over 30 s, before this file existed:
+// Measured on scenarios/hard/cold_start_in_clutter.toml over 30 s, before this file existed:
 //
 //     retention   n/a — the beacon was never in view
 //     false tracks   1798 /min — every frame of the run
@@ -56,7 +56,7 @@
 // theta is reported at theta - disturbance(t) and therefore appears to move at
 // MINUS THE PLATFORM RATE.
 //
-// On scenarios/baseline.toml, with the specification's own numbers:
+// On scenarios/hard/cold_start_in_clutter.toml, with the specification's own numbers:
 //
 //     platform      15, -8 px/s      ->  clutter appears to move at 1854 urad/s
 //     beacon        22, -11 px/s     ->  beacon  appears to move at  831 urad/s
@@ -172,7 +172,7 @@ struct PriorityWeights {
     // right: a field of view containing nothing but clutter. The best of a bad
     // set is still promoted, the FSM stops searching because it now has a
     // confirmed track, and the beacon is never looked for. Measured on
-    // scenarios/baseline.toml over 30 s before this existed: the beacon was
+    // scenarios/hard/cold_start_in_clutter.toml over 30 s before this existed: the beacon was
     // never once in view, 1,798 false-track frames per minute, 1,272 px of
     // tracking error.
     //
@@ -198,7 +198,7 @@ struct PriorityWeights {
     // other candidate leaves the field of view, and there is no rival left to
     // out-score it. The committed track has to keep EARNING the mount.
     //
-    // Measured on scenarios/baseline.toml: a clutter source promoted at frame
+    // Measured on scenarios/hard/cold_start_in_clutter.toml: a clutter source promoted at frame
     // 14 held the mount for the remaining 886 frames of the run with no
     // challenger ever appearing, because the camera was pointed away from
     // everything else by then.

@@ -169,9 +169,22 @@ reported as derived bounds rather than failures:
 ## If something breaks
 
 ```bash
-just gui scenarios/baseline.toml      # the known-good fallback (CP 15.3)
+just gui scenarios/spec_defaults.toml   # the known-good fallback (CP 15.3)
 ```
 
-`scenarios/baseline.toml` is the specification's defaults and nothing else. If
-an unfamiliar scenario misbehaves, fall back to it and say what you were
-trying to show.
+`scenarios/spec_defaults.toml` is the specification's rows 1-25 with the
+beacon placed inside the field of view at t=0, and it is also what `just gui`
+loads with no argument. Measured, 30 s, seed 42: 0.20 px centroiding,
+0.067 s acquisition, 100 % FOV containment, rows 16/18/19/20 all PASS. If an
+unfamiliar scenario misbehaves, fall back to it and say what you were trying
+to show.
+
+> **This used to name the old `baseline.toml`, and that was wrong.** That file
+> scores 913 px tracking RMS, zero centroiding frames and 1778 false tracks a
+> minute — it was the worst run in the repository, and it was simultaneously
+> the documented fallback, the default for `--gui` and `--headless`, the first
+> entry in the scenario picker and the source of the README's hero screenshot.
+> It is now [`scenarios/hard/cold_start_in_clutter.toml`](../scenarios/hard/cold_start_in_clutter.toml),
+> its measured failure is written into its own header, and it appears in the
+> picker under a "Hard cases" separator. Step 6 of this demo runs it
+> deliberately.

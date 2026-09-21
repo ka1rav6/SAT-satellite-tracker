@@ -1,0 +1,135 @@
+# hard/clutter_field.toml — THE APPEARANCE-DISCRIMINATION FAILURE, ISOLATED.
+#
+# This is scenarios/spec_defaults.toml with design §9.1's 120-source clutter
+# field and one decoy beacon switched on. NOTHING else differs — same seed,
+# same beacon, same motion, same noise, same jitter, same starting geometry.
+#
+# It exists because the project's two open failures used to be entangled in one
+# file. The old scenarios/baseline.toml had BOTH a random initial position
+# (an ACQUISITION problem, geometric, understood, and unsolvable within row 16)
+# and a 120-source clutter field (a DISCRIMINATION problem, unsolved), and a
+# single 913 px number could not say which was which. Splitting them is the
+# same experimental hygiene the sweep applies by giving clutter and decoy
+# separate axes.
+#
+#   scenarios/hard/cold_start_in_clutter.toml   random start + clutter (both)
+#   scenarios/hard/clutter_field.toml           clutter only    <- this file
+#   scenarios/spec_defaults.toml                neither
+#
+# ---------------------------------------------------------------------------
+# WHAT IT SCORES, AND WHAT THAT ISOLATES
+# ---------------------------------------------------------------------------
+# Measured, 30 s, seed 42:
+#
+#                              this file      spec_defaults      delta
+#   centroiding (image)        172.90 px           0.20 px      x878
+#   tracking (steady RMS)      253.73 px          16.94 px       x15
+#   FOV containment            80.78 %          100.00 %        -19 pts
+#   row 18 (post-acq loss)     19.80 %            0.00 %         FAIL
+#   acquisition (in view)       0.500 s           0.067 s
+#
+# Acquisition still succeeds — the beacon is in view at t=0 and is found in
+# half a second. So this is not an acquisition failure. The loop acquires the
+# beacon, then loses it to a clutter source and holds the wrong thing.
+#
+# ---------------------------------------------------------------------------
+# THE MECHANISM
+# ---------------------------------------------------------------------------
+# §10.2's priority policy scores each gated candidate on five terms: motion
+# consistency, brightness, size plausibility, centrality, and track history.
+# A static clutter source that is brighter than the beacon (§9.1 makes some of
+# them deliberately brighter) and closer to the boresight wins on brightness
+# and centrality, ties on size, and loses only on motion — and the motion term
+# needs several frames of history before it can say anything.
+#
+# The policy therefore does not "correctly refuse to commit", which is what
+# issues_till_now.md §2.4 used to claim. It commits, and it holds.
+#
+# This is the case CandidateNet is for (docs/SAT-ML.md §3): a learned
+# appearance score is exactly the term the classical policy is missing, and it
+# is the highest-value ML target in the project precisely because the classical
+# baseline here is so bad.
+#
+# Run it, watch it fail, and say so. It is a better answer than being asked.
+
+[meta]
+name        = "clutter_field"
+description = "HARD CASE: spec defaults + design 9.1 clutter field. Known failure — the tracker locks onto clutter."
+
+[input]
+mode = "synthetic"                  # design §8.3
+
+[sim]
+truth_hz   = 300                    # 10 sub-ticks per camera frame (design §6.2)
+camera_hz  = 30                     # row 5, minimum 30
+control_hz = 30                     # row 15, minimum 20
+duration_s = 30
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]       # row 1, minimum 2000 x 2000
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"             # row 2
+resolution     = [640, 480]         # row 3
+fov_deg        = [4.0, 3.0]         # row 4
+exposure_ms    = 5.0
+blur_substeps  = 8                  # design §9.2
+initial_pos_px = [999.5, 999.5]     # row 6, the centre of the screen
+
+[target]
+kind       = "target"               # row 7, a beacon spot
+intensity  = 120.0
+size_px    = 10                     # row 10, permitted 5-20
+initial_px = [1040.0, 1020.0]       # row 11: PINNED IN VIEW, see the header
+shape.type = "square"               # row 9
+
+[[target.motion]]                   # row 12, straight line
+kind          = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[gimbal]
+max_pan_dps      = 5.0              # row 13, permitted 5-10
+max_tilt_dps     = 5.0              # row 14, permitted 5-10
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true               # row 21
+gaussian_sigma = 20.0               # row 22, maximum 20 grey levels
+salt_pepper    = 0.10               # row 21, ~10%
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"                      # row 24
+
+[disturbance]
+jitter_px_per_frame = 20.0          # row 23, maximum +/- 20
+
+[[disturbance.platform]]            # row 25, linear is mandatory
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]
+
+[clutter]
+static_sources = 120                # design 9.1, "mandatory for credibility"
+decoy_beacons  = 1                  # row 8, multiple targets
+
+[ai]
+enabled          = true
+fallback_on_fail = true             # INV-7
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0             # row 16
+tracking_error_px = 10.0            # row 17
+target_loss_frac  = 0.05            # row 18
+reacquisition_s   = 1.0             # row 19
+min_fps           = 20.0            # row 20

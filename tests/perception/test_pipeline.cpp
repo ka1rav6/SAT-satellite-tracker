@@ -126,7 +126,7 @@ TEST_CASE("CP 5.7: the gate keeps beacon-shaped blobs and rejects the rest") {
 TEST_CASE("CP 5.7: candidates drop from thousands to under 25 under full damage") {
     // The checkpoint's criterion, on the real simulator at specification-level
     // damage: 10% salt and pepper (row 21) with 120 clutter sources (§9.1).
-    Scenario sc = load("baseline.toml");
+    Scenario sc = load("spec_defaults.toml");
     sc.duration_s = 1.0;
     sc.static_sources = 120;
     sc.decoy_beacons  = 1;
@@ -269,7 +269,7 @@ TEST_CASE("the pipeline survives every atmosphere with one set of parameters") {
 
     for (Atmosphere mode : {Atmosphere::Clear, Atmosphere::Haze, Atmosphere::Rain,
                             Atmosphere::Fog, Atmosphere::LowLight}) {
-        Scenario sc = load("baseline.toml");
+        Scenario sc = load("spec_defaults.toml");
         sc.duration_s = 0.5;
         sc.atmosphere = mode;
         sc.static_sources = 120;
@@ -313,7 +313,7 @@ TEST_CASE("the pipeline survives every atmosphere with one set of parameters") {
 TEST_CASE("INV-4: processing a frame allocates nothing after startup") {
     // The arena's high-water mark must not move between the first frame and the
     // hundredth. If it does, something in the pipeline is allocating per frame.
-    Scenario sc = load("baseline.toml");
+    Scenario sc = load("spec_defaults.toml");
     sc.duration_s = 3.0;
     sc.static_sources = 120;
     sc.salt_pepper = 0.10;

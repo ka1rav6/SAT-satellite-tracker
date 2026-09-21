@@ -39,12 +39,12 @@ bool contains(const std::string& hay, const std::string& needle) {
 // CP 3.1 — the loader
 // ===========================================================================
 
-TEST_CASE("CP 3.1: the baseline scenario loads and carries the spec defaults") {
-    auto r = load_scenario(scenario_file("baseline.toml"));
+TEST_CASE("CP 3.1: the default scenario loads and carries the spec defaults") {
+    auto r = load_scenario(scenario_file("spec_defaults.toml"));
     REQUIRE_MESSAGE(r.has_value(), r.error());
     const Scenario& s = *r;
 
-    CHECK(s.name == "baseline");
+    CHECK(s.name == "spec_defaults");
     CHECK(s.canvas_px[0] == 2000);        // row 1
     CHECK(s.canvas_px[1] == 2000);
     CHECK(s.resolution[0] == 640);        // row 3
@@ -87,13 +87,31 @@ size_px = 10
 TEST_CASE("every shipped scenario loads without error") {
     // If a scenario in scenarios/ does not load, the demo has no fallback and
     // CP 15.3 has nothing to preload.
-    for (const char* name : {"baseline.toml", "fog_figure8.toml",
-                             "maxnoise_random.toml", "video_screen.toml",
-                             "video_direct.toml"}) {
-        INFO("scenario = " << name);
-        auto r = load_scenario(scenario_file(name));
+    //
+    // This WALKS THE DIRECTORY rather than listing names, and the difference
+    // is not stylistic. The list version named five files and silently ignored
+    // the other fourteen, including every scenario under adversarial/ and
+    // every one added after the list was written. It could not notice a
+    // scenario that was renamed, moved or added — which is exactly what the
+    // scenarios/hard/ reorganisation did to five of them.
+    //
+    // Sweep specs are excluded: scenarios/sweeps/*.toml are [sweep] documents,
+    // not scenarios, and are parsed by parse_sweep_spec instead.
+    namespace fs = std::filesystem;
+    int checked = 0;
+    for (const fs::directory_entry& e :
+             fs::recursive_directory_iterator(SAT_SCENARIO_DIR)) {
+        if (!e.is_regular_file() || e.path().extension() != ".toml") continue;
+        if (e.path().parent_path().filename() == "sweeps") continue;
+        INFO("scenario = " << e.path().string());
+        auto r = load_scenario(e.path().string());
         CHECK_MESSAGE(r.has_value(), r.error());
+        ++checked;
     }
+    MESSAGE("checked " << checked << " shipped scenarios");
+    // A walk that finds nothing would pass vacuously, which is the failure
+    // mode the hardcoded list had in a different form.
+    CHECK(checked >= 10);
 }
 
 TEST_CASE("an omitted key keeps its default rather than becoming an error") {

@@ -159,7 +159,7 @@ int gui_command(int argc, char* argv[], int& i) {
         "  -DSAT_WITH_GUI=ON. Headless runs are unaffected.\n");
     return 3;
 #else
-    std::string path = std::string(SAT_SCENARIO_DIR) + "/baseline.toml";
+    std::string path = std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml";
     sat::gui::ScreenshotJob job;
     for (int k = i + 1; k < argc; ++k) {
         const char* a = argv[k];

@@ -214,7 +214,7 @@ A `--headless` or `--video` run writes three files into `--out`.
 
 ```
 # SAT centroid log v1
-# source=scenarios/baseline.toml  mode=synthetic  build=a3f21c9  utc=...
+# source=scenarios/spec_defaults.toml  mode=synthetic  build=a3f21c9  utc=...
 # screen_px=2000x2000  camera_px=640x480  fps=30.000  ifov_urad=109.08
 # onnxruntime=none  ai_enabled=false
 # columns: frame,time_s,state,cx_screen,cy_screen,cx_cam,cy_cam,sigma_px,snr,area_px,size_est_px,bore_x,bore_y
@@ -262,13 +262,19 @@ scenarios/bad.toml:41: gimbal.max_pan_dps = 14.0 is outside the permitted
 
 | File | Purpose |
 |---|---|
-| `baseline.toml` | every specification default (row-by-row annotated) |
-| `compliance.toml` | baseline with the beacon in view at t=0 — the sweep's base |
+| `spec_defaults.toml` | **the default.** Every specification default (row-by-row annotated), beacon in view at t=0, no clutter field |
+| `compliance.toml` | the same parameters at 60 s — the compliance sweep's base |
 | `fog_figure8.toml` | fog + a figure-of-eight path |
 | `maxnoise_random.toml` | spec-maximum noise, random motion |
 | `video_screen.toml` / `video_direct.toml` | the two video readings |
-| `adversarial/` | **reserved and empty** — the cases designed to break it are not written yet |
+| `hard/clutter_field.toml` | **known failure** — spec defaults + design §9.1's 120-source clutter field. The tracker locks onto clutter |
+| `hard/cold_start_in_clutter.toml` | **known failure** — the above, plus row 11's random initial position. Was `baseline.toml` |
+| `adversarial/` | six scenarios written to break specific assumptions |
 | `sweeps/weather.toml` | the compliance sweep's axes |
+
+Both files under `hard/` carry their measured failure in their own header,
+with the command to reproduce it. They are in the GUI's scenario picker under
+a "Hard cases" separator.
 
 ### Key sections
 

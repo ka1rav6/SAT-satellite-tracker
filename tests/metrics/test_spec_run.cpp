@@ -11,17 +11,26 @@
 // that could not see a whole class of failure, which is worse than no suite,
 // because it gets trusted.
 //
-// So this file runs scenarios/baseline.toml — spec row 23's jitter, row 25's
-// platform motion, row 21's noise, §9.1's clutter, all at their stated values —
-// and asserts the GRADED requirements from §3.2 rather than any internal
-// property. If the loop stops working at the specification's parameters, this
-// is what says so.
+// So this file runs scenarios/hard/cold_start_in_clutter.toml — spec row 23's
+// jitter, row 25's platform motion, row 21's noise, §9.1's clutter, all at
+// their stated values — and asserts the GRADED requirements from §3.2 rather
+// than any internal property. If the loop stops working at the specification's
+// parameters, this is what says so.
 //
-// The one deviation from baseline.toml is the beacon's initial position: row 11
-// permits "random", and §10.5 derives that a cold search of the whole screen
-// cannot meet row 16 by geometry. A run that spends its length searching
-// measures acquisition, which is a different question and has its own
-// (honestly labelled) metric. Pinning the beacon in view measures the loop.
+// WHY THIS FILE AND NOT scenarios/spec_defaults.toml, which is now the default:
+// spec_defaults has the clutter field OFF, for the reasons its header gives.
+// This suite's whole purpose is to run at the HARDEST stated parameters, so it
+// loads the hard case and switches the clutter off itself for the cases that
+// need it — which also means the clutter cases below compare two runs of ONE
+// file rather than two different files.
+//
+// The one deviation from the file as shipped is the beacon's initial position:
+// row 11 permits "random", and §10.5 derives that a cold search of the whole
+// screen cannot meet row 16 by geometry. A run that spends its length
+// searching measures acquisition, which is a different question and has its
+// own (honestly labelled) metric. Pinning the beacon in view measures the loop
+// — and makes this file's scenario identical to spec_defaults.toml plus
+// clutter, i.e. exactly scenarios/hard/clutter_field.toml.
 
 #include <doctest/doctest.h>
 
@@ -48,7 +57,7 @@ namespace {
 constexpr double kRunSeconds = 4.0;
 
 Scenario spec_scenario(bool clutter) {
-    auto r = load_scenario(std::string(SAT_SCENARIO_DIR) + "/baseline.toml");
+    auto r = load_scenario(std::string(SAT_SCENARIO_DIR) + "/hard/cold_start_in_clutter.toml");
     REQUIRE_MESSAGE(r.has_value(), r.error());
     Scenario sc = *r;
     sc.duration_s = kRunSeconds;
@@ -379,3 +388,178 @@ TEST_CASE("CP 14.2: no single stage dominates the frame the way three used to"
 }
 
 }  // TEST_SUITE("perf")
+
+// ===========================================================================
+// P0-1 — THE DEFAULT SCENARIO IS A PASSING RUN, ASSERTED IN CI
+//
+// This is the regression lock the audit asks for, and it exists because the
+// defect it guards against was invisible to every other test in the suite.
+//
+// scenarios/baseline.toml was the default for `--gui` and `--headless`, the
+// first entry in the GUI's scenario picker, the source of the README's hero
+// screenshot, the `just smoke` sanity scenario, and — per docs/DEMO.md — "the
+// known-good fallback (CP 15.3)". It scored 913 px tracking RMS, ZERO
+// centroiding frames and 1778 false tracks a minute. A judge typing the
+// obvious command saw the worst run in the repository.
+//
+// Twenty CTest suites were green while that was true. None of them ran the
+// DEFAULT — every one built its Scenario by hand or named a file explicitly,
+// which is reasonable in isolation and left the one configuration a stranger
+// would actually reach completely untested.
+//
+// So this test asserts the property directly: whatever the default is, it has
+// to work. It deliberately resolves the path the same way src/app/main.cpp and
+// src/app/headless.cpp do, so that changing the default without changing this
+// test is not possible.
+// ===========================================================================
+
+TEST_CASE("P0-1: the DEFAULT scenario — what `--gui` and `--headless` load — passes") {
+    // The same expression as src/app/headless.cpp:344 and src/app/main.cpp:162.
+    // If those change, this must change with them, and a mismatch is a
+    // compile-visible edit rather than a silent divergence.
+    auto r = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+    REQUIRE_MESSAGE(r.has_value(), r.error());
+    Scenario sc = *r;
+
+    // Shortened so this stays inside the suite's time budget. Everything
+    // asserted below is a steady-state property and is reached within the
+    // first second; the full 30 s run is what `just headless` produces and its
+    // numbers are recorded in docs/RESULTS.md.
+    sc.duration_s = kRunSeconds;
+
+    const RunMetrics m = run_uncached(sc);
+
+    MESSAGE("centroiding (image) " << m.centroid_rmse_image_px << " px over "
+            << m.centroid_frames << " frames");
+    MESSAGE("tracking (steady) " << m.tracking_rms_steady_px << " px RMS");
+    MESSAGE("FOV containment " << (100.0 * m.fov_containment_frac) << " %");
+    MESSAGE("row 18 (post-acq) " << (100.0 * m.target_loss_post_acq) << " %");
+
+    // -------------------------------------------------------------------
+    // THE ASSERTION THAT WOULD HAVE CAUGHT IT.
+    //
+    // The old default scored ZERO centroiding frames — no frame had both a
+    // detection and the beacon in view — and every ratio derived from that
+    // denominator was therefore undefined and printed as 0.00, which reads as
+    // perfect. A single non-zero check on the denominator is the whole guard.
+    // -------------------------------------------------------------------
+    REQUIRE(m.centroid_frames > 0);
+    CHECK(m.centroid_frames >= static_cast<int64_t>(0.9 * m.frames_total));
+
+    // Row 16: acquisition, in view. The beacon is placed in the field at t=0,
+    // so this is the in-view figure and it must beat 2 s comfortably.
+    REQUIRE(m.acquired);
+    CHECK(m.acquisition_in_fov_s <= 2.0);
+
+    // Row 18, on the post-acquisition denominator (P0-2). This is the row the
+    // old default passed at 7.59 % while pointing at empty sky for 95.6 % of
+    // the run, so it is asserted on the definition that cannot be flattered.
+    REQUIRE(m.post_acq_valid);
+    CHECK(m.target_loss_post_acq < 0.05);
+
+    // Row 20: processing speed. Loose, because CI runners vary by a factor of
+    // three and this is a change-of-kind detector, not a benchmark — the same
+    // reasoning as the perf suite's wall-clock case.
+    CHECK(m.fps_mean > 20.0);
+
+    // The PS's own objective. Not a numbered row, and asserted anyway: the
+    // whole point of P0-2 is that this is the quantity the problem statement
+    // names, and the default scenario should be the one place it is 100 %.
+    CHECK(m.fov_containment_frac > 0.95);
+
+    // Row 17 is NOT asserted, and the omission is deliberate rather than
+    // convenient. Row 23's 20 px/frame of jitter puts a 16.33 px floor under
+    // the pointing error (docs/METRICS.md §2.11), which exceeds row 17's 10 px
+    // budget. The compliance matrix reports that as "BOUND DERIVED" rather
+    // than FAIL for the same reason. What IS asserted is that the loop sits on
+    // that floor rather than somewhere else entirely — a regression that
+    // doubled the error would still be caught.
+    CHECK(m.tracking_rms_steady_px < 2.0 * 16.33);
+
+    // And the detector is doing its job: sub-pixel in its own frame, at row
+    // 21's 10 % impulse noise and row 22's read noise at the cap.
+    CHECK(m.centroid_rmse_image_px < 1.0);
+}
+
+TEST_CASE("P0-1: the hard cases still fail, and each fails for ONE reason") {
+    // The complement of the test above, and just as important: the hard cases
+    // must keep failing. If scenarios/hard/clutter_field.toml ever starts
+    // passing, either the discrimination problem has been solved — in which
+    // case this test should be updated and the news recorded — or the scenario
+    // has quietly stopped exercising it, which is the failure mode that turns
+    // a demo of a known limitation into a demo of nothing.
+    //
+    // Splitting the two hard cases is the point. The old baseline.toml
+    // combined a random initial position (an acquisition problem) with a
+    // 120-source clutter field (a discrimination problem) and produced one
+    // 913 px number that could not distinguish them.
+
+    SUBCASE("clutter_field: acquisition SUCCEEDS, discrimination fails") {
+        auto r = load_scenario(std::string(SAT_SCENARIO_DIR) + "/hard/clutter_field.toml");
+        REQUIRE_MESSAGE(r.has_value(), r.error());
+        Scenario sc = *r;
+        sc.duration_s = kRunSeconds;
+        const RunMetrics m = run_uncached(sc);
+
+        MESSAGE("clutter_field: centroid " << m.centroid_rmse_image_px
+                << " px, containment " << (100.0 * m.fov_containment_frac) << " %");
+
+        // The beacon is in view at t=0 and IS found. This is what isolates the
+        // failure: it is not an acquisition failure.
+        CHECK(m.acquired);
+        CHECK(m.acquisition_in_fov_s <= 2.0);
+
+        // And then it is lost to clutter. Asserted as an ORDERING against the
+        // clean run rather than as a constant, so the test states the
+        // relationship that matters and does not go red on a tuning change
+        // that improves both.
+        auto clean = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+        REQUIRE(clean.has_value());
+        Scenario cs = *clean;
+        cs.duration_s = kRunSeconds;
+        const RunMetrics c = run_uncached(cs);
+
+        // Centroiding is where the failure shows first and hardest: the
+        // reported centroid is a clutter source, so the error is the distance
+        // to it. Measured at this run length, 93.1 px against 0.21 px — a
+        // factor of 434. The assertion is set two orders of magnitude below
+        // that so it states the KIND of failure rather than the current value.
+        CHECK(m.centroid_rmse_image_px > 10.0 * c.centroid_rmse_image_px);
+
+        // Pointing follows, but slowly, and the margin here is deliberately
+        // weak: 21.5 px against 16.8 px at 4 s, only 1.28x. The mount is
+        // locked onto the wrong object but that object has not yet pulled it
+        // far from the beacon. Asserting a 2x ratio here fails — it was tried
+        // — and the honest conclusion is that four seconds is too short to see
+        // this half of the failure, not that the failure is absent.
+        CHECK(m.tracking_rms_steady_px > c.tracking_rms_steady_px);
+
+        // FOV CONTAINMENT IS NOT ASSERTED HERE, and the reason is worth
+        // stating because it was an assertion that failed and taught
+        // something.
+        //
+        // At this suite's 4 s run length containment is still 100 % in BOTH
+        // runs: the mount is locked onto a clutter source, but over four
+        // seconds it has not yet been dragged far enough for the beacon to
+        // leave the field. Containment only collapses over a longer run — at
+        // 30 s it is 80.78 % against the clean run's 100 %.
+        //
+        // That is a real and useful fact about the failure, not a reason to
+        // lengthen this test: it says the clutter failure is a SLOW divergence
+        // rather than an immediate loss, which is exactly why a 4 s sweep cell
+        // would under-report it (see docs/SIH_26169_CRITICAL_AUDIT.md §9.5).
+        // The centroiding and tracking orderings above detect the divergence
+        // from its first frame, which is what this test needs.
+    }
+
+    SUBCASE("cold_start_in_clutter: acquisition ALSO fails, by geometry") {
+        auto r = load_scenario(std::string(SAT_SCENARIO_DIR)
+                               + "/hard/cold_start_in_clutter.toml");
+        REQUIRE_MESSAGE(r.has_value(), r.error());
+        // Row 11's random initial position is what makes this the harder of
+        // the two, and it must still be random — pinning it would silently
+        // turn this file into clutter_field.toml.
+        REQUIRE(!r->targets.empty());
+        CHECK(r->targets[0].random_initial);
+    }
+}

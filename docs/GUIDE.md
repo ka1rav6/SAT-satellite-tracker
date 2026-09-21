@@ -231,7 +231,7 @@ is sweeping instead of tracking, this is the panel that says.
 ## 5. Score a run
 
 ```bash
-just headless "--scenario scenarios/baseline.toml --duration 30"
+just headless "--scenario scenarios/spec_defaults.toml --duration 30"
 ```
 
 which prints a summary and writes three files to `logs/run/`:
@@ -317,8 +317,8 @@ Everything is a TOML key. Nothing needs a recompile.
 
 ```bash
 # One key, from the command line, checked by the same schema as a file:
-just headless "--scenario scenarios/baseline.toml --set atmosphere.mode=fog"
-just headless "--scenario scenarios/baseline.toml --set control.k_ff=0"
+just headless "--scenario scenarios/spec_defaults.toml --set atmosphere.mode=fog"
+just headless "--scenario scenarios/spec_defaults.toml --set control.k_ff=0"
 ```
 
 A scenario file is the specification's parameter table, one key per row,

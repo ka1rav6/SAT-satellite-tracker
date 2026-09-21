@@ -56,8 +56,8 @@ struct World {
     //
     // This was parsed, validated, echoed into run.json — and read by nothing,
     // exactly like design §7.4's events before they were wired up. The
-    // consequence is not cosmetic. On scenarios/baseline.toml with the
-    // specification's own default seed, spec row 11's random initial position
+    // consequence is not cosmetic. On scenarios/hard/cold_start_in_clutter.toml
+    // with the specification's own default seed, spec row 11's random initial position
     // puts the beacon at (1936, 1831) on a 2000 x 2000 screen and row 12's
     // linear motion carries it off the canvas within three seconds:
     //

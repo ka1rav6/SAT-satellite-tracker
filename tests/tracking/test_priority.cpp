@@ -111,7 +111,7 @@ TEST_CASE("§10.2: raw apparent speed would pick the rock — the inversion is r
     Track rock, beacon;
     rock.start(meas(0.0, 0.0, 200.0f), params(), 0);
     beacon.start(meas(0.0, 0.0, 40.0f), params(), 0);
-    // baseline.toml's numbers: platform (15, -8) px/s, beacon (22, -11) px/s,
+    // spec_defaults.toml's numbers: platform (15, -8) px/s, beacon (22, -11) px/s,
     // at the default IFOV of 109.08 urad/px. Apparent = true - platform.
     const double ifov = 109.08;
     const double px   = ifov;
