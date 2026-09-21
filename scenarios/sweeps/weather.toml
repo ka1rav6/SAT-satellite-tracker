@@ -22,10 +22,28 @@
 # cluttered rows show exactly what the missing discriminator costs, and the
 # difference between them is the number Stages 11 and 12 have to move.
 
+# ---------------------------------------------------------------------------
+# WHY 30 SECONDS PER CELL AND NOT 4 — P1-11.
+#
+# This ran at 4 s, on the reasoning that 120 frames is enough for any statistic
+# asserted here. That is true of the statistics and false of the SYSTEM.
+#
+# The project's own issues log is a case study in it: §2.0 records four
+# independent defects that six-second runs hid and thirty-second runs exposed,
+# each of which had been passing every test in the suite. And the graded
+# screen-frame centroiding metric changes by 13x between 4 s and 60 s, because
+# it accumulates the platform displacement (see METRICS.md §2.3) — so a 4 s
+# sweep reports the most flattering point on a monotone curve and calls it the
+# compliance matrix.
+#
+# 30 s is 900 frames per cell. Measured cost: ~4 s of wall time per run, 200
+# runs over the axes below, ~100 s on 8 jobs. That is the whole argument for
+# the old value gone.
+# ---------------------------------------------------------------------------
 [sweep]
 base       = "scenarios/compliance.toml"
 seed_count = 5             # seeds 1..5 at every combination
-duration_s = 4.0           # 120 frames: enough for every statistic asserted
+duration_s = 30.0          # 900 frames — see the note above
 
 # Row 24: clear, haze, fog, rain, low light.
 [[axis]]

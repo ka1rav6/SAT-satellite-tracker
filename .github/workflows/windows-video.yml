@@ -76,5 +76,11 @@ jobs:
       - name: 'CP 8.8: every awkward clip opens or fails cleanly'
         run: ctest --test-dir build --build-config Release -R video --output-on-failure
 
+      # BP-2 explicitly, before the full suite, because this workflow exists
+      # to prove the video path on the platform an evaluator is most likely to
+      # run — and BP-2 is what the video path is for.
+      - name: 'BP-2: end-to-end centroiding against committed truth'
+        run: ctest --test-dir build --build-config Release -R "^(video|bp2_budget)$" --output-on-failure
+
       - name: Full test suite
         run: ctest --test-dir build --build-config Release --output-on-failure --parallel 4

@@ -170,6 +170,28 @@ jobs:
             platform. windows-video.yml covers it separately."
           fi
 
+      # ---------------------------------------------------------------
+      # BENCHMARK PERFORMANCE-2, called out by name — P0-4.
+      #
+      # 30 % of the marks. The assertions live in the `video` and `bp2_budget`
+      # CTest entries, which the step above already ran; this one re-runs just
+      # those and prints the numbers, so the graded figures are visible in the
+      # CI log rather than buried in a 21-test summary.
+      #
+      # Skipped with a loud annotation where the build has no video support,
+      # for the same reason as the CP 0.7 gate: a step that quietly does
+      # nothing reads as a green tick.
+      # ---------------------------------------------------------------
+      - name: 'BP-2: end-to-end centroiding against committed truth'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ./build/sat-tracker --has-video; then
+            ctest --test-dir build --build-config ${{ matrix.build_type }}                   -R '^(video|bp2_budget)$' --output-on-failure
+          else
+            echo "::warning title=BP-2 not exercised::${{ matrix.name }} has no             OpenCV, so Benchmark Performance-2 (30% of marks) is UNMEASURED on             this platform. windows-video.yml covers it separately."
+          fi
+
       - name: Upload artifact
         if: matrix.build_type == 'Release'
         uses: actions/upload-artifact@v4
