@@ -121,6 +121,13 @@ With the damage at Full spec, switch to **brightest pixel** and watch the lock
 fail within a few frames. That comparison is checkpoint 4.11, and it is the
 measured justification for every kernel in the detector.
 
+![The straw-man detector losing lock at Full spec damage](img/06-strawman.png)
+
+The centroid marker in the camera view is sitting on a salt-and-pepper pixel
+rather than on the beacon, and the tracking-error trace has walked off the top
+of its axis. Nothing else about the run changed: same scenario, same seed, same
+damage. Only the detector.
+
 ### Turn the feedforward off
 
 Under **Algorithms · live**, untick `velocity feedforward`. The tracking error

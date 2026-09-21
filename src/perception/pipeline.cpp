@@ -281,7 +281,8 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
     // pull every centroid toward the centre of its own smoothing kernel.
     { SAT_ZONE(t, Stage::Grouping);
       last_blobs_ = group_components(ws.mask, ws.tophat, width, height,
-                                     ws.grouping, blobs_); }
+                                     ws.grouping, blobs_, kBlobReserve,
+                                     &last_overflow_); }
 
     // --- B12/B13: gate, then centroid each survivor -----------------------
     //

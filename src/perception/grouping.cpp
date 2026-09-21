@@ -51,8 +51,15 @@ size_t group_components(std::span<const uint8_t> mask,
                         std::span<const int16_t> weight,
                         int width, int height,
                         const GroupingWorkspace& ws,
-                        std::vector<BlobAccum>& out) {
+                        std::vector<BlobAccum>& out,
+                        size_t max_blobs,
+                        size_t* dropped) {
     out.clear();
+    if (dropped) *dropped = 0;
+    // The blob table's bound. clear() keeps capacity, so when the caller has
+    // passed the capacity it reserved, nothing here allocates — and nothing
+    // here may: this runs inside the frame window INV-4's trap watches.
+    const size_t cap = max_blobs;
     const size_t n = static_cast<size_t>(width) * static_cast<size_t>(height);
     if (width <= 0 || height <= 0 || mask.size() < n || weight.size() < n) return 0;
 
@@ -137,6 +144,19 @@ runs_done:
         const int32_t root = find_root(ws.parent, static_cast<int32_t>(i));
         int32_t lbl = label_of[static_cast<size_t>(root)];
         if (lbl < 0) {
+            // A new component, and the table is full. Drop it rather than let
+            // the vector grow: growing here allocates half a megabyte inside
+            // the frame window, which is exactly what INV-4 forbids and what
+            // CP 14.1's fuzzer caught on a 1920x534 draw that produced 14,420
+            // components. Dropping is deterministic — components are created
+            // in first-appearance raster order, so which ones survive is a
+            // function of the mask alone (INV-3) — and it is REPORTED, so a
+            // frame whose answer is incomplete says so.
+            if (out.size() >= cap) {
+                ws.runs[i].label = -1;
+                if (dropped) ++*dropped;
+                continue;
+            }
             lbl = static_cast<int32_t>(out.size());
             label_of[static_cast<size_t>(root)] = lbl;
             BlobAccum b{};

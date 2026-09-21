@@ -290,11 +290,19 @@ struct RoiParams {
 // ---------------------------------------------------------------------------
 class ClassicalPerception {
 public:
-    /// How many components one frame is expected to produce at most. See
-    /// configure() for where the number comes from; the engine reserves its
-    /// detection vector to the same bound, because in principle every blob can
-    /// survive the shape gate.
-    static constexpr size_t kBlobReserve = 4096;
+    /// How many components one frame can produce. A HARD bound, not a hint:
+    /// group_components fills the table to this and stops. See configure() for
+    /// where the number comes from.
+    ///
+    /// The engine reserves its detection vector to `kMaxDetections` rather
+    /// than to this, because the shape and SNR gates cut the survivors down
+    /// long before a frame's blob count matters downstream.
+    static constexpr size_t kBlobReserve = 16384;
+
+    /// How many detections the gates can hand back. Every blob can in
+    /// principle survive them, but `max_candidates` (24 by default) is what
+    /// the tracker is offered, and the pipeline sorts and truncates to it.
+    static constexpr size_t kMaxDetections = kBlobReserve;
 
     void configure(const PerceptionParams& p) {
         params_ = p;
@@ -305,18 +313,43 @@ public:
         // inside the frame loop. The Debug allocation trap caught it on the
         // first frame of the first run it was ever armed for.
         //
-        // 4096 is chosen from what the pipeline actually produces rather than
-        // from the theoretical worst case. §9.4's own measurement is 15,929
-        // bright pixels grouping into 84 blobs on CP 5.9's worst case; the
-        // absolute bound is a checkerboard mask, w*h/2 = 153,600 components,
-        // which would be 11 MB reserved against a case the median filter
-        // (§9.4.1) exists to make impossible.
+        // WHERE 16384 COMES FROM, AND WHY IT IS A CAP RATHER THAN A HINT.
         //
-        // A frame that exceeds 4096 still works — the vector grows, as a
-        // vector does — and in a Debug build the trap says so. That is the
-        // right failure mode: a pathological frame is reported rather than
-        // silently truncated, and truncating would change what the detector
-        // found in order to satisfy an invariant about allocation.
+        // This number was 4096, and the comment here used to argue that a
+        // frame exceeding it should simply let the vector grow, on the grounds
+        // that truncating "would change what the detector found in order to
+        // satisfy an invariant about allocation". That argument was wrong, and
+        // CP 14.1's fuzzer is what showed it: a legal scenario — 1920x534,
+        // heavy damage, a CFAR threshold the draw put low — produced 14,420
+        // components, and the growth allocated 524,288 bytes INSIDE the frame
+        // window. An invariant that legal configurations can violate is not an
+        // invariant, and INV-4 is one of the nine.
+        //
+        // So the table is bounded and the bound is enforced. Three things make
+        // that defensible rather than a fudge:
+        //
+        //   1. It is the policy grouping.cpp ALREADY applies one pass earlier.
+        //      The run table has been sized at startup and truncated on
+        //      overflow since it was written, for the same stated reason.
+        //   2. It is deterministic. Components are created in order of first
+        //      appearance in raster order, so which ones survive a truncation
+        //      is a function of the mask alone — INV-3 is untouched.
+        //   3. It is REPORTED. `last_blob_overflow()` counts the runs that
+        //      found no room, so a frame whose answer is incomplete says so
+        //      instead of looking like a clean frame with fewer sources.
+        //
+        // 16384 is the measured high-water mark (14,420) rounded up to the
+        // next power of two. It costs 16384 * sizeof(BlobAccum) = 1.1 MB,
+        // reserved once, against an arena that already holds several
+        // full-frame buffers. §9.4's own measurement for a WORKING detector is
+        // 84 blobs on CP 5.9's worst case; anything within three orders of
+        // magnitude of the cap is a frame on which the detector has already
+        // failed, and the cap's job is only to make that failure bounded.
+        //
+        // The theoretical maximum is still a checkerboard mask at w*h/2 — 1.03
+        // million components on a 1920x1080 frame, 74 MB — which is the case
+        // the 3x3 median (§9.4.1) exists to make impossible and which no
+        // reserve should be sized against.
         // -------------------------------------------------------------------
         blobs_.reserve(kBlobReserve);
     }
@@ -349,12 +382,18 @@ public:
     /// from thousands to under 25" measurement.
     [[nodiscard]] size_t last_blob_count() const noexcept { return last_blobs_; }
 
+    /// Components the last frame produced that did not fit in the blob table.
+    /// Non-zero means that frame's detection list is incomplete; see
+    /// kBlobReserve for why the table is bounded rather than grown.
+    [[nodiscard]] size_t last_blob_overflow() const noexcept { return last_overflow_; }
+
     [[nodiscard]] const char* name() const noexcept { return "classical"; }
 
 private:
     PerceptionParams       params_{};
     std::vector<BlobAccum> blobs_;
     size_t                 last_blobs_ = 0;
+    size_t                 last_overflow_ = 0;
 };
 
 /// Design §9.4.7's SHAPE gate, exposed so it can be tested and reasoned about

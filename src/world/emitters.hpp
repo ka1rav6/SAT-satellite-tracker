@@ -116,6 +116,16 @@ struct EmitterSoA {
         n = 0;
     }
 
+    /// Emitters this container can hold without reallocating.
+    ///
+    /// Not the same number as `n`: build_world reserves headroom for the
+    /// decoys a `spawn_decoy` timeline event can add mid-run, which are not
+    /// present at load. Anything that sizes a scratch buffer against "how many
+    /// emitters could there ever be" must ask for THIS, not for `n` — sizing
+    /// against `n` is how SyntheticSource's visibility scratch came to grow
+    /// inside the frame window.
+    [[nodiscard]] size_t capacity() const noexcept { return x.capacity(); }
+
     [[nodiscard]] Pixel2 position(size_t i) const noexcept { return {x[i], y[i]}; }
     [[nodiscard]] Pixel2 velocity(size_t i) const noexcept { return {vx[i], vy[i]}; }
     [[nodiscard]] ShapeKind   shape_of(size_t i) const noexcept {

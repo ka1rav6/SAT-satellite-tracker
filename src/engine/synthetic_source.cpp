@@ -25,7 +25,7 @@ void SyntheticSource::build(const SyntheticConfig& cfg, EmitterSoA emitters) {
     const size_t px = static_cast<size_t>(cfg_.camera.pixel_count());
     radiance_.assign(px, 0.0f);
     frame_.assign(px, 0);
-    visible_.reserve(world_.emitters.n);
+    visible_.reserve(world_.emitters.capacity());
 
     frame_index_    = 0;
     max_frames_     = static_cast<int64_t>(cfg_.duration_s * cfg_.camera_hz + 0.5);
@@ -78,7 +78,7 @@ void SyntheticSource::build_from_scenario(const Scenario& sc) {
 
     sensor_.build(sc, cfg.camera.width, cfg.camera.height, rng_);
     disturb_.build(sc, cfg.screen);
-    visible_.reserve(world_.emitters.n);
+    visible_.reserve(world_.emitters.capacity());
     manual_disturbance_ = false;
 }
 

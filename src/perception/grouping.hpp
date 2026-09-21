@@ -132,10 +132,36 @@ struct GroupingWorkspace {
 /// on fill ratio) or many small ones that each pass the area floor.
 ///
 /// Returns the number of components written to `out`.
+///
+/// `max_blobs` bounds how many components are written. Pass the capacity `out`
+/// was reserved to and this cannot allocate, which is what lets it run inside
+/// the frame window INV-4 forbids allocation in. It is an explicit parameter
+/// rather than `out.capacity()` because capacity is invisible at the call site
+/// and a caller who forgot to reserve would silently get a different algorithm.
+///
+/// The bound is the same policy pass 1 already applies to the run table, for
+/// the same reason: a mask far denser than CFAR should ever produce is a sign
+/// the threshold is wrong, not a reason to grow the heap mid-frame. The
+/// production value and its derivation are at
+/// `ClassicalPerception::kBlobReserve`.
+///
+/// When the cap binds, components are kept in order of FIRST APPEARANCE in
+/// raster order — the same deterministic order labels are assigned in, so
+/// which ones survive is a function of the mask alone and INV-3 holds — and
+/// `*dropped`, if given, receives the number of runs that found no room. A
+/// non-zero `*dropped` means the detector's answer for that frame is
+/// incomplete, so it is reported rather than swallowed: `ClassicalPerception`
+/// surfaces it as `last_blob_overflow()`.
+///
+/// The default is "no bound", which is what the kernel tests want: they assert
+/// on component COUNTS over small hand-built masks, where allocation is not a
+/// concern and a cap would be testing the cap rather than the connectivity.
 [[nodiscard]] size_t group_components(std::span<const uint8_t> mask,
                                       std::span<const int16_t> weight,
                                       int width, int height,
                                       const GroupingWorkspace& ws,
-                                      std::vector<BlobAccum>& out);
+                                      std::vector<BlobAccum>& out,
+                                      size_t max_blobs = SIZE_MAX,
+                                      size_t* dropped = nullptr);
 
 }  // namespace sat

@@ -1104,6 +1104,10 @@ flatten union-find, accumulate moments. ~0.05 ms — far better than full-image 
 **Determinism:** label numbering depends on merge order, deterministic only with a fixed scan order.
 Do not parallelise the row scan.
 
+**Bounded output:** both the run table and the blob table are sized once and
+truncate rather than grow. See amendment §14.0e for why the blob table's
+earlier "let it grow" policy was wrong and what replaced it.
+
 ### 9.4.7 Gating
 
 ```cpp
@@ -1692,6 +1696,64 @@ sat-tracker --bench
 
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
+
+## 14.0e AMENDMENT — §9.4.6's blob table is bounded, and the earlier decision
+## to let it grow was wrong
+
+**Status:** adopted. **Applies to:** §9.4.6 (run-length grouping), INV-4.
+
+§9.4.6 specifies the grouping pass but says nothing about how large the blob
+table may become. The implementation reserved 4,096 components and let the
+vector grow past that if a frame produced more, and the code carried a comment
+defending that choice: truncating, it said, "would change what the detector
+found in order to satisfy an invariant about allocation".
+
+**That reasoning was wrong, and CP 14.1's fuzzer is what showed it.** A legal
+scenario — 1920×534, heavy damage, a CFAR threshold the draw put at the low end
+of its legal range — produced **14,420 components**, and the growth allocated
+**524,288 bytes inside the frame window**. The Debug allocation trap aborted,
+correctly. An invariant that legal configurations can violate is not an
+invariant, and INV-4 is one of the nine.
+
+Three facts settle it in favour of a bound:
+
+1. **It is the policy the same function already applies one pass earlier.**
+   Pass 1's run table has been sized at startup and truncated on overflow since
+   it was written, with the rationale stated in the code: a mask far denser
+   than CFAR should ever produce is a sign the threshold is wrong, not a reason
+   to grow the heap mid-frame. Pass 3 was the inconsistent one.
+2. **The truncation is deterministic.** Components are created in order of
+   first appearance in raster order, so which ones survive a bound is a
+   function of the mask alone. INV-3 is untouched, and a test asserts the
+   survivors are a byte-identical prefix of the unbounded run.
+3. **The overflow is reported.** `ClassicalPerception::last_blob_overflow()`
+   counts the components that found no room, so a frame whose detection list is
+   incomplete says so rather than passing for a clean frame with fewer sources.
+
+The bound is **16,384**, the measured high-water mark rounded up to the next
+power of two — 1.1 MB, reserved once. §9.4's own measurement for a *working*
+detector is 84 blobs on CP 5.9's worst case, so anything within three orders of
+magnitude of the cap is a frame on which the detector has already failed; the
+cap's job is only to make that failure bounded. The theoretical maximum remains
+a checkerboard mask at w·h/2 — 1.03 million components, 74 MB on a 1920×1080
+frame — which is the case the 3×3 median of §9.4.1 exists to make impossible
+and which no reserve should be sized against.
+
+**A second INV-4 violation found in the same fuzz run.** §7.4's `spawn_decoy`
+event calls `EmitterSoA::add` mid-run, but `build_world` reserved capacity for
+only the three *build-time* emitter populations (targets, decoy beacons, static
+clutter). A spawn past that capacity reallocated eleven parallel vectors inside
+the frame window — 144 bytes, caught by the same trap. `build_world` now counts
+the `spawn_decoy` events on the timeline into its reserve, and
+`SyntheticSource`'s visibility scratch is sized against `EmitterSoA::capacity()`
+rather than `n` for the same reason.
+
+**What this says about the process.** Both defects were in code that had passed
+every test for weeks. Neither was found by reasoning about the code; both were
+found by a fuzzer drawing legal-but-unusual configurations while an invariant
+was mechanically enforced. That is the argument for CP 14.1 and CP 14.3
+existing at all, and for `just ci` running the Debug tree rather than only the
+Release one.
 
 ## 14.0d AMENDMENT — §15's 0.85 ms frame budget is not reachable, and here is
 ## the arithmetic

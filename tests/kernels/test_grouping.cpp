@@ -351,3 +351,89 @@ TEST_CASE("degenerate inputs do not fault") {
     CHECK(std::isfinite(blobs[0].centroid().x));
     CHECK(std::isfinite(blobs[0].centroid().y));
 }
+
+// ===========================================================================
+// INV-4 — the blob table is bounded, and the bound is honest
+//
+// CP 14.1's fuzzer drew a legal scenario (1920x534, heavy damage, a CFAR
+// threshold its draw put low) whose mask grouped into 14,420 components. The
+// blob vector had been reserved to 4,096, so it grew — 524,288 bytes,
+// allocated inside the frame window, which is precisely what INV-4 forbids and
+// what the Debug allocation trap aborted on.
+//
+// The fix bounds the table. These tests pin the three properties that make a
+// bound acceptable rather than a fudge: it is ENFORCED, the truncation is
+// DETERMINISTIC (INV-3), and the overflow is REPORTED so a frame whose answer
+// is incomplete cannot pass for a clean one.
+// ===========================================================================
+
+TEST_CASE("the blob table stops at its bound and says how much it dropped") {
+    // 64 separate single-pixel blobs on an 8x8 lattice, spaced so nothing
+    // touches. Deliberately more components than the caps below.
+    constexpr int W = 64, H = 64;
+    std::vector<uint8_t> mask(W * H, 0);
+    std::vector<int16_t> wt(W * H, 100);
+    for (int gy = 0; gy < 8; ++gy) {
+        for (int gx = 0; gx < 8; ++gx) {
+            mask[static_cast<size_t>(gy * 8 + 1) * W + (gx * 8 + 1)] = 1;
+        }
+    }
+
+    Work work(W, H);
+
+    // Unbounded: all 64 are found. This is the reference the bounded runs are
+    // compared against, so it has to be established first.
+    std::vector<BlobAccum> all;
+    REQUIRE(group_components(mask, wt, W, H, work.ws, all) == 64);
+
+    SUBCASE("a bound below the component count truncates to exactly the bound") {
+        std::vector<BlobAccum> blobs;
+        blobs.reserve(10);
+        size_t dropped = 0;
+        const size_t n = group_components(mask, wt, W, H, work.ws, blobs,
+                                          /*max_blobs=*/10, &dropped);
+        CHECK(n == 10);
+        CHECK(blobs.size() == 10);
+        // Every component that did not fit is counted. 64 single-pixel blobs,
+        // 10 kept, 54 with nowhere to go.
+        CHECK(dropped == 54);
+        // And the vector did not grow past what was reserved for it, which is
+        // the whole point — a grown vector is a heap allocation in a frame.
+        CHECK(blobs.capacity() == 10);
+    }
+
+    SUBCASE("truncation keeps the FIRST components in raster order") {
+        // INV-3: which components survive must be a function of the mask
+        // alone. Labels are assigned in order of first appearance in raster
+        // order, so the survivors must be a prefix of the unbounded run —
+        // byte-identical, not merely the same count.
+        std::vector<BlobAccum> blobs;
+        blobs.reserve(20);
+        REQUIRE(group_components(mask, wt, W, H, work.ws, blobs, 20) == 20);
+        for (size_t i = 0; i < blobs.size(); ++i) {
+            CAPTURE(i);
+            CHECK(blobs[i].centroid().x == all[i].centroid().x);
+            CHECK(blobs[i].centroid().y == all[i].centroid().y);
+            CHECK(blobs[i].n == all[i].n);
+        }
+    }
+
+    SUBCASE("a bound above the component count changes nothing") {
+        std::vector<BlobAccum> blobs;
+        size_t dropped = 7;                       // must be cleared, not left
+        CHECK(group_components(mask, wt, W, H, work.ws, blobs, 4096, &dropped) == 64);
+        CHECK(dropped == 0);
+    }
+
+    SUBCASE("a bound of zero yields nothing and drops everything") {
+        // The degenerate case exists because `out.capacity()` on a
+        // default-constructed vector IS zero, and an earlier draft of this
+        // bound read the capacity implicitly. That draft silently found no
+        // components at all in every caller that had not reserved. The bound
+        // is an explicit parameter now, and this pins the degenerate end of it.
+        std::vector<BlobAccum> blobs;
+        size_t dropped = 0;
+        CHECK(group_components(mask, wt, W, H, work.ws, blobs, 0, &dropped) == 0);
+        CHECK(dropped == 64);
+    }
+}

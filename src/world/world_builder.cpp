@@ -65,9 +65,31 @@ World build_world(const Scenario& sc, RngSet& rng) {
     w.canvas_w = static_cast<double>(scr.width);
     w.canvas_h = static_cast<double>(scr.height);
 
+    // Capacity for every emitter the run can ever hold, reserved ONCE here.
+    //
+    // The three build-time populations are obvious. The fourth is not, and its
+    // absence was an INV-4 violation that survived until CP 14.1's fuzzer drew
+    // a scenario with a `spawn_decoy` on its timeline: engine/pipeline.cpp's
+    // SpawnDecoy handler calls `EmitterSoA::add` MID-RUN, inside the frame
+    // window, and an `add` past the reserved capacity is eleven vector
+    // reallocations in the steady state. The allocation trap caught it at 144
+    // bytes. Counting the spawn_decoy events here is the fix: capacity is
+    // still reserved exactly once, at load, and `add` during a frame then only
+    // ever writes into space that already exists.
+    //
+    // Counted from the raw event list rather than from the compiled timeline
+    // because this runs before the timeline is built, and an over-count costs
+    // a few hundred bytes of untouched capacity — which is the right direction
+    // to be wrong in.
+    size_t spawned = 0;
+    for (const EventSpec& e : sc.events) {
+        if (e.action == "spawn_decoy") ++spawned;
+    }
+
     const size_t expected = sc.targets.size()
                           + static_cast<size_t>(std::max(0, sc.decoy_beacons))
-                          + static_cast<size_t>(std::max(0, sc.static_sources));
+                          + static_cast<size_t>(std::max(0, sc.static_sources))
+                          + spawned;
     w.emitters.reserve(expected);
 
     auto shape_of = [](const std::string& s) {

@@ -54,7 +54,7 @@ void Pipeline::build_stage6() {
     // `meas_` keeps the cap: measurements are built only from the detections
     // that survive truncation, so max_candidates really is its bound.
     // -----------------------------------------------------------------------
-    dets_.reserve(ClassicalPerception::kBlobReserve);
+    dets_.reserve(ClassicalPerception::kMaxDetections);
     meas_.reserve(static_cast<size_t>(std::max(1, cfg_.perception.max_candidates)));
 
     // -----------------------------------------------------------------------
