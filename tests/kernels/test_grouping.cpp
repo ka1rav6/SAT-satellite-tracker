@@ -158,8 +158,13 @@ TEST_CASE("labels are a deterministic function of the mask") {
 
     Work w1(W, H), w2(W, H);
     std::vector<BlobAccum> a, b;
-    group_components(mask, wt, W, H, w1.ws, a);
-    group_components(mask, wt, W, H, w2.ws, b);
+    // The counts are asserted equal below via a.size()/b.size(), so the return
+    // values are genuinely unused here — but group_components is [[nodiscard]]
+    // and a warning nobody silences is a warning everybody stops reading.
+    // Asserting them equal to each other is the honest way to consume them.
+    const size_t na = group_components(mask, wt, W, H, w1.ws, a);
+    const size_t nb = group_components(mask, wt, W, H, w2.ws, b);
+    REQUIRE(na == nb);
 
     REQUIRE(a.size() == b.size());
     for (size_t i = 0; i < a.size(); ++i) {
