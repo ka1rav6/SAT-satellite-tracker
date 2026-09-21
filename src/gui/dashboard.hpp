@@ -37,6 +37,7 @@
 #pragma once
 
 #include "engine/pipeline.hpp"
+#include "metrics/collector.hpp"
 #include "gui/gl_texture.hpp"
 #include "scenario/scenario.hpp"
 
@@ -255,6 +256,39 @@ private:
 
     // Scratch for ImPlot, reused so drawing allocates nothing steady-state.
     std::vector<double> plot_x_, plot_y_, plot_y2_;
+
+    // -----------------------------------------------------------------------
+    // THE COMPLIANCE PANEL USES THE SAME COLLECTOR AS EVERYTHING ELSE — P1-8.
+    //
+    // It used to keep its own counters and compute its own ratios, in parallel
+    // with metrics/collector.cpp. Two implementations of §13.1, and they
+    // disagreed the moment either moved:
+    //
+    //   * the panel graded row 17 on the WHOLE-RUN tracking RMS, which is
+    //     transient-dominated. Sixty frames into a run it read "67.39 px" in
+    //     red against a summary that said 16.94 px. Both were right about
+    //     different things and the screen said neither.
+    //   * it graded row 18 on `frames_detected / frames_in_fov`, which is not
+    //     retention — it is detection rate. The graded figure is held frames
+    //     over post-acquisition frames (P0-2), and the panel had no notion of
+    //     post-acquisition at all.
+    //
+    // A dashboard that disagrees with the artifacts it writes is worse than
+    // one that reports less: the numbers a judge reads off the screen are the
+    // ones they will quote back. So the panel now feeds the real collector and
+    // reads the real RunMetrics, and there is one definition of every row.
+    //
+    // `metrics_dirty_` avoids calling finish() once per rendered frame — it
+    // sorts several sample vectors — so it recomputes only when a simulation
+    // frame has actually been added.
+    // -----------------------------------------------------------------------
+    MetricCollector metrics_{};
+    RunMetrics      metrics_snapshot_{};
+    bool            metrics_dirty_ = true;
+
+    /// Recompute metrics_snapshot_ if a frame has been added since the last
+    /// call. Cheap when clean.
+    const RunMetrics& live_metrics();
 
     // --- counters ----------------------------------------------------------
     int64_t frames_          = 0;

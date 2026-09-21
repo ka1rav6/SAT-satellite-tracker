@@ -86,8 +86,56 @@ def train(dataset_root: Path, output: Path, epochs: int = 60, batch_size: int = 
             if stale_epochs >= 8:
                 break
 
-    result = {"best_epoch": best_epoch, "best_val_rmse_px": best_rmse,
-              "epochs_completed": len(history), "seed": seed, "history": history}
+    # ------------------------------------------------------------------
+    # P2-10: the sidecar says WHERE THE NUMBER CAME FROM, not just what it is.
+    #
+    # This used to write the metrics block alone. A JSON file whose only
+    # content is `"best_val_rmse_px": 0.2744` reads as a result to a person and
+    # parses as one to a script, and models/centroidnet_v1.json sat in the
+    # repository looking exactly like a trained model's scorecard while
+    # docs/SAT-ML.md declared ML unbuilt. The only disclaimer was in the model
+    # card beside it, which is the one place a script will never look.
+    #
+    # `is_real_result` is derived from the dataset path rather than passed in,
+    # so it cannot be forgotten: a run over tools/make_dummy_shards.py output
+    # is self-evidently not a result, and saying so is the file's job.
+    #
+    # The classical baseline is carried alongside because it is the number that
+    # decides whether a learned centroider is worth shipping at all — 0.141 px
+    # from `just sweep`, against which 0.274 px on dummy data is a regression.
+    # A model card that reports only the model's own score invites the wrong
+    # comparison, which is to nothing.
+    # ------------------------------------------------------------------
+    dummy = "dummy" in str(dataset_root).lower()
+    result = {
+        "status": ("PRELIMINARY — dummy data, not a trained model" if dummy
+                   else "trained"),
+        "is_real_result": not dummy,
+        "trained_on": str(dataset_root),
+        "classical_baseline_px": 0.141,
+        "classical_baseline_source":
+            "just sweep, clear air, clutter-free, 30 s per cell",
+        "model_card": f"docs/models/{output.stem}.md",
+        "metrics_from_dummy_data" if dummy else "metrics": {
+            "best_epoch": best_epoch,
+            "best_val_rmse_px": best_rmse,
+            "epochs_completed": len(history),
+            "seed": seed,
+            "history": history,
+        },
+    }
+    if dummy:
+        result["_README"] = [
+            "NOT A RESULT. Trained on dummy shards from "
+            "tools/make_dummy_shards.py, which exists to prove the training "
+            "loop runs end to end and explicitly refuses to impersonate a real "
+            "dataset.",
+            "There is no trained model and no real dataset, because "
+            "--gen-dataset is not implemented (design 13.4).",
+            f"The CLASSICAL centroider measures 0.141 px on the same graded "
+            f"metric, so {best_rmse:.4f} px would be a REGRESSION if it were "
+            f"real. That is the argument for targeting CandidateNet first.",
+        ]
     output.with_suffix(".json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"best val_rmse_px={best_rmse:.6f} at epoch {best_epoch}; seed={seed}")
     return result

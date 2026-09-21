@@ -216,6 +216,17 @@ void Dashboard::rebuild(const Scenario& sc) {
     worst_tracking_ = 0.0;
     finished_ = false;
 
+    // The compliance panel's numbers come from the one MetricCollector, the
+    // same one the headless summary and run.json use (P1-8). Reserved for the
+    // whole run so add() never allocates — the dashboard is inside the
+    // per-frame window that INV-4's trap watches.
+    metrics_.begin(scenario_.name, scenario_.seed,
+                   scenario_.camera_geometry().ifov_urad(),
+                   static_cast<size_t>(scenario_.duration_s * scenario_.camera_hz) + 2,
+                   pipeline_.video() == nullptr || pipeline_.video()->supports_pointing());
+    metrics_snapshot_ = RunMetrics{};
+    metrics_dirty_    = true;
+
     char buf[256];
     std::snprintf(buf, sizeof(buf), "loaded '%s'  %dx%d px screen, %dx%d camera, %.0f Hz",
                   scenario_.name.c_str(), scenario_.canvas_px[0], scenario_.canvas_px[1],
@@ -224,16 +235,35 @@ void Dashboard::rebuild(const Scenario& sc) {
     status_ = buf;
 }
 
+const RunMetrics& Dashboard::live_metrics() {
+    if (metrics_dirty_) {
+        // finish() sorts several sample vectors, so it is recomputed once per
+        // SIMULATION frame rather than once per rendered frame — at
+        // steps_per_draw_ = 1 those coincide, and at 8 it is eight times less
+        // work for the same answer.
+        metrics_snapshot_ = metrics_.finish(pipeline_.timers(), /*wall_time_s=*/0.0,
+                                            pipeline_.gimbal().saturation_frac());
+        metrics_dirty_ = false;
+    }
+    return metrics_snapshot_;
+}
+
 void Dashboard::step_simulation() {
     if (finished_) return;
     if (!pipeline_.step()) {
         finished_ = true;
         running_  = false;
-        status_   = "run complete — press Reset to run it again";
+        status_   = "run complete - press Reset to run it again";
         return;
     }
 
     const FrameRecord& r = pipeline_.last();
+    metrics_.add(r);
+    metrics_dirty_ = true;
+
+    // Kept alongside the collector, and only for things the collector does not
+    // report: `frames_detected_` is a DETECTION rate, which is a useful live
+    // readout and is not any of §13.1's ratios, and the rest feed the plots.
     ++frames_;
     if (r.detected)     ++frames_detected_;
     if (r.truth_in_fov) ++frames_in_fov_;
@@ -336,7 +366,7 @@ void Dashboard::draw_menu_bar() {
         load("maxnoise_random.toml");
 
         ImGui::Separator();
-        ImGui::TextColored(kMutedCol, "Hard cases — known failures");
+        ImGui::TextColored(kMutedCol, "Hard cases - known failures");
         // Each of these fails, each fails for ONE reason, and each says so in
         // its own file header with the measured numbers.
         load("hard/clutter_field.toml");            // discrimination
@@ -376,7 +406,7 @@ void Dashboard::draw_controls() {
     ImGui::SetItemTooltip(
         "Specification row 11 places the beacon at a RANDOM position, and the\n"
         "headless runs honour that. But the camera sees 7.68%% of the screen,\n"
-        "so a random beacon starts off-screen 92%% of the time — and finding it\n"
+        "so a random beacon starts off-screen 92%% of the time - and finding it\n"
         "is the search problem, which is Stage 13 and not built yet.\n\n"
         "Turn this off to see exactly why Stage 13 is needed.");
     ImGui::TextColored(kMutedCol,
@@ -423,7 +453,7 @@ void Dashboard::draw_controls() {
     // mattering when it is the reset.
     // -----------------------------------------------------------------------
     ImGui::Separator();
-    ImGui::TextColored(kMutedCol, "Algorithms — live (CP 15.2)");
+    ImGui::TextColored(kMutedCol, "Algorithms - live (CP 15.2)");
 
     {
         ControlGains g = pipeline_.controller().az().gains();
@@ -438,7 +468,7 @@ void Dashboard::draw_controls() {
         ImGui::SetItemTooltip(
             "Pure feedback lags by roughly speed / bandwidth. On a 200 px/s\n"
             "target that is v/kp = 25 px before any noise. Measured 21.60 px\n"
-            "off, 2.53 px on. Watch the tracking trace, not the camera view —\n"
+            "off, 2.53 px on. Watch the tracking trace, not the camera view -\n"
             "at row 12's 24.6 px/s the lag is 3 px and you will not see it.");
 
         bool aw = g.anti_windup;
@@ -474,7 +504,7 @@ void Dashboard::draw_controls() {
             tp.imm = imm;
         }
         ImGui::SetItemTooltip(
-            "Takes effect on the next track, not this one — swapping a live\n"
+            "Takes effect on the next track, not this one - swapping a live\n"
             "4-state filter for a 6-state one would have to invent two states.\n"
             "Worth 21.75 -> 17.15 px on the figure-8, and nothing on a straight\n"
             "line. Load scenarios/control/figure8.toml to see it.");
@@ -482,9 +512,54 @@ void Dashboard::draw_controls() {
 
     // --- damage, dialled live (§14.1, 3:00-5:00) ---------------------------
     ImGui::Separator();
-    ImGui::TextColored(kMutedCol, "Damage — specification rows 21-25");
+    ImGui::TextColored(kMutedCol, "Damage - specification rows 21-25");
 
     SensorChain& chain = pipeline_.source().sensor();
+
+    // ----------------------------------------------------------------------
+    // THE OVERRIDE BANNER — P1-8.
+    //
+    // The dashboard opens on the Clean preset, which is the right call for a
+    // demonstration (§14.1's running order: start clean, dial damage up, watch
+    // the error respond — that is how you tell a working adaptive loop from a
+    // lucky constant). What was wrong was that nothing said so.
+    //
+    // A judge who walks up to a running dashboard has no way to know whether
+    // the damage controls are at the scenario's values or at someone's
+    // experiment from two minutes ago. Every number on screen depends on the
+    // answer. So: a persistent banner whenever the live chain differs from the
+    // file, naming the difference, with the restore button beside it.
+    //
+    // Persistent rather than a toast, because the ambiguity is persistent.
+    // ----------------------------------------------------------------------
+    {
+        const NoiseParams& n0 = chain.noise();
+        const bool overridden =
+               !chain.enabled()
+            || chain.atmosphere()    != scenario_.atmosphere
+            || n0.poisson_enabled    != scenario_.noise_poisson
+            || !chain.defects_enabled()
+            || std::abs(n0.gaussian_sigma - scenario_.gaussian_sigma) > 1e-9
+            || std::abs(n0.salt_pepper_p  - scenario_.salt_pepper)    > 1e-9;
+
+        if (overridden) {
+            const bool clean = !chain.enabled()
+                            || (n0.gaussian_sigma == 0.0 && n0.salt_pepper_p == 0.0
+                                && !n0.poisson_enabled);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.72f, 0.18f, 1.0f));
+            ImGui::TextWrapped(
+                clean ? "DAMAGE OVERRIDDEN: CLEAN - this run is NOT at the "
+                        "scenario's specification values. Click \"Full spec\" to "
+                        "restore them."
+                      : "DAMAGE OVERRIDDEN - the live chain differs from the "
+                        "scenario file. The Scenario panel shows both. Click "
+                        "\"Full spec\" to restore.");
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextColored(ImVec4(0.30f, 0.72f, 0.50f, 1.0f),
+                               "At the scenario's specification values.");
+        }
+    }
 
     // Presets, because §14.1's demo dials damage up in stages and hunting for
     // four sliders mid-presentation is not something anyone should have to do.
@@ -559,13 +634,13 @@ void Dashboard::draw_controls() {
 
     // Clutter needs a world rebuild, so it sits apart from the live sliders.
     ImGui::Spacing();
-    ImGui::TextColored(kMutedCol, "Clutter (design §9.1) — rebuilds the world");
+    ImGui::TextColored(kMutedCol, "Clutter (design S9.1) - rebuilds the world");
     bool rebuild_needed = false;
     rebuild_needed |= ImGui::SliderInt("static sources", &clutter_sources_, 0, 400);
     rebuild_needed |= ImGui::SliderInt("decoy beacons",  &decoy_beacons_,   0, 4);
     if (rebuild_needed && !ImGui::IsItemActive()) rebuild(scenario_);
     ImGui::SetItemTooltip(
-        "§9.1 calls 50-500 static sources \"mandatory for credibility\", and\n"
+        "S9.1 calls 50-500 static sources \"mandatory for credibility\", and\n"
         "deliberately makes some BRIGHTER than the beacon. Drag this up and\n"
         "watch the brightest-pixel detector lock onto one of them instead -\n"
         "that is CP 4.11.");
@@ -586,7 +661,7 @@ void Dashboard::draw_controls() {
     {
         const bool classical =
             pipeline_.config().detector == DetectorKind::Classical;
-        if (ImGui::RadioButton("classical (§9.4)", classical)) {
+        if (ImGui::RadioButton("classical (S9.4)", classical)) {
             pipeline_.set_detector(DetectorKind::Classical);
         }
         ImGui::SetItemTooltip(
@@ -809,29 +884,57 @@ void Dashboard::draw_metrics() {
         "Live figures against the specification. Full matrix at Stage 7.");
     ImGui::Spacing();
 
-    const double lock = frames_in_fov_ ? static_cast<double>(frames_detected_)
-                                       / static_cast<double>(frames_in_fov_) : 0.0;
-    const double loss = 1.0 - std::min(1.0, lock);
-    const double fa   = frames_ ? static_cast<double>(false_alarms_)
-                                / static_cast<double>(frames_) : 0.0;
+    // Every row below comes from the SAME MetricCollector the headless summary
+    // and run.json use. See the note on Dashboard::metrics_ for what the two
+    // parallel implementations used to disagree about (P1-8).
+    const RunMetrics& m = live_metrics();
+    const double fa = frames_ ? static_cast<double>(false_alarms_)
+                              / static_cast<double>(frames_) : 0.0;
 
     if (ImGui::BeginTable("compliance", 3,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("metric");
-        ImGui::TableSetupColumn("value");
-        ImGui::TableSetupColumn("requirement");
+        // Explicit weights. The default is an equal share per column, which
+        // left the value column too narrow for "17.31 px" and silently
+        // truncated it to "17.31 p" — a compliance panel that clips the number
+        // it exists to show. The label and requirement columns are prose and
+        // wrap; the value column must not.
+        ImGui::TableSetupColumn("metric",      ImGuiTableColumnFlags_WidthStretch, 2.4f);
+        ImGui::TableSetupColumn("value",       ImGuiTableColumnFlags_WidthStretch, 1.1f);
+        ImGui::TableSetupColumn("requirement", ImGuiTableColumnFlags_WidthStretch, 3.0f);
         ImGui::TableHeadersRow();
 
-        metric_row("Tracking error (RMS)", "%.2f px", tracking_.rmse(),
-                   tracking_.rmse() <= scenario_.tracking_error_px, "row 17: <= 10 px");
-        metric_row("Tracking error (worst)", "%.1f px", worst_tracking_,
-                   worst_tracking_ <= scenario_.tracking_error_px, "row 17");
-        metric_row("Centroiding RMSE (image)", "%.3f px", centroid_image_.rmse(),
-                   centroid_image_.rmse() < 1.0, "graded, 60% of BP-1/BP-2");
-        metric_row("Centroiding RMSE (screen)", "%.3f px", centroid_screen_.rmse(),
-                   centroid_screen_.rmse() < 1.0, "graded");
-        metric_row("Target loss", "%.1f %%", 100.0 * loss,
-                   loss < scenario_.target_loss_frac, "row 18: < 5 %");
+        // Row 17 on the STEADY-STATE figure, with the transient beside it
+        // (P1-9). The panel used to grade the whole-run RMS, which sixty
+        // frames into a run is almost entirely the acquisition slew: it read
+        // 67.39 px in red while the same run's settled error was 16.9 px.
+        metric_row("Tracking error (steady RMS)", "%.2f px", m.tracking_rms_steady_px,
+                   m.tracking_rms_steady_px <= scenario_.tracking_error_px,
+                   "row 17: <= 10 px");
+        metric_row("  - acquisition transient", "%.1f px", m.tracking_rms_transient_px,
+                   true, "first 30 frames after lock - not graded");
+        metric_row("Tracking error (worst)", "%.1f px", m.tracking_max_px,
+                   m.tracking_max_px <= scenario_.tracking_error_px, "row 17");
+        metric_row("Centroiding RMSE (image)", "%.3f px", m.centroid_rmse_image_px,
+                   m.centroid_rmse_image_px < 1.0, "graded, 60% of BP-1/BP-2");
+        // The boresight column rather than the screen one, because the screen
+        // figure is dominated by the accumulated pointing error and grows
+        // without bound — see METRICS.md §2.3. Both are in centroid.csv.
+        metric_row("Centroiding RMSE (boresight)", "%.3f px", m.centroid_rmse_boresight_px,
+                   m.centroid_rmse_boresight_px < 1.0, "graded, screen px, drift removed");
+        metric_row("  - screen frame", "%.1f px", m.centroid_rmse_screen_px,
+                   true, "+ pointing error, unbounded - not a detector metric");
+
+        // The PS's own objective, above the loss rows it conditions.
+        metric_row("FOV containment", "%.1f %%", 100.0 * m.fov_containment_frac,
+                   m.fov_containment_frac > 0.95,
+                   "the PS objective: keep it in the FOV");
+        // Row 18 on the post-acquisition denominator (P0-2).
+        metric_row("Target loss (post-acq)", "%.1f %%", 100.0 * m.target_loss_post_acq,
+                   m.post_acq_valid && m.target_loss_post_acq < scenario_.target_loss_frac,
+                   "row 18: < 5 %");
+        metric_row("  - over in-FOV frames", "%.1f %%", 100.0 * m.target_loss_frac,
+                   true, "detector-centric denominator - not graded");
+
         metric_row("False alarms", "%.1f %%", 100.0 * fa,
                    fa < 0.05, "detections with no beacon in view");
         metric_row("Gimbal saturation", "%.1f %%",
@@ -843,7 +946,7 @@ void Dashboard::draw_metrics() {
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::TextColored(kMutedCol, "Per-stage timing — percentiles, never means");
+    ImGui::TextColored(kMutedCol, "Per-stage timing - percentiles, never means");
     if (ImGui::BeginTable("timing", 4,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("stage");
@@ -933,7 +1036,7 @@ void Dashboard::draw_tracking_panel() {
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::TextColored(kMutedCol, "Mode transitions (CP 6.6) — newest first");
+    ImGui::TextColored(kMutedCol, "Mode transitions (CP 6.6) - newest first");
     if (ImGui::BeginTable("transitions", 3,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY
                         | ImGuiTableFlags_SizingStretchProp,
@@ -997,7 +1100,7 @@ void Dashboard::draw_imm_panel() {
 
     // What the checkpoint asks to be visible: the shift at a crossing.
     ImGui::TextColored(kMutedCol,
-        "CV constant velocity  ·  CA constant acceleration  ·  CT coordinated turn");
+        "CV constant velocity  -  CA constant acceleration  -  CT coordinated turn");
 
     if (ImPlot::BeginPlot("##imm", ImVec2(-1, 190))) {
         ImPlot::SetupAxes("t (s)", "probability",
@@ -1051,7 +1154,7 @@ void Dashboard::draw_hypotheses_panel() {
 
     if (!tk.weights().enabled) {
         ImGui::TextColored(ImVec4{1.0f, 0.75f, 0.3f, 1.0f},
-            "Policy OFF — the strongest candidate in the first frame that has\n"
+            "Policy OFF - the strongest candidate in the first frame that has\n"
             "one becomes the track. This is the ablation arm; on the\n"
             "specification's own scenario it locks onto a rock.");
         ImGui::End();
@@ -1155,7 +1258,7 @@ void Dashboard::draw_strategy_panel() {
         ImGui::TextColored(kMutedCol,
             "The supervisor is off. It CHANGES the configuration a run uses, so\n"
             "a run with it on and one with it off are different claims and must\n"
-            "be distinguishable — the same argument INV-7 makes for --no-ai.\n\n"
+            "be distinguishable - the same argument INV-7 makes for --no-ai.\n\n"
             "Turn it on in Run control to watch it adapt.");
         ImGui::End();
         return;
@@ -1171,8 +1274,8 @@ void Dashboard::draw_strategy_panel() {
 
     if (strategy_marks_.empty()) {
         ImGui::TextColored(kMutedCol,
-            "No switch yet. §10.6's hysteresis allows at most one per second\n"
-            "and the middle SNR band deliberately does nothing — a supervisor\n"
+            "No switch yet. S10.6's hysteresis allows at most one per second\n"
+            "and the middle SNR band deliberately does nothing - a supervisor\n"
             "that always does SOMETHING is a supervisor that is guessing.");
     } else if (ImGui::BeginTable("strat", 3,
                                  ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY
@@ -1288,6 +1391,67 @@ void Dashboard::draw_scenario_panel() {
             va_end(args);
         };
 
+        // ------------------------------------------------------------------
+        // EVERY ROW READS THE LIVE CHAIN — P1-8.
+        //
+        // Rows 21 to 25 used to read the SCENARIO FILE while the clutter row
+        // beside them read the live world, and the dashboard opens on the
+        // Clean preset (see rebuild()). So the same window could print
+        //
+        //     row 21  salt & pepper   10 %
+        //     row 22  read noise      sigma 20
+        //     §9.1    clutter         0 sources, 0 decoy
+        //
+        // beside a compliance panel reading "Centroiding RMSE 0.084 px" — on a
+        // run with no noise at all. A judge reading that window concludes the
+        // system achieves 0.084 px under 10 % impulse noise and sigma-20 read
+        // noise. It does not: measured under those conditions it is 0.497 px,
+        // and at p95 across haze/fog/rain about 5.4 px.
+        //
+        // Nothing in the window was lying on its own. The table was reporting
+        // what the file asked for and the compliance panel what the run
+        // achieved, and put together they made a claim neither of them made.
+        //
+        // Now every row reports what is ACTUALLY RUNNING, and a row that
+        // differs from the file says so with the file's value in parentheses.
+        // A banner above the damage controls names the override, so the state
+        // is never ambiguous and one click restores it.
+        // ------------------------------------------------------------------
+        const SensorChain&    chain = pipeline_.source().sensor();
+        const NoiseParams&    ln    = chain.noise();
+        const EmitterSoA&     em    = pipeline_.source().emitters();
+
+        int live_clutter = 0, live_decoy = 0;
+        for (size_t i = 0; i < em.n; ++i) {
+            const EmitterKind k = em.kind_of(i);
+            if      (k == EmitterKind::Clutter) ++live_clutter;
+            else if (k == EmitterKind::Decoy)   ++live_decoy;
+        }
+
+        // A row whose live value differs from the file's. The file's value is
+        // kept in view rather than replaced: "what did I ask for" and "what am
+        // I getting" are both questions someone asks at a demo.
+        auto row_live = [&](const char* spec, const char* name,
+                            const std::string& live, const std::string& file) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn(); ImGui::TextColored(kMutedCol, "%s", spec);
+            ImGui::TableNextColumn(); ImGui::TextUnformatted(name);
+            ImGui::TableNextColumn();
+            if (live == file) {
+                ImGui::TextUnformatted(live.c_str());
+            } else {
+                ImGui::TextColored(ImVec4(0.85f, 0.65f, 0.15f, 1.0f), "%s", live.c_str());
+                ImGui::SameLine();
+                ImGui::TextColored(kMutedCol, "(file: %s)", file.c_str());
+            }
+        };
+        auto fmt = [](const char* f, auto... a) {
+            char b[96];
+            std::snprintf(b, sizeof b, f, a...);
+            return std::string(b);
+        };
+
+        // Geometry: fixed for the life of a run, so the file IS the live value.
         row("row 1",  "screen",          "%d x %d px", scenario_.canvas_px[0], scenario_.canvas_px[1]);
         row("row 3",  "camera",          "%d x %d px", scenario_.resolution[0], scenario_.resolution[1]);
         row("row 4",  "field of view",   "%.1f x %.1f deg", scenario_.fov_deg[0], scenario_.fov_deg[1]);
@@ -1296,19 +1460,39 @@ void Dashboard::draw_scenario_panel() {
         row("row 13", "max pan",         "%.1f deg/s", scenario_.max_pan_dps);
         row("row 14", "max tilt",        "%.1f deg/s", scenario_.max_tilt_dps);
         row("row 15", "control rate",    "%d Hz", scenario_.control_hz);
-        row("row 21", "salt & pepper",   "%.0f %%", 100.0 * scenario_.salt_pepper);
-        row("row 22", "read noise",      "sigma %.0f", scenario_.gaussian_sigma);
-        row("row 23", "jitter",          "%.0f px/frame", scenario_.jitter_px_per_frame);
-        row("row 24", "atmosphere",      "%s", atmosphere_name(scenario_.atmosphere));
+
+        // Damage and disturbance: every one of these is live-adjustable from
+        // the controls panel, so every one of them reads the chain.
+        const bool live_damage = chain.enabled();
+        row_live("row 21", "salt & pepper",
+                 live_damage ? fmt("%.0f %%", 100.0 * ln.salt_pepper_p) : std::string("off"),
+                 fmt("%.0f %%", 100.0 * scenario_.salt_pepper));
+        row_live("row 21", "poisson (shot)",
+                 std::string(live_damage && ln.poisson_enabled ? "on" : "off"),
+                 std::string(scenario_.noise_poisson ? "on" : "off"));
+        row_live("row 22", "read noise",
+                 live_damage ? fmt("sigma %.1f", ln.gaussian_sigma) : std::string("off"),
+                 fmt("sigma %.0f", scenario_.gaussian_sigma));
+        row_live("row 23", "jitter",
+                 fmt("%.0f px/frame", pipeline_.source().disturbance().jitter_px_per_frame()),
+                 fmt("%.0f px/frame", scenario_.jitter_px_per_frame));
+        row_live("row 24", "atmosphere",
+                 std::string(live_damage ? atmosphere_name(chain.atmosphere()) : "off"),
+                 std::string(atmosphere_name(scenario_.atmosphere)));
+        row_live("-",      "defects (hot/dead)",
+                 std::string(live_damage && chain.defects_enabled() ? "on" : "off"),
+                 std::string("on"));
         row("row 25", "platform",        "%zu component(s)", scenario_.platform.size());
-        row("§9.1",   "clutter",         "%d sources, %d decoy",
-            scenario_.static_sources, scenario_.decoy_beacons);
+        row_live("S9.1",   "clutter",
+                 fmt("%d sources, %d decoy", live_clutter, live_decoy),
+                 fmt("%d sources, %d decoy",
+                     scenario_.static_sources, scenario_.decoy_beacons));
 
         ImGui::EndTable();
     }
 
     ImGui::Separator();
-    ImGui::TextColored(kMutedCol, "Derived (design §1.4)");
+    ImGui::TextColored(kMutedCol, "Derived (design S1.4)");
     const auto cam = scenario_.camera_geometry();
     ImGui::Text("IFOV              %.3f urad/px", cam.ifov_urad());
     ImGui::Text("camera authority  %.1f px/frame",
@@ -1375,7 +1559,7 @@ int Dashboard::run(const Scenario& initial, ScreenshotJob job) {
     // apologised for in its caption.
     const int win_w = job_.path.empty() ? 1900 : 2400;
     const int win_h = job_.path.empty() ? 1100 : 1350;
-    window_ = glfwCreateWindow(win_w, win_h, "SAT — Satellite Adaptive Tracker",
+    window_ = glfwCreateWindow(win_w, win_h, "SAT - Satellite Adaptive Tracker",
                                nullptr, nullptr);
     if (!window_) {
         std::fprintf(stderr, "sat-tracker: could not create a window.\n"

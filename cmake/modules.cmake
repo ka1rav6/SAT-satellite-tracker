@@ -258,7 +258,12 @@ if(SAT_HAVE_GLFW)
         SOURCES
             src/gui/gl_texture.cpp
             src/gui/dashboard.cpp
-        PUBLIC_DEPS sat_core sat_engine sat_scenario sat_imgui
+        # sat_metrics: the dashboard's compliance panel reports the SAME
+        # §13.1 numbers as the headless summary, computed by the SAME
+        # MetricCollector. It used to keep its own rolling statistics, which
+        # drifted from the graded definitions the moment either changed — see
+        # the note on Dashboard::metrics_ (P1-8).
+        PUBLIC_DEPS sat_core sat_engine sat_scenario sat_imgui sat_metrics
     )
     target_compile_definitions(sat_gui
         PUBLIC  SAT_HAVE_GUI=1

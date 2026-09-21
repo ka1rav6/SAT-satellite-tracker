@@ -1,20 +1,41 @@
 {
-  "best_epoch": 3,
-  "best_val_rmse_px": 0.274356466201769,
-  "epochs_completed": 3,
-  "seed": 1337,
-  "history": [
-    {
-      "epoch": 1.0,
-      "val_rmse_px": 0.2822866085110767
-    },
-    {
-      "epoch": 2.0,
-      "val_rmse_px": 0.27837822062960776
-    },
-    {
-      "epoch": 3.0,
-      "val_rmse_px": 0.274356466201769
-    }
-  ]
+  "_README": [
+    "NOT A RESULT. These numbers were produced by training on DUMMY SHARDS —",
+    "synthetic patches from tools/make_dummy_shards.py, which exists to prove",
+    "the training loop runs end to end and explicitly refuses to impersonate a",
+    "real dataset. There is no trained model and no real dataset, because",
+    "--gen-dataset is not implemented (design 13.4, docs/SAT-ML.md 2.2).",
+    "",
+    "This file used to contain the metrics block alone. A JSON file whose only",
+    "content is 'best_val_rmse_px: 0.2744' reads as a measurement to a person",
+    "and parses as one to a script, and the disclaimer lived only in the model",
+    "card next to it. The disclaimer now lives in the file that carries the",
+    "number.",
+    "",
+    "And the number is not even good: the CLASSICAL centroider measures",
+    "0.141 px on the same graded metric (just sweep, clear air, 30 s). A",
+    "learned centroider that scores 0.274 px on dummy data would be a",
+    "REGRESSION if it were real. That ordering is the argument for targeting",
+    "CandidateNet first — the decoy and clutter cases, where the classical",
+    "path genuinely fails — rather than CentroidNet, where it does not."
+  ],
+  "status": "PRELIMINARY — dummy data, not a trained model",
+  "is_real_result": false,
+  "trained_on": "tools/make_dummy_shards.py output, not a captured dataset",
+  "blocked_by": "--gen-dataset is not implemented (design 13.4)",
+  "classical_baseline_px": 0.141,
+  "classical_baseline_source": "just sweep, clear air, clutter-free, 30 s per cell",
+  "model_card": "docs/models/centroidnet_v1.md",
+
+  "metrics_from_dummy_data": {
+    "best_epoch": 3,
+    "best_val_rmse_px": 0.274356466201769,
+    "epochs_completed": 3,
+    "seed": 1337,
+    "history": [
+      { "epoch": 1.0, "val_rmse_px": 0.2822866085110767 },
+      { "epoch": 2.0, "val_rmse_px": 0.27837822062960776 },
+      { "epoch": 3.0, "val_rmse_px": 0.274356466201769 }
+    ]
+  }
 }
