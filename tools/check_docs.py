@@ -31,6 +31,7 @@ step is mechanical rather than archaeological.
 """
 
 import glob
+import json
 import os
 import re
 import sys
@@ -52,6 +53,93 @@ REPO_DIRS = ("src", "tests", "tools", "scenarios", "cmake")
 
 # Headings of the form "## 3. Title" or "### 2.14 Title".
 HEADING = re.compile(r"^#{2,3} (\d+(?:\.\d+)?)[.\s]", re.M)
+
+# ---------------------------------------------------------------------------
+# P3-4 — numbers, not just links.
+#
+# This file used to check that every path, recipe and cross-reference in the
+# documentation resolved, and nothing at all about whether a quoted FIGURE was
+# still the figure the system produces. That is the drift that actually
+# misleads a reader: a dead link is obvious the moment it is clicked, while
+# "16.94 px" silently becoming wrong looks exactly like "16.94 px" being right.
+#
+# A document anchors a number by marking it:
+#
+#     Measured with jitter on: **16.94 px** <!--@ tracking.steady.rms_px 0.05 -->
+#
+# The marker names a dotted path into `metrics` in docs/baseline/run.json and
+# an absolute tolerance in the number's own units. The value checked is the
+# last number appearing BEFORE the marker on that line.
+#
+# WHY A MARKER AND NOT A PATTERN. The first design scanned prose for known
+# metric names and pulled the nearby number out. That is unmaintainable in both
+# directions: it silently stops checking when someone rewords a sentence, and
+# it matches the wrong number the moment a line mentions two. An explicit
+# marker says precisely which figure is anchored to precisely which
+# measurement, it is invisible in rendered Markdown, and a reader editing the
+# sentence around it can see that the number is under test.
+#
+# Refresh the baseline with `just baseline`, and read the diff.
+BASELINE = "docs/baseline/run.json"
+#
+# A trailing `%` means the document quotes a PERCENTAGE of a value run.json
+# stores as a fraction — `target_loss_post_acq` is 0.0, and the table says
+# "0.00 %". Without it every percentage in the documentation would have to be
+# left unanchored, which is three of the graded rows.
+NUMBER_MARK = re.compile(
+    r"([-+]?\d[\d,]*(?:\.\d+)?)"     # the number being anchored
+    # Units, bold markers and closing prose — but NO DIGITS, so the number
+    # captured is the one NEAREST the marker. Without that exclusion the lazy
+    # match ran to the leftmost number on the line and a table row read its own
+    # row index as the measurement: "documents 16 for acquisition.in_fov_s".
+    r"(?:[^<\n\d]*?)"
+    r"<!--@\s*([A-Za-z0-9_.]+)\s+([\d.]+)\s*(%?)\s*-->")
+
+
+def baseline_lookup(metrics, path):
+    """Walk a dotted path into the metrics object. Returns None if absent."""
+    node = metrics
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node if isinstance(node, (int, float)) else None
+
+
+def check_numbers(problems):
+    """Every marked number must still match the committed baseline."""
+    if not os.path.exists(BASELINE):
+        problems.append(f"{BASELINE}: missing; run `just baseline`")
+        return 0
+
+    try:
+        metrics = json.load(open(BASELINE, encoding="utf-8"))["metrics"]
+    except (ValueError, KeyError) as exc:
+        problems.append(f"{BASELINE}: not a readable run.json ({exc})")
+        return 0
+
+    checked = 0
+    for f in DOCS:
+        if not os.path.exists(f):
+            continue
+        for ln, line in enumerate(open(f, encoding="utf-8"), 1):
+            for quoted, path, tol, pct in NUMBER_MARK.findall(line):
+                checked += 1
+                actual = baseline_lookup(metrics, path)
+                if actual is None:
+                    problems.append(
+                        f"{f}:{ln}: no metric '{path}' in {BASELINE}")
+                    continue
+                if pct:
+                    actual *= 100.0
+                want = float(quoted.replace(",", ""))
+                if abs(want - actual) > float(tol):
+                    problems.append(
+                        f"{f}:{ln}: documents {want:g} for {path}, but the "
+                        f"baseline says {actual:.6g} "
+                        f"(tolerance {tol}) — re-measure, or `just baseline` "
+                        f"if the change was intended")
+    return checked
 
 
 def code_spans(text):
@@ -126,6 +214,8 @@ def main():
         for dup in sorted({n for n in nums if nums.count(n) > 1}):
             problems.append(f"{f}: section {dup} appears more than once")
 
+    numbers_checked = check_numbers(problems)
+
     if problems:
         print("DOC REFERENCES — problems found:\n")
         for p in problems:
@@ -134,7 +224,8 @@ def main():
         return 1
 
     print(f"ok — docs: every recipe, path, link and cross-reference in "
-          f"{len(DOCS)} documents resolves")
+          f"{len(DOCS)} documents resolves, and {numbers_checked} marked "
+          f"figure(s) still match {BASELINE}")
     return 0
 
 

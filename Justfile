@@ -284,6 +284,38 @@ cp107: build
 # Stage 15 — deliverables
 # ---------------------------------------------------------------------------
 
+# P3-4 — regenerate the committed baseline the documentation is checked against.
+#
+# `just gate-docs` verifies that every number a document MARKS is still the
+# number the system produces. That check needs something to compare against,
+# and comparing against a live run would make the gate re-run the simulator on
+# every commit and turn a documentation check into a three-minute one.
+#
+# So one canonical run is committed, and this recipe is how it is refreshed.
+# The command is fixed deliberately: the specification defaults, 30 s, default
+# seed. A baseline whose command can drift is not a baseline.
+#
+# WHEN TO RUN THIS. Only when a change is MEANT to move the numbers, and then
+# read the diff before committing it — `git diff docs/baseline/run.json` is the
+# most direct statement available of what a change did to the graded metrics.
+# Running it to make a red gate go green, without reading it, is the one way
+# to make this whole mechanism worthless.
+baseline: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{build_dir}}/sat-tracker --headless \
+        --scenario scenarios/spec_defaults.toml \
+        --duration 30 --out docs/baseline --no-report --no-csv
+    echo
+    echo
+    echo "  docs/baseline/run.json refreshed."
+    echo "  Read 'git diff docs/baseline/run.json' before you commit it."
+    echo
+    echo "  Expect noise in that diff: wall_time_s, the CPU times and the peak"
+    echo "  RSS differ on every run and on every machine. None of them is"
+    echo "  anchored by a document, and none of them should be. What matters"
+    echo "  in the diff is the accuracy and lock blocks."
+
 # CP 15.5 — a release archive: the binary, the scenarios, the docs, the clips.
 #
 # "Download onto a clean machine, unzip, run." The archive carries everything a

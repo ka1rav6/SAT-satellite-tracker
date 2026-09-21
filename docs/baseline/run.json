@@ -1,0 +1,231 @@
+{
+  "format": "sat-run-v1",
+  "provenance": {
+    "build": "cde78c2-dirty",
+    "seed": 42,
+    "scenario": "spec_defaults",
+    "ai_enabled": true,
+    "frame_fingerprint": 11514756392391408751
+  },
+  "metrics": {
+    "centroiding": {
+      "rmse_screen_px": 294.6335683646518,
+      "p95_screen_px": 483.3059777823643,
+      "max_screen_px": 526.2383859876613,
+      "rmse_image_px": 0.1974609832364257,
+      "p95_image_px": 0.3470009186127674,
+      "max_image_px": 0.8356577112345472,
+      "bias_x_px": -224.83221394370926,
+      "bias_y_px": 119.88808394788067,
+      "frames_scored": 900,
+      "rmse_boresight_px": 0.19746098323642663,
+      "p95_boresight_px": 0.3470009186127054,
+      "max_boresight_px": 0.835657711234638,
+      "pointing_drift_rms_px": 294.63425681290323,
+      "pointing_drift_max_px": 526.0546954538763
+    },
+    "tracking": {
+      "rms_px": 17.167637870904347,
+      "p95_px": 25.771646941005447,
+      "max_px": 54.511405602451944,
+      "mean_px": 15.845003708358275,
+      "rms_urad": 1872.6987852334378,
+      "frames_scored": 898,
+      "steady": {
+        "rms_px": 16.93901059744773,
+        "p95_px": 25.583855583414373,
+        "max_px": 33.609425899126315,
+        "mean_px": 15.703616194816158,
+        "frames_scored": 867
+      },
+      "transient": {
+        "rms_px": 22.64535564575036,
+        "max_px": 54.511405602451944,
+        "frames_scored": 31,
+        "settle_frames": 30
+      }
+    },
+    "acquisition": {
+      "acquired": true,
+      "cold_s": 0.06666666666666667,
+      "acquired_in_fov": true,
+      "in_fov_s": 0.06666666666666667
+    },
+    "reacquisition": {
+      "episodes": 0,
+      "mean_s": 0.0,
+      "p95_s": 0.0,
+      "max_s": 0.0
+    },
+    "fov_containment": {
+      "frac": 1.0,
+      "post_acq_frac": 1.0,
+      "post_acq_valid": true,
+      "frames_total": 900,
+      "frames_in_fov": 900,
+      "frames_post_acq": 897,
+      "frames_in_fov_post_acq": 897,
+      "frames_held_post_acq": 897
+    },
+    "lock": {
+      "retention_rate": 0.9977777777777778,
+      "target_loss_frac": 0.0022222222222222365,
+      "target_loss_post_acq": 0.0,
+      "frames_in_fov": 900,
+      "frames_confirmed": 898,
+      "frames_held_in_fov": 898,
+      "false_tracks": 0,
+      "false_track_rate_per_min": 0.0
+    },
+    "plant": {
+      "saturation_frac": 0.0
+    },
+    "handover": {
+      "reached": false,
+      "time_s": 0.0,
+      "best_rms_urad": 1502.2707161968694
+    },
+    "latency": {
+      "exposure_ms": 2.5,
+      "compute_ms": 3.2634117658524615,
+      "transport_ms": 10.0,
+      "total_ms": 15.763411765852462
+    },
+    "resources": {
+      "known": true,
+      "cpu_user_s": 3.005516,
+      "cpu_system_s": 0.120946,
+      "peak_rss_bytes": 134602752,
+      "hardware_threads": 8
+    },
+    "deadline": {
+      "model": "off",
+      "enabled": false,
+      "budget_ms": 0.0,
+      "budget_is_period": true,
+      "misses": 0,
+      "shed_frames": 0,
+      "worst_overrun_ms": 0.0,
+      "reproducible": true
+    },
+    "speed": {
+      "frame_ms_p50": 3.2634117658524615,
+      "frame_ms_p95": 3.4754866528664494,
+      "frame_ms_p99": 3.941877511129657,
+      "fps_from_p50": 306.4277730636857,
+      "fps_from_p95": 287.72948938682816,
+      "wall_time_s": 2.980267169,
+      "frames_total": 900,
+      "duration_s": 29.966666666666665
+    }
+  },
+  "scenario": {
+    "name": "spec_defaults",
+    "description": "Specification defaults (rows 1-25) with the beacon in view at t=0 — the default scenario",
+    "sim": {
+      "truth_hz": 300,
+      "camera_hz": 30,
+      "control_hz": 30,
+      "duration_s": 30.0,
+      "seed": 42
+    },
+    "world": {
+      "canvas_px": [
+        2000,
+        2000
+      ],
+      "edge_behaviour": "bounce"
+    },
+    "camera": {
+      "resolution": [
+        640,
+        480
+      ],
+      "fov_deg": [
+        4.0,
+        3.0
+      ],
+      "exposure_ms": 5.0,
+      "blur_substeps": 8,
+      "initial_pos_px": [
+        999.5,
+        999.5
+      ]
+    },
+    "targets": [
+      {
+        "kind": "target",
+        "intensity": 120.0,
+        "size_px": 10,
+        "shape": "square",
+        "random_initial": false,
+        "initial_px": [
+          1040.0,
+          1020.0
+        ],
+        "motion": [
+          {
+            "kind": "linear",
+            "offset_px": [
+              0.0,
+              0.0
+            ],
+            "velocity_px_s": [
+              22.0,
+              -11.0
+            ],
+            "accel_px_s2": [
+              0.0,
+              0.0
+            ],
+            "amplitude_px": [
+              0.0,
+              0.0
+            ],
+            "radius_px": 0.0,
+            "r0_px": 0.0,
+            "growth_px_s": 0.0,
+            "period_s": 1.0,
+            "phase_deg": 0.0,
+            "freq_ratio": 2.0,
+            "sigma_px_s": 0.0,
+            "tau_s": 1.0,
+            "axis": 0
+          }
+        ]
+      }
+    ],
+    "gimbal": {
+      "max_pan_dps": 5.0,
+      "max_tilt_dps": 5.0,
+      "max_accel_dps2": 50.0,
+      "time_constant_s": 0.02,
+      "latency_s": 0.01,
+      "encoder_lsb_urad": 20.0,
+      "resonance_hz": 0.0
+    },
+    "noise": {
+      "gaussian_sigma": 20.0,
+      "poisson": true,
+      "salt_pepper": 0.1,
+      "hot_pixels": 40
+    },
+    "atmosphere": {
+      "mode": "clear"
+    },
+    "disturbance": {
+      "jitter_px_per_frame": 20.0
+    },
+    "clutter": {
+      "static_sources": 0,
+      "decoy_beacons": 0
+    },
+    "requirements": {
+      "acquisition_s": 2.0,
+      "tracking_error_px": 10.0,
+      "target_loss_frac": 0.05,
+      "reacquisition_s": 1.0,
+      "min_fps": 20.0
+    }
+  }
+}

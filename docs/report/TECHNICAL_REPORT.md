@@ -215,13 +215,20 @@ row 11's random start pinned in view — 30 s, seed 42.
 
 | Row | Requirement | Measured | Verdict |
 |---:|---|---:|---|
-| 16 | Acquisition ≤ 2 s | **0.067 s** (in view) | **PASS** |
-| 17 | Tracking error ≤ 10 px | **16.94 px** steady RMS | **BOUND DERIVED** (§1.1: the floor is 16.33 px) |
-| 18 | Target loss < 5 % | **0.00 %** post-acquisition | **PASS** |
+| 16 | Acquisition ≤ 2 s | **0.067 s** (in view) <!--@ acquisition.in_fov_s 0.001 --> | **PASS** |
+| 17 | Tracking error ≤ 10 px | **16.94 px** steady RMS <!--@ tracking.steady.rms_px 0.05 --> | **BOUND DERIVED** (§1.1: the floor is 16.33 px) |
+| 18 | Target loss < 5 % | **0.00 %** post-acquisition <!--@ lock.target_loss_post_acq 0.01 % --> | **PASS** |
 | 19 | Re-acquisition ≤ 1 s | **0.109 s** mean over 200 runs | **PASS** |
-| 20 | Processing ≥ 20 FPS | **394 FPS** p50 | **PASS** |
-| — | Centroiding error (60 % of BP marks) | **0.197 px** image-frame | — |
-| ★ | **FOV containment** — the PS's own objective | **100.00 %** | — |
+| 20 | Processing ≥ 20 FPS | **306 FPS** p50 | **PASS** |
+| — | Centroiding error (60 % of BP marks) | **0.197 px** image-frame <!--@ centroiding.rmse_image_px 0.01 --> | — |
+| ★ | **FOV containment** — the PS's own objective | **100.00 %** <!--@ fov_containment.frac 0.01 % --> | — |
+
+Five of those figures carry an anchor comment naming the metric in
+`docs/baseline/run.json` they are checked against; `just gate-docs` fails if
+any of them drifts. Rows 19 and 20 are not anchored, and for different reasons:
+row 19 is a mean over the 200-run sweep rather than a single run, and row 20's
+frame rate is a property of the machine, so pinning it would make the gate fail
+on any hardware but this one.
 
 Cold acquisition is reported separately and marked BOUND DERIVED (§1.2).
 
