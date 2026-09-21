@@ -234,6 +234,20 @@ nlohmann::ordered_json metrics_json(const RunMetrics& m) {
             {"peak_rss_bytes",   m.peak_rss_bytes},
             {"hardware_threads", m.hardware_threads},
         }},
+        // P1-10. `model` is here so that `misses: 0` can be read correctly:
+        // with the model off it means "nothing was measured", and with it on
+        // it means "the system kept up". Those are the same number and
+        // completely different claims.
+        {"deadline", {
+            {"model",            m.deadline_model},
+            {"enabled",          m.deadline_enabled},
+            {"budget_ms",        m.deadline_budget_ms},
+            {"budget_is_period", m.deadline_budget_is_period},
+            {"misses",           m.deadline_misses},
+            {"shed_frames",      m.shed_frames},
+            {"worst_overrun_ms", m.worst_overrun_ms},
+            {"reproducible",     m.run_reproducible},
+        }},
         {"speed", {
             {"frame_ms_p50", m.frame_ms_p50},
             {"frame_ms_p95", m.frame_ms_p95},

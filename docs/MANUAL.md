@@ -71,6 +71,9 @@ just headless "--scenario scenarios/compliance.toml --duration 20"
 | `--seed N` | override the scenario's seed |
 | `--duration S` | override its length |
 | `--stages` | per-stage p50/p95/p99 against §15's budget (CP 14.4) |
+| `--realtime` | measure each frame against a wall-clock deadline and shed work when it overruns. **Runs in this mode are not bit-reproducible** and say so in the report |
+| `--frame-budget-ms X` | the deadline, in milliseconds. Defaults to one camera period (33.33 ms at 30 Hz), which is when the next frame arrives whether this one has finished or not |
+| `--inject-stall MS@FRAME` | charge an extra `MS` milliseconds to frame `FRAME`, e.g. `--inject-stall 50@60`. Deterministic: the wall clock is never read, so the run stays reproducible and the miss count is exact |
 | `--no-ai` | INV-7's switch; recorded in every artifact |
 | `--no-csv` | write `run.json` but not `centroid.csv` |
 | `--no-report` | skip `report.html` |

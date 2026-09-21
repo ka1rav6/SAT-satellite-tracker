@@ -40,6 +40,7 @@
 #include "core/arena.hpp"
 #include "core/profile.hpp"
 #include "core/triple_buffer.hpp"
+#include "engine/deadline.hpp"
 #include "engine/snapshot.hpp"
 #include "engine/synthetic_source.hpp"
 #include "engine/video_source.hpp"
@@ -175,6 +176,12 @@ struct FrameRecord {
     /// is: the claim "the detector covers the whole frame every N frames" is
     /// only checkable if the bands it actually swept are on the record.
     DetectRoi  roi_band{};
+    /// P1-10. The load-shedding rung this frame was processed at (0 = full
+    /// quality), and whether the frame that preceded it missed its deadline.
+    /// On the record per frame because "the system degraded gracefully" is a
+    /// claim about WHEN, and a run total cannot answer that.
+    int        shed_level      = 0;
+    bool       deadline_missed = false;
     TrackMode  mode        = TrackMode::Idle;
     TrackState track_state = TrackState::Deleted;
     bool       has_lock    = false;   ///< Confirmed or Coasting
@@ -437,6 +444,54 @@ public:
 
     [[nodiscard]] const FrameRecord& last()     const noexcept { return last_; }
 
+    // -----------------------------------------------------------------------
+    // P1-10 — the real-time deadline model. See engine/deadline.hpp for the
+    // policy and for why the clock is kept out of it.
+    // -----------------------------------------------------------------------
+
+    /// Where the governor's frame costs come from.
+    enum class DeadlineMode {
+        /// No deadline. The default, and what every existing run does: the
+        /// loop is a synchronous pull and the simulated clock advances one
+        /// camera period per frame however long that frame took.
+        Off,
+        /// Costs come from an INJECTED schedule and the wall clock is never
+        /// read. Fully deterministic, so INV-3 holds and a test can assert
+        /// exactly which frames missed. This is what CI uses.
+        Injected,
+        /// Costs are measured with the real wall clock. This is the honest
+        /// demo mode and it is NOT REPRODUCIBLE — two runs will shed on
+        /// different frames. Such runs report that they are not reproducible
+        /// rather than leaving a reader to assume that they are.
+        Realtime,
+    };
+
+    /// `budget_us` is what one frame is allowed; the natural value is the
+    /// camera period (33,333 us at 30 Hz), because that is when the next frame
+    /// arrives whether this one has finished or not.
+    void set_deadline(DeadlineMode mode, double budget_us) noexcept {
+        deadline_mode_ = mode;
+        deadline_.configure(budget_us, mode != DeadlineMode::Off);
+    }
+
+    /// Deterministic stall injection: charge `us` of extra cost to frame
+    /// `frame`. This is how the audit's "inject a 50 ms stall, assert the run
+    /// completes, reports the miss and re-acquires" becomes a test that
+    /// asserts a NUMBER instead of asserting that something happened.
+    void inject_stall(int64_t frame, double us) noexcept {
+        stall_frame_ = frame;
+        stall_us_    = us;
+    }
+
+    [[nodiscard]] const DeadlineGovernor& deadline() const noexcept { return deadline_; }
+    [[nodiscard]] DeadlineMode deadline_mode() const noexcept { return deadline_mode_; }
+
+    /// False when this run's results cannot be reproduced bit-for-bit because
+    /// its control flow depended on the wall clock. Reported, never inferred.
+    [[nodiscard]] bool reproducible() const noexcept {
+        return deadline_mode_ != DeadlineMode::Realtime;
+    }
+
     /// The per-frame fingerprints (CP 2.5). Empty unless publish_snapshots.
     [[nodiscard]] const std::vector<FrameFingerprint>& fingerprints() const noexcept {
         return fingerprints_;
@@ -585,6 +640,11 @@ private:
     [[nodiscard]] DetectRoi refresh_band(int width, int height,
                                          DetectRoi window) const noexcept;
 
+    /// P1-10: what this frame cost, in microseconds, as the governor should
+    /// see it. Which clock that reads depends on deadline_mode_; see the
+    /// enum for why there are two and why the default is neither.
+    [[nodiscard]] double frame_cost_us(double measured_us) const noexcept;
+
     PipelineConfig  cfg_{};
     SyntheticSource source_{};
     std::unique_ptr<VideoSource> video_{};   ///< non-null in video modes
@@ -607,6 +667,15 @@ private:
     ModeFsm             fsm_{};
     SearchPattern       search_{};
     bool                perception_ready_ = false;
+
+    // --- P1-10: the deadline model ----------------------------------------
+    DeadlineGovernor deadline_{};
+    DeadlineMode     deadline_mode_ = DeadlineMode::Off;
+    /// The injected schedule. One stall is enough to exercise every branch of
+    /// the policy, and a general schedule would be a configuration format
+    /// nobody asked for. -1 means no stall.
+    int64_t          stall_frame_ = -1;
+    double           stall_us_    = 0.0;
 
     /// Gains and the plant model together — see the note in pipeline.cpp.
     void reset_controller();

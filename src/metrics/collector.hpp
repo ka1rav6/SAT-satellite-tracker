@@ -292,6 +292,33 @@ struct RunMetrics {
     uint64_t peak_rss_bytes   = 0;
     unsigned hardware_threads = 0;
 
+    // --- real-time deadline — P1-10 ----------------------------------------
+    //
+    // Filled by the caller from Pipeline::deadline(), and zero unless a
+    // deadline was actually set. `deadline_model` distinguishes "0 misses
+    // because the system kept up" from "0 misses because nothing was measured"
+    // — which are the same number and completely different claims.
+    //
+    //   off       no deadline; the loop is a synchronous pull (the default)
+    //   injected  deterministic cost schedule; the run is reproducible
+    //   realtime  the wall clock; the run is NOT reproducible, and says so
+    const char* deadline_model     = "off";
+    bool        deadline_enabled   = false;
+    double      deadline_budget_ms = 0.0;
+    /// Whether that budget IS the camera period or was overridden on the
+    /// command line. The report says which, because "3.00 ms one camera
+    /// period" on a 30 Hz run is simply false.
+    bool        deadline_budget_is_period = true;
+    int64_t     deadline_misses    = 0;
+    /// Frames PROCESSED in a degraded configuration. Not the same as misses:
+    /// one miss sheds for the whole recovery window afterwards, so this is the
+    /// number that says how much of the run ran at reduced quality.
+    int64_t     shed_frames        = 0;
+    double      worst_overrun_ms   = 0.0;
+    /// False only when the wall clock steered control flow. Reported so a
+    /// reader never has to assume.
+    bool        run_reproducible   = true;
+
     // --- provenance --------------------------------------------------------
     std::string scenario_name;
     uint64_t    seed = 0;

@@ -167,7 +167,8 @@ set_tests_properties(supervisor PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})
 # SAT_ALLOC_TRAP. An invariant checker nobody has watched fail is one you are
 # trusting rather than using.
 sat_add_test(robustness
-    SOURCES robustness/test_alloc.cpp
+    SOURCES robustness/test_deadline.cpp
+            robustness/test_alloc.cpp
     DEPS    sat_core sat_engine sat_scenario sat_app sat_metrics sat_search
 )
 # A longer budget than the control suite: this one runs 40 fuzzed scenarios and

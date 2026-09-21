@@ -1699,6 +1699,114 @@ sat-tracker --bench
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
 
+## 14.0g AMENDMENT — a real-time deadline model, and the load-shedding rung
+## that had to be removed after it was measured
+
+**Status:** adopted. **Applies to:** §10.4 (robustness), §15 (the frame
+budget), INV-3.
+
+The loop is a synchronous pull: `source_.next()` hands over the next frame
+whenever it is asked, and the simulated clock advances one camera period per
+frame however long that frame took. "Processing slower than the camera"
+therefore **cannot happen by construction** — which is not a real-time
+argument, it is the absence of one.
+
+**What was added.** `engine/deadline.hpp`, a governor that is given each
+frame's cost, counts the frames that overran their budget, and sheds work to
+try to get back inside it. Three CLI flags: `--realtime`, `--frame-budget-ms`,
+`--inject-stall MS@FRAME`. Off by default; a run without one of those flags is
+byte-identical to what it was before, and the report prints nothing, because a
+`deadline misses: 0` line on a run with no deadline reads as "the system kept
+up" when it means "nothing was measured".
+
+### The determinism problem, and the split that resolves it
+
+A deadline policy driven by the wall clock is **not reproducible**. Two runs of
+one scenario shed on different frames and end with different digests, and
+INV-3 is the invariant the entire evidence base rests on. So the two halves are
+separated:
+
+| | Where costs come from | Reproducible? |
+|---|---|---|
+| **Policy** (`DeadlineGovernor`) | given to it — a plain number | n/a: a pure function |
+| `--inject-stall` | a deterministic schedule; the clock is never read | **yes**, bit-exact |
+| `--realtime` | the wall clock | **no**, and the report says so |
+
+That split is what lets a test assert *"a 50 ms stall produces exactly one
+miss, sheds for exactly eight frames, and re-acquires"* and have the assertion
+mean something. CI uses the injected model only.
+
+### The ladder, and the rung that was measured and removed
+
+| Rung | Action | Saving | Costs |
+|---|---|---:|---|
+| 1 | skip the 3×3 median | ~635 µs | impulse rejection (row 21) |
+| 2 | halve the window floor | ~400 µs | part of CFAR's training annulus |
+| ~~3~~ | ~~fall back to the straw man~~ | ~~~17 ms~~ | **removed — see below** |
+
+Shedding reacts in one frame and recovers over eight, deliberately: a miss
+means the next frame is already in trouble, while un-shedding early oscillates
+into the configuration that just proved too expensive.
+
+**Rung 3 was removed after it was measured.** When shedding actually *reduces*
+the frame's cost — the ordinary case — two rungs are enough. `spec_defaults`
+over 20 s at a 4 ms wall-clock budget against a 3.06 ms p50:
+
+| | no deadline | 4 ms budget (597 frames shed) |
+|---|---:|---:|
+| retention | 99.67 % | **99.67 %** |
+| row 18 target loss | 0.00 % | **0.00 %** |
+| centroiding RMSE | 0.2010 px | 0.4018 px |
+| row 17 steady state | 17.063 px | **17.063 px** |
+
+Shedding costs 0.2 px of centroiding and buys the deadline. Row 17 does not
+move at all, because row 17 is jitter-limited at §1.3's 16.33 px floor and a
+fifth of a pixel of detector noise is invisible underneath it.
+
+But when shedding **cannot** reduce the cost — an external stall, CPU
+contention, anything the detector's own workload does not control — the ladder
+pins at its top rung for as long as the load lasts. With the straw man on that
+rung, that meant running the straw man for hundreds of consecutive frames, and
+the straw man locks onto the brightest thing in the frame. **Retention fell to
+26.7 %.** The system gave up the target to keep the frame rate, which is the
+wrong trade in every scenario this project has: a coarse-alignment loop that
+has lost the beacon is not degraded, it has failed.
+
+Both surviving rungs degrade how *well* the detector sees; neither changes
+*what* it looks for, so neither can walk the track onto a different object.
+The straw man is still runnable as §9.4's ablation arm — an experiment a person
+chooses, never a rung a governor escalates into. §9.4 already required that it
+"must never be the default"; this is the same rule applied to the default's
+failure path.
+
+### Shedding is gated on having a lock, and that was not obvious either
+
+The first implementation charged every frame against the deadline. Frames with
+no confirmed track get the whole frame (§14.0b rule 1) and legitimately cost
+19.0 ms on 640×480 — that is not a fault condition, it is what searching costs.
+Charging them climbed the ladder to the top within three frames of startup,
+**before any track had ever confirmed**, and the run then never acquired:
+retention 20.00 %, row 18 target loss 98.99 %, *identically for every budget
+from 4 ms to 12 ms* — the giveaway that the collapse happened during
+acquisition and had nothing to do with the budget.
+
+The ladder now only climbs while `track.drivable()`. Misses are still counted
+during search, because they are real and hiding them would flatter the report;
+what changed is that they no longer provoke a response that cannot help.
+Losing the lock also stands the ladder down, so that a held rung is never
+applied to the first frame after re-acquisition — the worst frame to degrade.
+
+### What this does not claim
+
+The deadline model does not make the simulator real-time. The loop is still a
+synchronous pull and the simulated clock still advances one period per frame;
+what `--realtime` adds is a *measurement* of whether that would have been
+sustainable, and a policy that responds when it would not. Dropping frames on
+the input side — a real camera's behaviour when the consumer falls behind — is
+not implemented, and `--video`'s decoder still blocks.
+
+---
+
 ## 14.0f AMENDMENT — §14.0b's periodic full-frame sweep is now a rotating
 ## row-band, and the reason it was disabled no longer applies
 

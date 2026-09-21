@@ -67,6 +67,27 @@ struct HeadlessOptions {
     /// Print CP 14.4's per-stage p50/p95/p99 against §15's budget.
     bool stage_timings = false;
 
+    // --- P1-10: the real-time deadline model -------------------------------
+    //
+    // Off unless asked for. See engine/deadline.hpp for why there are two
+    // clocks and why only one of them keeps INV-3.
+    //
+    //   realtime_deadline   --realtime: measure with the wall clock. Honest
+    //                       for a demo, NOT reproducible, and reported as such.
+    //   deadline_budget_ms  --frame-budget-ms X. 0 means "one camera period",
+    //                       which is the only value with a physical meaning:
+    //                       it is when the next frame arrives.
+    //   stall_frame/_ms     --inject-stall MS@FRAME. Deterministic, and the
+    //                       reason a deadline test can assert a number.
+    bool   realtime_deadline  = false;
+    double deadline_budget_ms = 0.0;
+    long   stall_frame        = -1;
+    double stall_ms           = 0.0;
+
+    [[nodiscard]] bool deadline_requested() const noexcept {
+        return realtime_deadline || stall_frame >= 0;
+    }
+
     // -----------------------------------------------------------------------
     // CP 10.1: `--set dotted.key=value`, applied to the scenario TOML before
     // it is parsed.

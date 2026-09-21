@@ -2,6 +2,8 @@
 
 #include "engine/pipeline.hpp"
 
+#include <chrono>
+
 #include "engine/truth_csv.hpp"
 #include "scenario/schema.hpp"
 
@@ -429,8 +431,16 @@ DetectRoi Pipeline::detect_window(int width, int height,
     const double ifov = cfg_.synthetic.camera.ifov_urad();
     const double sig_px = ifov > 0.0 ? trk.position_sigma_urad() / ifov : 0.0;
 
-    const double half = std::max(static_cast<double>(cfg_.roi.min_half_px),
-                                 cfg_.roi.sigma_margin * sig_px);
+    double half = std::max(static_cast<double>(cfg_.roi.min_half_px),
+                           cfg_.roi.sigma_margin * sig_px);
+
+    // P1-10 rung 2: halve the window when the deadline model says we are
+    // behind. The cost is real and is stated rather than hidden — §9.4.5's
+    // CFAR training annulus is 61 px across, so a halved floor starts clipping
+    // the ring the background estimate is built from, and the detector gets
+    // noisier exactly when it is under the most pressure. It is rung TWO for
+    // that reason: the median (rung 1) is cheaper to give up.
+    if (deadline_.decision().shrink_roi) half = std::max(8.0, half * 0.5);
     // A window that has grown past the frame is just the frame; saying so here
     // keeps the crop out of the hot path entirely on those frames.
     if (half * 2.0 >= static_cast<double>(std::min(width, height))) return full;
@@ -450,6 +460,40 @@ DetectRoi Pipeline::detect_window(int width, int height,
     if (w < 8 || h < 8) return full;
 
     return DetectRoi{cx0, cy0, w, h};
+}
+
+// ---------------------------------------------------------------------------
+// frame_cost_us — P1-10: what the governor is told this frame cost.
+//
+// The whole determinism argument for the deadline model lives in these few
+// lines, so they are worth stating plainly.
+//
+// In Injected mode the wall clock is NEVER READ. The cost is whatever the
+// injected schedule says and nothing else, so a run's sequence of deadline
+// misses, shed levels and therefore detections is a pure function of the
+// scenario and the injection — INV-3 holds exactly as it does with the model
+// switched off, and a test can assert that frame 45 missed and frames 46-53
+// ran degraded.
+//
+// In Realtime mode it is the measured time, and the run is NOT reproducible.
+// That is not a defect of this mode, it is what the mode MEANS: a real-time
+// system's behaviour depends on how fast the machine it is on happens to be.
+// It is reported (Pipeline::reproducible()) rather than left for a reader to
+// discover.
+// ---------------------------------------------------------------------------
+double Pipeline::frame_cost_us(double measured_us) const noexcept {
+    switch (deadline_mode_) {
+        case DeadlineMode::Off:
+            return 0.0;
+        case DeadlineMode::Injected:
+            // Nominal zero plus the injection. A frame with no stall against
+            // it can never miss, which is precisely what makes the test's
+            // expected miss count exact rather than machine-dependent.
+            return (frame_ == stall_frame_) ? stall_us_ : 0.0;
+        case DeadlineMode::Realtime:
+            return measured_us + ((frame_ == stall_frame_) ? stall_us_ : 0.0);
+    }
+    return 0.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +647,14 @@ Status Pipeline::build_from_video(const Scenario& sc,
 
 bool Pipeline::step() {
     SAT_ZONE(timers_, Stage::FrameTotal);
+
+    // P1-10. Read only in Realtime mode — see the observe() call at the bottom
+    // of this function. Taken here rather than inside the branch so that the
+    // span covers the whole frame including the sub-tick loop, which is what a
+    // real deadline would have to cover.
+    const auto frame_started = (deadline_mode_ == DeadlineMode::Realtime)
+                                   ? std::chrono::steady_clock::now()
+                                   : std::chrono::steady_clock::time_point{};
 
     // -----------------------------------------------------------------------
     // CP 14.3: the window INV-4 is about.
@@ -860,7 +912,29 @@ bool Pipeline::step() {
         // Stage::Centroid is now the leaf it was always meant to be, timed
         // around B12/B13 in perception/pipeline.cpp, and this is `perception`.
         SAT_ZONE(timers_, Stage::Perception);
-        if (cfg_.detector == PipelineConfig::Detector::Classical && perception_ready_) {
+
+        // ---------------------------------------------------------------
+        // P1-10's load shedding, applied here because this is where the
+        // money is: perception is 19.0 ms of a 20.3 ms full-frame budget.
+        // The rungs are applied in the order engine/deadline.hpp derives
+        // them, cheapest accuracy cost first.
+        //
+        // `shed` is read BEFORE the frame is processed and the governor is
+        // told the cost AFTER, which is the ordering the shed_frames count
+        // in DeadlineGovernor::observe depends on.
+        // ---------------------------------------------------------------
+        const ShedDecision shed = deadline_.decision();
+        rec.shed_level      = shed.level;
+        rec.deadline_missed = deadline_.last_missed();
+        perception_.set_median_enabled(!shed.skip_median);
+
+        // No shed rung can take the classical detector away. See ShedDecision
+        // in engine/deadline.hpp for the rung that used to and why it went.
+        const bool use_classical =
+            cfg_.detector == PipelineConfig::Detector::Classical
+            && perception_ready_;
+
+        if (use_classical) {
             rec.roi = detect_window(frame.width, frame.height, commanded);
             perception_.process(frame.pixels, frame.width, frame.height, rec.roi,
                                 ws_, dets_, &timers_);
@@ -1400,6 +1474,38 @@ bool Pipeline::step() {
 
         fingerprints_.push_back(fingerprint(snap, frame.pixels));
         snapshots_.publish();
+    }
+
+    // -----------------------------------------------------------------------
+    // P1-10: tell the governor what this frame cost, AFTER processing it and
+    // before the frame counter moves. The ordering matters twice over —
+    // DeadlineGovernor::observe charges the frame just finished to the level
+    // it actually ran at, and frame_cost_us() addresses the injected schedule
+    // by the frame index that is still current.
+    //
+    // The clock is read only when the model is on. In the default Off mode
+    // nothing here executes beyond a branch, so a run that does not ask for a
+    // deadline pays nothing for one and — more to the point — cannot have its
+    // behaviour influenced by a clock it never read.
+    // -----------------------------------------------------------------------
+    if (deadline_mode_ != DeadlineMode::Off) {
+        double measured_us = 0.0;
+        if (deadline_mode_ == DeadlineMode::Realtime) {
+            measured_us = std::chrono::duration<double, std::micro>(
+                              std::chrono::steady_clock::now() - frame_started)
+                              .count();
+        }
+        // `may_shed`: only while there is a lock to keep fed. See
+        // DeadlineGovernor::observe for the run this parameter's absence
+        // destroyed. drivable() covers Confirmed and Coasting — Coasting is
+        // included deliberately, because a coasting track is exactly the one
+        // that needs its next measurement to arrive on time.
+        deadline_.observe(frame_cost_us(measured_us),
+                          tracker_.track().drivable());
+        // The record carries the DECISION the frame ran under (set at the
+        // perception stage), not the one this observation just produced. A
+        // miss is attributed to the frame that missed.
+        rec.deadline_missed = deadline_.last_missed();
     }
 
     last_ = rec;

@@ -414,6 +414,16 @@ public:
 
     [[nodiscard]] const char* name() const noexcept { return "classical"; }
 
+    /// P1-10's cheapest load-shedding rung, as a one-word setter rather than a
+    /// reconfigure. The deadline governor toggles this per frame, and going
+    /// through configure() to flip one bool would run the blob reserve inside
+    /// the frame loop — harmless today because the capacity is already there,
+    /// and exactly the kind of thing that stops being harmless when someone
+    /// later adds an allocation to configure(). INV-4 is easier to keep than
+    /// to recover.
+    void set_median_enabled(bool on) noexcept { params_.median_enabled = on; }
+    [[nodiscard]] bool median_enabled() const noexcept { return params_.median_enabled; }
+
 private:
     PerceptionParams       params_{};
     std::vector<BlobAccum> blobs_;

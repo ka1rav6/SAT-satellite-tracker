@@ -630,6 +630,37 @@ std::string format_summary(const RunMetrics& m) {
              static_cast<double>(m.peak_rss_bytes) / (1024.0 * 1024.0));
     }
 
+    // --- real-time deadline — P1-10 ----------------------------------------
+    //
+    // Printed ONLY when a deadline was set. A "deadline misses: 0" line on a
+    // run with no deadline would be the most misleading line in the report:
+    // it reads as "the system kept up" when it means "nothing was measured".
+    // The absence of the block is the honest statement of the default, and
+    // the block itself names the model so the zero can be interpreted.
+    if (m.deadline_enabled) {
+        out += "\nREAL-TIME DEADLINE   (P1-10)\n";
+        line("  model             %8s     cost source; 'injected' is "
+             "deterministic, 'realtime' is the wall clock\n", m.deadline_model);
+        // The annotation is conditional because the label was a lie the moment
+        // --frame-budget-ms existed: it read "3.00 ms one camera period" on a
+        // 30 Hz run, where one camera period is 33.33 ms.
+        line("  budget            %8.2f ms%s\n", m.deadline_budget_ms,
+             m.deadline_budget_is_period ? "  one camera period"
+                                         : "  (overridden; one camera period is longer)");
+        line("  deadline misses   %8lld     frames that overran\n",
+             static_cast<long long>(m.deadline_misses));
+        line("  worst overrun     %8.2f ms\n", m.worst_overrun_ms);
+        line("  frames shed       %8lld     processed at reduced quality "
+             "(one miss sheds for the whole recovery window)\n",
+             static_cast<long long>(m.shed_frames));
+        if (!m.run_reproducible) {
+            out += "  NOTE  this run is NOT bit-reproducible: control flow "
+                   "depended on the wall clock.\n"
+                   "        Use the injected model for any number that has to "
+                   "be quotable.\n";
+        }
+    }
+
     return out;
 }
 

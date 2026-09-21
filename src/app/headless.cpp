@@ -85,6 +85,31 @@ int run_headless(const HeadlessOptions& opt) {
         return 1;
     }
 
+    // --- P1-10: the real-time deadline model --------------------------------
+    //
+    // Set BEFORE the run and never during it, because the mode decides whether
+    // the wall clock is read at all and a run that switched half way through
+    // would be neither reproducible nor real-time.
+    //
+    // The budget defaults to one camera period. That is the only value with a
+    // physical meaning: it is when the next frame arrives whether or not this
+    // one is finished, so a frame that takes longer has, by definition, fallen
+    // behind the sensor.
+    auto apply_deadline = [&](Pipeline& p) {
+        if (!opt.deadline_requested()) return;
+        const double budget_ms = opt.deadline_budget_ms > 0.0
+                                     ? opt.deadline_budget_ms
+                                     : 1e3 / static_cast<double>(std::max(1, sc.camera_hz));
+        // --realtime wins when both are given: asking for the wall clock and
+        // for an injected stall means "run against the real clock, and also
+        // make this one frame slow", which is a legitimate demo.
+        p.set_deadline(opt.realtime_deadline ? Pipeline::DeadlineMode::Realtime
+                                             : Pipeline::DeadlineMode::Injected,
+                       budget_ms * 1e3);
+        if (opt.stall_frame >= 0)
+            p.inject_stall(opt.stall_frame, opt.stall_ms * 1e3);
+    };
+
     // --- build --------------------------------------------------------------
     Pipeline pipe;
     if (opt.video_path.empty()) {
@@ -220,6 +245,8 @@ int run_headless(const HeadlessOptions& opt) {
     // INV-3 forbids the simulation from depending on it; measuring how long the
     // simulation took is the one legitimate use, and it happens in app/ rather
     // than in any module the invariant checker scans.
+    apply_deadline(pipe);
+
     const auto t0 = std::chrono::steady_clock::now();
     while (pipe.step()) {
         const FrameRecord& r = pipe.last();
@@ -311,6 +338,26 @@ int run_headless(const HeadlessOptions& opt) {
         m.hardware_threads = hardware_threads();
     }
 
+    // --- P1-10: the real-time deadline record -------------------------------
+    // Copied out of the governor rather than recomputed, so the report and the
+    // pipeline cannot disagree about how many frames missed — which is exactly
+    // the divergence P1-8 found between the dashboard and the run report.
+    {
+        const DeadlineGovernor& dg = pipe.deadline();
+        m.deadline_enabled   = dg.enabled();
+        m.deadline_budget_ms = dg.budget_us() * 1e-3;
+        m.deadline_budget_is_period = !(opt.deadline_budget_ms > 0.0);
+        m.deadline_misses    = dg.misses();
+        m.shed_frames        = dg.shed_frames();
+        m.worst_overrun_ms   = dg.worst_overrun_us() * 1e-3;
+        m.run_reproducible   = pipe.reproducible();
+        switch (pipe.deadline_mode()) {
+            case Pipeline::DeadlineMode::Off:      m.deadline_model = "off";      break;
+            case Pipeline::DeadlineMode::Injected: m.deadline_model = "injected"; break;
+            case Pipeline::DeadlineMode::Realtime: m.deadline_model = "realtime"; break;
+        }
+    }
+
     // --- run.json (CP 7.4) --------------------------------------------------
     if (opt.write_artifacts) {
         uint64_t fp = 0;
@@ -367,9 +414,61 @@ int run_headless(const HeadlessOptions& opt) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// parse_deadline_flag — P1-10's three options, shared by --headless and
+// --video so the graded path and the benchmark path cannot drift apart. That
+// drift is not hypothetical: --video rejected --stages until P0-4, so the
+// benchmark could not be profiled through the command that runs it.
+//
+// Returns 1 if the flag was consumed, 0 if it is not one of ours, and -1 on a
+// malformed value (the caller turns that into exit code 2).
+// ---------------------------------------------------------------------------
+int parse_deadline_flag(const char* a, int& k, int argc, char** argv,
+                        HeadlessOptions& opt) {
+    if (std::strcmp(a, "--realtime") == 0) {
+        opt.realtime_deadline = true;
+        return 1;
+    }
+    if (std::strcmp(a, "--frame-budget-ms") == 0 && k + 1 < argc) {
+        opt.deadline_budget_ms = std::atof(argv[++k]);
+        if (!(opt.deadline_budget_ms > 0.0)) {
+            std::fprintf(stderr,
+                "sat-tracker: --frame-budget-ms wants a positive number of "
+                "milliseconds (got '%s'); omit it for one camera period\n",
+                argv[k]);
+            return -1;
+        }
+        return 1;
+    }
+    if (std::strcmp(a, "--inject-stall") == 0 && k + 1 < argc) {
+        // MS@FRAME. Both halves are required: a stall with no frame would have
+        // to pick one, and any choice would be arbitrary in a feature whose
+        // entire value is that it is deterministic.
+        const std::string v = argv[++k];
+        const size_t at = v.find('@');
+        if (at == std::string::npos || at == 0 || at + 1 >= v.size()) {
+            std::fprintf(stderr,
+                "sat-tracker: --inject-stall wants 'MS@FRAME', e.g. '50@60' "
+                "for a 50 ms stall on frame 60 (got '%s')\n", v.c_str());
+            return -1;
+        }
+        opt.stall_ms    = std::atof(v.substr(0, at).c_str());
+        opt.stall_frame = std::atol(v.substr(at + 1).c_str());
+        if (!(opt.stall_ms > 0.0) || opt.stall_frame < 0) {
+            std::fprintf(stderr,
+                "sat-tracker: --inject-stall wants a positive duration and a "
+                "non-negative frame index (got '%s')\n", v.c_str());
+            return -1;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 int headless_command(int argc, char* argv[], int& i) {
     HeadlessOptions opt;
     opt.scenario_path = std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml";
+
 
     for (int k = i + 1; k < argc; ++k) {
         const char* a = argv[k];
@@ -402,6 +501,8 @@ int headless_command(int argc, char* argv[], int& i) {
                 return 2;
             }
             opt.overrides.emplace_back(kv.substr(0, eq), kv.substr(eq + 1));
+        } else if (const int dl = parse_deadline_flag(a, k, argc, argv, opt); dl != 0) {
+            if (dl < 0) return 2;   // malformed value; the parser has explained
         } else if (std::strcmp(a, "--trace") == 0) {
             opt.write_trace = true;
         } else if (std::strcmp(a, "--stages") == 0) {
@@ -458,6 +559,9 @@ int video_command(int argc, char* argv[], int& i) {
         // file.
         // ------------------------------------------------------------------
         else if (std::strcmp(a, "--stages") == 0)                     opt.stage_timings = true;
+        else if (const int dl = parse_deadline_flag(a, k, argc, argv, opt); dl != 0) {
+            if (dl < 0) return 2;
+        }
         else if (std::strcmp(a, "--bench") == 0) {
             // Same meaning as on --headless: measure the pipeline, not the
             // logging. Drops the artifacts and the fingerprint copy.
