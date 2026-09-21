@@ -304,6 +304,10 @@ package: build
     cp -r scenarios "$stage/"
     cp README.md QUICKSTART.md "$stage/"
     cp docs/ARCHITECTURE.md docs/RESULTS.md docs/MANUAL.md docs/METRICS.md        docs/DEMO.md "$stage/docs/"
+    # The Technical Report is a submitted deliverable and the document that
+    # explains what the numbers in the others MEAN. An archive that ships the
+    # measurements without the argument for them is half an artifact.
+    cp docs/report/TECHNICAL_REPORT.md "$stage/docs/"
     # One clip, not all fourteen: the archive is for running the system, and
     # the awkward cases are a test fixture that only means anything next to the
     # test that interprets them.

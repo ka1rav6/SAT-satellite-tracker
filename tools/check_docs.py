@@ -37,7 +37,13 @@ import sys
 
 DOCS = ("README.md", "QUICKSTART.md", "docs/GUIDE.md", "docs/DEMO.md",
         "docs/MANUAL.md", "docs/RESULTS.md",
-        "docs/ARCHITECTURE.md", "docs/METRICS.md", "issues_till_now.md")
+        "docs/ARCHITECTURE.md", "docs/METRICS.md", "issues_till_now.md",
+        # The Technical Report is a submitted deliverable, and it is the
+        # document most likely to be read by someone who will never run a
+        # command in it. It is checked like every other document precisely
+        # because of that: it claimed `just dist` for a recipe named
+        # `just package`, and nothing caught it until it was listed here.
+        "docs/report/TECHNICAL_REPORT.md")
 CROSS_REF_DOCS = ("docs/RESULTS.md", "docs/METRICS.md",
                   "docs/ARCHITECTURE.md", "docs/MANUAL.md")
 
