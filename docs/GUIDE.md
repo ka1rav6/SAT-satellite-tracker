@@ -123,10 +123,27 @@ measured justification for every kernel in the detector.
 
 ![The straw-man detector losing lock at Full spec damage](img/06-strawman.png)
 
-The centroid marker in the camera view is sitting on a salt-and-pepper pixel
-rather than on the beacon, and the tracking-error trace has walked off the top
-of its axis. Nothing else about the run changed: same scenario, same seed, same
-damage. Only the detector.
+That figure is the ablation itself. It is the **same scenario, same seed, same
+damage and the same 120 clutter sources** as the priority-policy figure further
+down — `just screenshots` generates the two from identical command lines except
+for `--shot-strawman`. Only the detector differs, and the compliance table
+reads:
+
+| | classical (§9.4) | brightest pixel |
+|---|---:|---:|
+| tracking error, RMS | 63.7 px | **2,349 px** |
+| tracking error, worst | 208.7 px | **4,068.9 px** |
+| centroiding RMSE | 92.9 px | **616.0 px** |
+| false alarms | 0.0 % | **92.8 %** |
+| gimbal saturation | 5.1 % | **36.7 %** |
+
+Read the rest of the window and you can watch the failure happen. The mode
+transition list is thrashing `TRACK → REACQUIRE → TRACK` every two or three
+frames. The track is `Coasting` with 5 hits against 8 frames of age. And the
+screen overview shows the reported trail wandering off along a diagonal while
+the true path sits, untouched, on the other side of the canvas — the mount is
+chasing salt-and-pepper noise, and it is chasing it at a third of its rate
+limit.
 
 ### Turn the feedforward off
 

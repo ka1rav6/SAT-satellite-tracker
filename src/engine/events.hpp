@@ -107,7 +107,12 @@ public:
     [[nodiscard]] bool has_occlusions() const noexcept { return has_occlusions_; }
 
     /// The gust offset in force at `t_s`, screen pixels. Zero outside any gust.
-    [[nodiscard]] void gust_offset(double t_s, double& dx, double& dy) const noexcept;
+    ///
+    /// Not [[nodiscard]]: it returns void and writes through `dx`/`dy`, so
+    /// there is nothing to discard. GCC warned about the attribute on every
+    /// translation unit that included this header, which is the kind of noise
+    /// that trains people to stop reading warnings.
+    void gust_offset(double t_s, double& dx, double& dy) const noexcept;
 
     [[nodiscard]] size_t count() const noexcept { return events_.size(); }
     [[nodiscard]] const std::vector<ScheduledEvent>& events() const noexcept {

@@ -105,24 +105,33 @@ does not exist in the video path Benchmark Performance-2 grades.
 - [-] **Emitter splat, the last 5.8×.** Closed as *not worth it*: 231 µs against
       a 2,618 µs frame, and the remaining cost is the outer-product store, which
       is already close to memory bandwidth for the footprint it covers.
-- [~] **The old entry, kept for its argument:** Two further levers, neither taken
-      yet: a Gaussian clutter source is drawn out to 6σ, which is 2.9× more area
-      than the 3.5σ at which its contribution drops below one 8-bit grey level
-      (6σ is required for the *graded* beacon, where truncation biases the
-      centroid — it is not required for clutter); and the inner row loop still
-      carries a per-pixel branch that blocks vectorisation.
-- [ ] **Damage chain.** Five separate full-frame passes (atmosphere, shot noise,
-      read noise, fixed pattern, quantise) over a 1.2 MB float buffer, each one
-      reading and writing it. Two `next_normal()` calls per pixel, each a
-      Marsaglia polar rejection loop with a `log` and a `sqrt`. Needs fusing to a
-      single pass and a vectorised generator.
-- [ ] **The detector runs full-frame in every mode.** 640 × 480 = 307,200
-      pixels of median, top-hat, two summed-area tables, matched filter and two
-      CFAR passes, on every frame, including frames where the tracker already
-      knows where the target is to within a few pixels.
-- [ ] **AVX2 kernels (CP 14.2's second half).** The build has no `-march`
-      beyond baseline x86-64, so every kernel is SSE2. The host supports AVX2
-      and AVX-VNNI.
+#### The original diagnoses, kept because the argument is the record
+
+These four are the entries as first written, before anything was done about
+them. They are checked off against the fixes above rather than deleted: what
+was wrong and *why it was wrong* is the part worth keeping, and a list that
+only shows the answer teaches nobody where the 16× came from.
+
+- [x] **Emitter splat — two further levers.** Both taken. A Gaussian clutter
+      source was drawn to 6σ, 2.9× more area than the 3.5σ at which its
+      contribution drops below one 8-bit grey level (6σ is required for the
+      *graded* beacon, where truncation biases the centroid; it is not required
+      for clutter), and the inner row loop carried a per-pixel branch that
+      blocked vectorisation. 621 µs → 147 µs.
+- [x] **Damage chain.** Was five separate full-frame passes (atmosphere, shot
+      noise, read noise, fixed pattern, quantise) over a 1.2 MB float buffer,
+      each reading and writing all of it, with two `next_normal()` calls per
+      pixel — each a Marsaglia polar rejection loop with a `log` and a `sqrt`.
+      Now one fused pass, one Gaussian draw (variances add), an inverse-CDF
+      sampler built for the call rate, and an AVX2 path. 12,079 µs → 1,395 µs.
+- [x] **The detector ran full-frame in every mode.** 307,200 pixels of median,
+      top-hat, two summed-area tables, matched filter and two CFAR passes on
+      every frame, including frames where the tracker already knew where the
+      target was to within a few pixels. §14.0b's detection window fixed it.
+      17,309 µs → 1,275 µs.
+- [~] **AVX2 kernels (CP 14.2's second half).** The damage chain has its AVX2
+      path with runtime dispatch. The van Herk opening, the matched filter and
+      CFAR do not — see the open entry above, which is the live half of this.
 
 ### 1.5 Downstream of the frame budget
 

@@ -465,6 +465,14 @@ public:
 
     [[nodiscard]] const PipelineConfig& config() const noexcept { return cfg_; }
 
+    /// The classical detector, for read-only inspection. The dashboard reads
+    /// `last_blob_count()` and `last_blob_overflow()` from it: §14.0e bounds
+    /// the blob table, and a bound whose overflow nothing displays is a bound
+    /// that silently changes the answer.
+    [[nodiscard]] const ClassicalPerception& perception() const noexcept {
+        return perception_;
+    }
+
     [[nodiscard]] const Tracker&       tracker()  const noexcept { return tracker_; }
     [[nodiscard]] const ModeFsm&       fsm()      const noexcept { return fsm_; }
     [[nodiscard]] const SearchPattern& search()   const noexcept { return search_; }

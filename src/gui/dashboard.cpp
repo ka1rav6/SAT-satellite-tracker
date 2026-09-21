@@ -1277,6 +1277,21 @@ void Dashboard::draw_scenario_panel() {
                       / (deg_to_urad(scenario_.max_pan_dps) / cam.ifov_urad()
                          / scenario_.camera_hz));
     ImGui::Text("emitters in world %zu", pipeline_.source().emitters().n);
+
+    // §9.4.6's blob table is bounded (design amendment §14.0e). Show the count
+    // always, and shout when the bound binds: a truncated frame produces a
+    // SHORTER detection list, which is indistinguishable from a clean frame
+    // unless something says so.
+    const size_t blobs    = pipeline_.perception().last_blob_count();
+    const size_t overflow = pipeline_.perception().last_blob_overflow();
+    if (overflow > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f),
+                           "blobs             %zu  (+%zu DROPPED, table full)",
+                           blobs, overflow);
+    } else {
+        ImGui::Text("blobs             %zu / %zu", blobs,
+                    ClassicalPerception::kBlobReserve);
+    }
     ImGui::End();
 }
 
@@ -1378,6 +1393,13 @@ int Dashboard::run(const Scenario& initial, ScreenshotJob job) {
     }
 
     rebuild(initial);
+
+    // After rebuild(), because rebuild() constructs the pipeline and the
+    // detector is pipeline state. Before the first step, so every frame in the
+    // shot ran through the detector the figure claims to be showing.
+    if (!job_.path.empty() && job_.strawman) {
+        pipeline_.set_detector(DetectorKind::BrightestPixel);
+    }
 
     int64_t shot_countdown = job_.path.empty() ? -1 : job_.after_frames;
 

@@ -178,6 +178,7 @@ int gui_command(int argc, char* argv[], int& i) {
         else if (std::strcmp(a, "--shot-supervisor") == 0) { job.supervisor = true; }
         else if (std::strcmp(a, "--shot-damage")     == 0) { job.damage = true; }
         else if (std::strcmp(a, "--shot-random")     == 0) { job.random_start = true; }
+        else if (std::strcmp(a, "--shot-strawman")   == 0) { job.strawman = true; }
         else break;
         i = k;
     }
@@ -203,6 +204,7 @@ void print_usage() {
     std::printf("  --gui [--scenario F] open the live dashboard (design §12)\n");
     std::printf("      [--shot FILE] [--shot-after N] [--shot-imm]\n");
     std::printf("      [--shot-supervisor] [--shot-clutter N] [--shot-damage]\n");
+    std::printf("      [--shot-strawman]\n");
     std::printf("                       run N frames, save the window to FILE, exit.\n");
     std::printf("                       Every figure in docs/MANUAL.md is made this\n");
     std::printf("                       way; `just screenshots` regenerates them all\n");

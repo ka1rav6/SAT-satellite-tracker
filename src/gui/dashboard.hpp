@@ -120,6 +120,10 @@ struct ScreenshotJob {
     int  clutter      = -1;    ///< >= 0 overrides the clutter count
     bool damage       = false; ///< start with the damage chain on
     bool random_start = false; ///< honour spec row 11 instead of centring
+    /// Run CP 4.11's straw man (brightest pixel) instead of §9.4's detector.
+    /// The guide's ablation figure has to SHOW the straw man selected, which
+    /// means the shot has to switch it rather than describe it.
+    bool strawman     = false;
     /// Panel to bring to the front of its tab bar before the shot is taken.
     /// Docked panels share a tab bar, so a figure OF a panel has to ask for it.
     std::string focus;

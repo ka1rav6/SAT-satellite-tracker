@@ -755,7 +755,10 @@ screenshots: build
     shot 03-priority  --scenario scenarios/compliance.toml --shot-after 200                       --shot-clutter 120 --shot-damage --shot-focus priority
     shot 04-strategy  --scenario scenarios/supervisor/weather_change.toml                       --shot-after 500 --shot-supervisor --shot-damage                       --shot-focus strategy
     shot 05-fsm       --scenario scenarios/baseline.toml --shot-after 60                       --shot-focus fsm --shot-random
-    shot 06-strawman  --scenario scenarios/compliance.toml --shot-after 150                       --shot-clutter 120 --shot-damage --shot-focus tracking
+    # CP 4.11's ablation. Identical to 03-priority's configuration except for
+    # --shot-strawman, so the figure IS the comparison: same scenario, same
+    # seed, same damage, same clutter, only the detector differs.
+    shot 06-strawman  --scenario scenarios/compliance.toml --shot-after 150                       --shot-clutter 120 --shot-damage --shot-focus tracking                       --shot-strawman
     echo "docs/img/ regenerated"
 
 # CP 14.4 — per-stage p50/p95/p99 from the SHIPPED binary, against §15's budget.
