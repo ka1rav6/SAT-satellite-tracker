@@ -233,10 +233,24 @@ RunMetrics MetricCollector::finish(const StageTimers& timers,
 std::string format_summary(const RunMetrics& m) {
     std::string out;
     char b[512];
+    // __attribute__((format)) cannot be applied to a generic lambda, and
+    // without it GCC cannot see that `fmt` is always a literal at the call
+    // site — it only sees snprintf handed a runtime pointer, which is
+    // -Wformat-security's whole point. The format strings below are all
+    // literals in this function, so the check is satisfied by inspection;
+    // the pragma says so at the narrowest scope that works rather than
+    // turning the warning off for the translation unit.
+#if defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wformat-security"
+#endif
     auto line = [&](const char* fmt, auto... args) {
         std::snprintf(b, sizeof b, fmt, args...);
         out += b;
     };
+#if defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 
     line("scenario            %s  (seed %llu, %lld frames, %.2f s simulated)\n\n",
          m.scenario_name.c_str(), static_cast<unsigned long long>(m.seed),

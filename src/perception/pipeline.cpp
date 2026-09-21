@@ -324,8 +324,6 @@ void ClassicalPerception::process(std::span<const uint8_t> pixels,
                                   0, width - 1);
         const int cy = std::clamp(static_cast<int>(std::lround(d.centroid_image.y)),
                                   0, height - 1);
-        const size_t idx = static_cast<size_t>(cy) * static_cast<size_t>(width)
-                         + static_cast<size_t>(cx);
         // The stronger of the two detectors' SNRs at this candidate, so
         // ranking reflects whichever saw the target more clearly. Evaluated
         // here rather than read from a full-image map; see cfar.cpp.

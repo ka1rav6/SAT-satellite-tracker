@@ -81,6 +81,16 @@ int64_t run(const Scenario& sc) {
 
 }  // namespace
 
+// Whether CP 14.3's trap is actually armed in THIS build. Written once, here,
+// so no test has to put a #if inside a macro argument list — which is
+// undefined behaviour ([cpp.replace]/11) and which GCC warns about.
+#if defined(SAT_ALLOC_TRAP)
+constexpr const char* kTrapNote = " (trap ARMED)";
+#else
+constexpr const char* kTrapNote =
+    " (trap not armed — Release; `just test-debug` is where this bites)";
+#endif
+
 TEST_CASE("CP 14.3: a full run completes with no steady-state allocation") {
     // The specification's own defaults, clutter and all — the configuration
     // that produces the most blobs and therefore the most pressure on every
@@ -89,13 +99,12 @@ TEST_CASE("CP 14.3: a full run completes with no steady-state allocation") {
     sc.static_sources = 120;
     sc.decoy_beacons  = 1;
     const int64_t frames = run(sc);
-    MESSAGE(frames << " frames with 120 clutter sources, no allocation in any of them"
-#if defined(SAT_ALLOC_TRAP)
-            << " (trap ARMED)"
-#else
-            << " (trap not armed — Release; `just test-debug` is where this bites)"
-#endif
-    );
+    // The conditional text is chosen OUTSIDE the macro. Preprocessor
+    // directives inside a macro's argument list are undefined behaviour in
+    // C++ ([cpp.replace]/11) and GCC says so; that a message says whether the
+    // trap was armed is worth keeping, so it is a variable instead.
+    MESSAGE(frames << " frames with 120 clutter sources, no allocation in any "
+                      "of them" << kTrapNote);
     CHECK(frames > 150);
 }
 
