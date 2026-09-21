@@ -142,7 +142,14 @@ target_compile_definitions(test_loop PRIVATE
 # multi-minute runtime, and then time out.
 sat_add_test(control
     SOURCES control/test_stage10.cpp
+            control/test_imm_smith_benefit.cpp
     DEPS    sat_core sat_plant sat_control sat_engine sat_perception sat_scenario
+)
+# P2-11's ablations run real scenarios from the repository, because the whole
+# point of the question is whether the benefit shows up on the SHIPPED
+# configurations rather than on a fixture written to flatter it.
+target_compile_definitions(test_control PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 math(EXPR SAT_CONTROL_TIMEOUT "${SAT_TEST_TIMEOUT} * 3")
 set_tests_properties(control PROPERTIES TIMEOUT ${SAT_CONTROL_TIMEOUT})

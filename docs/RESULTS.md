@@ -384,6 +384,71 @@ CT [0.44, 0.53] — they sum to 1 to float epsilon, they move, and none reaches
 zero (zero is absorbing). Peak cross-axis position correlation **0.041**,
 which is §10.2's predicted anisotropy arriving with the coordinate-turn model.
 
+### P2-11 — both of them, on the graded metric this time
+
+CP 10.4 and CP 10.5 above measure the Smith predictor and the IMM on
+hand-built control fixtures in their own units. The question that decides
+whether either earns its complexity is narrower: **what does it do to
+specification row 17, on scenarios this project ships?** Everything below is
+row 17's steady-state tracking RMS over 30 s, one flag apart.
+
+**The IMM: a large benefit where it applies, a small cost where it does not.**
+
+| `scenarios/control/figure8.toml` (spec row 12's mandatory motion) | row 17 steady state |
+|---|---:|
+| single CV filter | 21.877 px |
+| **IMM (CV/CA/CT)** | **17.223 px** |
+| | **−21.3 %** |
+
+| `scenarios/spec_defaults.toml` (a drifting target) | row 17 steady state |
+|---|---:|
+| single CV filter | 16.932 px |
+| IMM (CV/CA/CT) | 17.276 px |
+| | +2.0 % |
+
+That is the ordinary IMM trade and not a defect: a model set richer than the
+truth pays for the models it does not need, because the mixing step keeps
+probability on CA and CT modes that never apply and their process noise
+inflates the covariance of a target that is simply drifting. The verdict is
+**justified, and correctly opt-in** — on by default in the manoeuvring
+scenarios, off in the specification defaults.
+
+`tests/control/test_imm_smith_benefit.cpp` pins both halves. The first asserts
+the benefit exceeds 15 % on figure-8, so a filter change that quietly erodes
+the IMM's justification is reported rather than absorbed. The second asserts
+the cost stays under 10 % on a non-manoeuvring target — and if a future change
+ever makes the IMM free there, that test going red is how somebody finds out
+it should become the default.
+
+**The Smith predictor: no benefit anywhere in the specification's range.**
+
+Row 17 with the jitter floor removed (`disturbance.jitter_px_per_frame=0`), so
+the loop's own error is visible instead of being buried under §1.3's 16.33 px:
+
+| `gimbal.latency_s` | off | on | |
+|---|---:|---:|---:|
+| **0.010 s** (the specification's own value) | 0.300 px | 0.302 px | −0.7 % |
+| 0.030 s | 0.297 px | 0.304 px | −2.4 % |
+| 0.060 s | 0.296 px | 0.308 px | −4.1 % |
+| 0.070 s | 0.297 px | 0.309 px | −4.0 % |
+| 0.080 s | 0.295 px | 0.311 px | −5.4 % |
+| 0.090 s | 0.300 px | 0.319 px | −6.3 % |
+| 0.100 s | 0.330 px | 0.313 px | **+5.2 %** |
+
+It is a net cost at **every** transport delay up to 90 ms, and the single
+figure where it wins is at 100 ms — where the *uncompensated* number has itself
+started to climb (0.295 → 0.330 px). So the win at 100 ms is the predictor
+rescuing a loop that is beginning to break, not a general benefit; the
+specification's `gimbal.latency_s` is 0.010 s, an order of magnitude below it.
+
+This agrees with CP 10.4's phase-margin argument rather than merely repeating
+it: the delay costs about 19.9° out of a margin starting near 90°, so there is
+no bandwidth for a predictor to buy back. **Verdict: kept, off, and now with
+the measurement written down** — §10.4 anticipated exactly this ("if it
+destabilises, leave it off — optional"), and the number is recorded here so
+that the next person to notice the flag exists does not switch it on expecting
+a win.
+
 ### CP 10.6 — where the loop breaks down
 
 200 px/s target, row 25's platform motion scaled up and opposing it:
