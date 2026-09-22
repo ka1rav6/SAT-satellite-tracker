@@ -126,6 +126,37 @@ def normalise_scalars(scalars: np.ndarray, snr_range=(0.0, 40.0), size_range=(0.
     return out
 
 
+# MotionNet windows (SAT-ML.md §6.2). Dummy fixtures scale by 1e5 µrad so
+# relative az/el stay O(1). Real training later overwrites these with
+# train-split constants written to models/motion_norm.json.
+REGIME_LINE, REGIME_CIRCULAR, REGIME_FIG8, REGIME_RANDOM = 0, 1, 2, 3
+HISTORY_LEN, HORIZON = 30, 15
+TRACK_FEATURE_COUNT = 4  # az, el, az_rate, el_rate
+TRACK_POS_SCALE = 1.0e5
+TRACK_RATE_SCALE = 1.0e5
+
+
+def normalise_track_history(hist: np.ndarray) -> np.ndarray:
+    """Subtract last-sample az/el; leave rates; scale by dummy constants.
+
+    Runtime C++ feeds tracker state, not FrameTruth. Making the window
+    relative to the newest sample keeps the GRU from wasting capacity on
+    absolute boresight, which changes every time the gimbal slews.
+    """
+    if hist.shape[-2:] != (HISTORY_LEN, TRACK_FEATURE_COUNT):
+        raise ValueError(
+            f"expected history (..., {HISTORY_LEN}, {TRACK_FEATURE_COUNT}), got {hist.shape}"
+        )
+    out = hist.astype(np.float32).copy()
+    last_az = np.expand_dims(out[..., -1, 0], axis=-1)
+    last_el = np.expand_dims(out[..., -1, 1], axis=-1)
+    out[..., 0] -= last_az
+    out[..., 1] -= last_el
+    out[..., 0:2] /= TRACK_POS_SCALE
+    out[..., 2:4] /= TRACK_RATE_SCALE
+    return out
+
+
 def normalise_candidate_scalars(scalars: np.ndarray) -> np.ndarray:
     """Normalise CandidateNet's six tracker features without changing priors.
 
@@ -231,4 +262,56 @@ class CandidatePatchDataset(Dataset):
             normalise_patch(self.patches[idx])[None, ...],
             normalise_candidate_scalars(self.scalars[idx]),
             self.labels[idx],
+        )
+
+
+class TrackWindowDataset(Dataset):
+    """Load MotionNet (30, 4) history windows split by (scenario, seed).
+
+    Shards are written by tools/make_dummy_shards.py (task=tracks) or by
+    ml/datagen.py after sat-tracker --gen-dataset. Labels are future
+    FrameTruth residuals; the history is tracker state, including coasts.
+    """
+
+    def __init__(self, root: Path, split: str):
+        self.root = Path(root)
+        self.split = split
+        shard_paths = sorted((self.root / split).glob("shard_*.npz"))
+        if not shard_paths:
+            raise FileNotFoundError(
+                f"No track shards found under {self.root / split}. "
+                "Generate dummy data with tools/make_dummy_shards.py "
+                "or real tracks with sat-tracker --gen-dataset."
+            )
+        arrays = {key: [] for key in ("history", "future", "regime", "run_id",
+                                      "scenario_id", "seed")}
+        for shard_path in shard_paths:
+            with np.load(shard_path) as z:
+                for key in arrays:
+                    arrays[key].append(z[key])
+        self.history = np.concatenate(arrays["history"], axis=0).astype(np.float32)
+        self.future = np.concatenate(arrays["future"], axis=0).astype(np.float32)
+        self.regime = np.concatenate(arrays["regime"], axis=0).astype(np.int64)
+        self.run_id = np.concatenate(arrays["run_id"], axis=0)
+        self.scenario_id = np.concatenate(arrays["scenario_id"], axis=0)
+        self.seed = np.concatenate(arrays["seed"], axis=0)
+        if self.history.shape[1:] != (HISTORY_LEN, TRACK_FEATURE_COUNT):
+            raise ValueError(
+                f"expected history (N, {HISTORY_LEN}, {TRACK_FEATURE_COUNT}), "
+                f"got {self.history.shape}"
+            )
+        if self.future.shape[1:] != (HORIZON, 2):
+            raise ValueError(
+                f"expected future (N, {HORIZON}, 2), got {self.future.shape}"
+            )
+
+    def __len__(self) -> int:
+        return len(self.history)
+
+    def __getitem__(self, idx: int):
+        # 0-d int64 so tests can assert regime.ndim == 0 and still int().
+        return (
+            normalise_track_history(self.history[idx]),
+            self.future[idx].astype(np.float32),
+            np.int64(self.regime[idx]),
         )
