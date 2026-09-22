@@ -365,6 +365,7 @@ add_dependencies(test_video sat-tracker)
 # --- MotionNet ONNX wrapper (INV-7) ----------------------------------------
 sat_add_test(ai
     SOURCES ai/test_motion_net.cpp
+            ai/test_motion_in_loop.cpp
     DEPS    sat_core sat_ai sat_tracking sat_engine sat_scenario sat_perception
 )
 target_compile_definitions(test_ai PRIVATE

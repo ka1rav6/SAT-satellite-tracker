@@ -316,6 +316,8 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     cfg.supervisor.enabled          = sc.supervisor_enabled;
     cfg.supervisor.min_dwell_frames = sc.supervisor_dwell;
     cfg.supervisor.ema_tau_frames   = sc.supervisor_ema_tau;
+    cfg.ai_enabled      = sc.ai_enabled;
+    cfg.motion_net_path = sc.motion_net;
 
     // §7.2's closed forms turned into the filter's q. The largest acceleration
     // over every target, because the tracker does not know which one it will
@@ -344,6 +346,21 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     // events from, and a timeline is a property of the run's description
     // rather than of its resolved configuration.
     // -----------------------------------------------------------------------
+    motion_net_.reset();
+    last_forecast_ = MotionForecast{};
+    motion_prior_applies_ = 0;
+    motion_coast_uses_ = 0;
+    if (sc.ai_enabled && !sc.motion_net.empty()) {
+        auto loaded = MotionNet::load(sc.motion_net);
+        if (!loaded) {
+            std::fprintf(stderr,
+                         "sat-tracker: MotionNet '%s': %s — using IMM (INV-7)\n",
+                         sc.motion_net.c_str(), loaded.error().c_str());
+        } else {
+            motion_net_ = std::make_unique<MotionNet>(std::move(*loaded));
+        }
+    }
+
     events_.build(sc);
     have_target_index_ = false;
     {
@@ -1076,6 +1093,21 @@ bool Pipeline::step() {
         pc.speed_max_urad_s = tracker_.params().max_target_speed_urad_s;
         tracker_.set_priority_context(pc);
         associated = tracker_.step(frame_dt, std::span<Measurement>(meas_), frame_);
+        // B19: MotionNet beside IMM. Priors on a hit; gated forecast only
+        // while coasting. Locked Track aim stays IMM at the Smith horizon
+        // (INV-2) and never writes a forecast into the centroid (INV-9).
+        last_forecast_ = MotionForecast{};
+        if (motion_net_) {
+            float hist[Track::kHistory][4];
+            tracker_.track().history_tensor(hist);
+            last_forecast_ = motion_net_->run(hist);
+            if (last_forecast_.valid && associated >= 0
+                && tracker_.track().drivable() && tracker_.track().uses_imm()) {
+                tracker_.track().set_regime_prior(
+                    last_forecast_.regime, last_forecast_.confidence);
+                ++motion_prior_applies_;
+            }
+        }
     }
     if (associated >= 0) {
         // The tracker's choice, not the brightest one. This is what the log and
@@ -1283,6 +1315,18 @@ bool Pipeline::step() {
             // the screen centre — the same thing, correctly.
             search_.recentre(tracker_.has_track() ? trk.position() : search_.centre());
             search_.restart();
+        }
+        // Coast + valid MotionNet: recentre search/reacquire on the gated
+        // multi-step forecast. Locked Track never uses this path (INV-2).
+        if (last_forecast_.valid && trk.state() == TrackState::Coasting) {
+            const int k = std::min(std::max(trk.consecutive_misses() - 1, 0), 14);
+            const Angle2 mn = trk.position() + last_forecast_.step_urad[k];
+            const Angle2 imm_p = trk.predict_position(frame_dt * static_cast<double>(k + 1));
+            const double gate = static_cast<double>(k + 1) * trk.position_sigma_urad();
+            if ((mn - imm_p).norm() <= gate) {
+                search_.recentre(mn);
+                ++motion_coast_uses_;
+            }
         }
         // CP 13.1/13.2: the closed-loop strategies need to know what this look
         // saw and how fast the target can move. The open-loop ones ignore both
