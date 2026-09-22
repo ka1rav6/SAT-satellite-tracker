@@ -1699,6 +1699,16 @@ sat-tracker --bench
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
 
+## 14.0h AMENDMENT — tracks-only `--gen-dataset` ships before centroid/candidate capture
+
+**Status:** adopted on branch `motion-predictor-ML-integration`. **Applies to:** §13.4, SAT-ML.md §2, CP 11.1 / CP 11.5.
+
+Design 13.4 still listed `--gen-dataset` as missing. This branch's assignment is MotionNet (M3), which needs `what = "tracks"` only: live tracker `[az, el, vaz, vel]` plus FrameTruth future angles, windowed in Python, split by `(scenario, seed)`.
+
+**What shipped.** `sat-tracker --gen-dataset --scenario F --out DIR` writes `raw/{name}_{seed}.csv` from `sat_app`. Labels never enter `sat_tracking` or `sat_ai` (INV-1). `ml/datagen.py` builds the shards.
+
+**What is not silently dropped.** The full centroid-patch and candidate-patch factories remain on the SAT-ML §2 / CP 11.1 remaining-work list. They are out of scope for this branch, not cancelled.
+
 ## 14.0g AMENDMENT — a real-time deadline model, and the load-shedding rung
 ## that had to be removed after it was measured
 

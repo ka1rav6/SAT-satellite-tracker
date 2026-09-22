@@ -361,6 +361,16 @@ target_compile_definitions(test_video PRIVATE
 )
 add_dependencies(test_video sat-tracker)
 
+# --- MotionNet tracks-only --gen-dataset (sat_app, INV-1) ------------------
+sat_add_test(dataset
+    SOURCES app/test_dataset.cpp
+    DEPS    sat_core sat_app sat_engine sat_scenario
+)
+target_compile_definitions(test_dataset PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+    SAT_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+)
+
 # ===========================================================================
 # End-to-end checks that run the real binary. These catch link and startup
 # breakage that a unit test linking a static library cannot.

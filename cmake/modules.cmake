@@ -428,6 +428,7 @@ sat_add_module(sat_app
         src/app/sweep.cpp
         src/app/calibrate.cpp
         src/app/verify_repro.cpp
+        src/app/dataset.cpp
     PUBLIC_DEPS sat_core sat_engine sat_metrics sat_scenario
 )
 target_compile_definitions(sat_app PRIVATE

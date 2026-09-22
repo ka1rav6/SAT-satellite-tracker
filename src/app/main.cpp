@@ -17,6 +17,7 @@
 #include "app/headless.hpp"
 #include "app/sweep.hpp"
 #include "app/verify_repro.hpp"
+#include "app/dataset.hpp"
 #include "scenario/schema.hpp"
 
 #if SAT_HAVE_GUI
@@ -245,8 +246,11 @@ void print_usage() {
     std::printf("                       frame fingerprints (CP 2.6, INV-3)\n");
     std::printf("  --no-simd            force the scalar damage chain (INV-3 cross-check)\n");
     std::printf("  --has-avx2           exit 0 if the vector damage chain is available\n");
+    std::printf("  --gen-dataset [--scenario F | --sweep FILE] [--out DIR]\n");
+    std::printf("                [--seed N] [--duration S] [--task tracks]\n");
+    std::printf("                       write tracker state + FrameTruth angles\n");
+    std::printf("                       for MotionNet (tracks-only; SAT-ML §6)\n");
     std::printf("  --help               print this message\n");
-    std::printf("\nStill to come from design 13.4: --gen-dataset.\n");
 }
 
 }  // namespace
@@ -285,6 +289,9 @@ int main(int argc, char* argv[]) {
         }
         if (std::strcmp(argv[i], "--verify-reproducibility") == 0) {
             return verify_reproducibility_command(argc, argv, i);
+        }
+        if (std::strcmp(argv[i], "--gen-dataset") == 0) {
+            return sat::gen_dataset_command(argc, argv, i);
         }
         // --------------------------------------------------------------
         // The damage chain's vector path, as an explicit switch.

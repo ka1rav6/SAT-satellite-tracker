@@ -18,3 +18,29 @@ def test_dummy_track_shards_are_run_disjoint_and_load(tmp_path: Path):
     assert fut.shape == (15, 2)
     assert regime.ndim == 0
     assert 0 <= int(regime) <= 3
+
+
+def test_datagen_windows_a_csv_into_run_disjoint_shards(tmp_path: Path):
+    """Python windowing must use tracker history and FrameTruth residuals."""
+    from ml.datagen import build_from_raw
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    # 50 frames: 30 hist + 15 future + a few extras. Seed 1 => train.
+    dt = 1.0 / 30.0
+    lines = ["frame,detected,track_az_urad,track_el_urad,track_vaz,track_vel,"
+             "truth_az_urad,truth_el_urad,regime,scenario_id,seed"]
+    for i in range(50):
+        az = 1000.0 * i * dt
+        lines.append(f"{i},1,{az},0,1000,0,{az},0,0,1,1")
+    (raw / "line_1.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    out = tmp_path / "packed"
+    counts = build_from_raw(raw, out)
+    assert counts["train"] >= 1
+    verify_split_disjoint(out)
+    data = TrackWindowDataset(out, "train")
+    hist, fut, regime = data[0]
+    assert hist.shape == (30, 4)
+    assert fut.shape == (15, 2)
+    assert int(regime) == 0
