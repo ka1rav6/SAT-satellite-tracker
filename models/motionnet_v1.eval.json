@@ -1,0 +1,21 @@
+{
+  "is_real_result": true,
+  "gate_passed": false,
+  "table": {
+    "cv_plus5_rmse": 2764.142578125,
+    "cv_plus15_rmse": 8292.4287109375,
+    "motion_plus5_rmse": 2763.68017578125,
+    "motion_plus15_rmse": 8291.701171875,
+    "regime_acc": 0.0,
+    "plus5_ratio": 0.9998327140041873,
+    "plus15_ratio": 0.9999122646587796,
+    "plus5_improvement": 0.0001672859958127273,
+    "plus15_improvement": 8.773534122040684e-05,
+    "gate_plus5": 0.0,
+    "gate_plus15": 0.0,
+    "gate_regime": 0.0,
+    "n_windows": 1568.0
+  },
+  "ckpt": "models\\motionnet_v1.pt",
+  "dataset": "data\\motion_v1"
+}
