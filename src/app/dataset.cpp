@@ -33,9 +33,16 @@ int dump_one_run(const Scenario& sc_in, const DatasetOptions& opt,
     if (opt.duration_s > 0.0) sc.duration_s = opt.duration_s;
     sc.ai_enabled = false;  // factory must not depend on the model it trains
 
-    const int regime = sc.targets.empty() || sc.targets[0].motion.empty()
-                           ? 0
-                           : regime_from_kind(sc.targets[0].motion[0].kind);
+    // Skip the centering `constant` stack entry. The official row-12 kind is
+    // the first moving component (linear / circular / lissajous / ou_noise).
+    int regime = 0;
+    if (!sc.targets.empty()) {
+        for (const auto& m : sc.targets[0].motion) {
+            if (m.kind == "constant") continue;
+            regime = regime_from_kind(m.kind);
+            break;
+        }
+    }
 
     Pipeline pipe;
     pipe.build_from_scenario(sc);

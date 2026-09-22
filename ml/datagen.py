@@ -11,7 +11,10 @@ import argparse
 import csv
 import hashlib
 import json
+import subprocess
+import tomllib
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -166,17 +169,105 @@ def build_from_raw(raw_dir: Path, out_dir: Path,
     return counts
 
 
+@dataclass(frozen=True)
+class MotionSweep:
+    """Python-side factory list. Not a SAT SweepSpec (those have one base)."""
+
+    scenarios: list[str]
+    holdout: list[str]
+    seed_start: int
+    seed_end: int
+    duration_s: float
+    include_dropouts: bool
+
+
+def load_motion_sweep(path: Path) -> MotionSweep:
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    motion = data.get("motion", {})
+    capture = data.get("capture", {})
+    return MotionSweep(
+        scenarios=list(motion.get("scenarios", [])),
+        holdout=list(motion.get("holdout", [])),
+        seed_start=int(motion.get("seed_start", 1)),
+        seed_end=int(motion.get("seed_end", 1)),
+        duration_s=float(motion.get("duration_s", 20.0)),
+        include_dropouts=bool(capture.get("include_dropouts", True)),
+    )
+
+
+def capture_motion_sweep(sweep: MotionSweep, sat_tracker: Path, out_dir: Path,
+                         seed_end: int | None = None, duration_s: float | None = None
+                         ) -> Path:
+    """Invoke sat-tracker --gen-dataset once per (scenario, seed)."""
+    raw = out_dir / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    last = seed_end if seed_end is not None else sweep.seed_end
+    dur = sweep.duration_s if duration_s is None else duration_s
+    files = list(sweep.scenarios) + list(sweep.holdout)
+    if not files:
+        raise ValueError(f"{sweep} has no scenarios")
+    for scenario in files:
+        for seed in range(sweep.seed_start, last + 1):
+            cmd = [
+                str(sat_tracker),
+                "--gen-dataset",
+                "--scenario", scenario,
+                "--out", str(out_dir),
+                "--task", "tracks",
+                "--seed", str(seed),
+                "--duration", str(dur),
+            ]
+            subprocess.run(cmd, check=True)
+    return raw
+
+
+def scenario_id_from_name(name: str) -> int:
+    """Must match sat::scenario_id_from_name in src/app/dataset.cpp (FNV-1a)."""
+    h = 2166136261
+    for byte in name.encode("utf-8"):
+        h ^= byte
+        h = (h * 16777619) & 0xFFFFFFFF
+    return h & 0x7FFFFFFF
+
+
+def holdout_ids_from_csvs(raw_dir: Path, holdout_stems: set[str]) -> set[int]:
+    ids: set[int] = set()
+    for csv_path in raw_dir.glob("*.csv"):
+        stem = csv_path.stem  # name_seed
+        name = stem.rsplit("_", 1)[0]
+        if name in holdout_stems:
+            run = load_run_csv(csv_path)
+            ids.add(int(run["scenario_id"][0]))
+    return ids
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--raw", type=Path, required=True, help="directory of --gen-dataset CSVs")
+    parser.add_argument("--raw", type=Path, help="directory of --gen-dataset CSVs")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--require-dropouts", action="store_true")
     parser.add_argument("--test-scenario-id", type=int, action="append", default=[])
+    parser.add_argument("--sweep", type=Path, help="ml/sweeps/motion_v1.toml")
+    parser.add_argument("--bin", type=Path, default=Path("build/sat-tracker"))
+    parser.add_argument("--seed-end", type=int, default=None)
+    parser.add_argument("--duration", type=float, default=None)
     args = parser.parse_args()
+
+    test_ids = set(args.test_scenario_id)
+    raw = args.raw
+    require = args.require_dropouts
+    if args.sweep is not None:
+        sweep = load_motion_sweep(args.sweep)
+        raw = capture_motion_sweep(sweep, args.bin, args.out, args.seed_end, args.duration)
+        require = require or sweep.include_dropouts
+        holdout_stems = {Path(p).stem for p in sweep.holdout}
+        test_ids |= holdout_ids_from_csvs(raw, holdout_stems)
+    if raw is None:
+        raise SystemExit("need --raw or --sweep")
     counts = build_from_raw(
-        args.raw, args.out,
-        test_scenario_ids=set(args.test_scenario_id) or None,
-        require_dropouts=args.require_dropouts,
+        raw, args.out,
+        test_scenario_ids=test_ids or None,
+        require_dropouts=require,
     )
     print(f"wrote track shards {counts} -> {args.out}")
 

@@ -1,0 +1,85 @@
+# MotionNet factory — official row 12 straight line (regime 0).
+#
+# Weather is on so CFAR actually misses. A clean-lock-only factory would
+# train a net that never sees the dropout the online path has to survive.
+
+[meta]
+name        = "motion_linear"
+description = "MotionNet: linear + haze so detections drop"
+
+[input]
+mode = "synthetic"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 20
+seed       = 1
+
+[world]
+canvas_px      = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+exposure_ms    = 5.0
+blur_substeps  = 8
+initial_pos_px = [400.0, 400.0]
+
+[target]
+kind       = "target"
+intensity  = 90.0
+size_px    = 10
+initial_px = [400.0, 400.0]
+shape.type = "square"
+
+[[target.motion]]
+kind          = "linear"
+velocity_px_s = [80.0, 40.0]
+
+[gimbal]
+max_pan_dps      = 5.0
+max_tilt_dps     = 5.0
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 20.0
+salt_pepper    = 0.10
+hot_pixels     = 40
+
+[atmosphere]
+mode = "haze"
+
+[disturbance]
+jitter_px_per_frame = 8.0
+
+[clutter]
+static_sources = 40
+decoy_beacons  = 0
+
+[control]
+kp   = 8.0
+ki   = 2.0
+kd   = 0.15
+k_ff = 1.0
+
+[tracking]
+imm = true
+
+[ai]
+enabled          = true
+fallback_on_fail = true
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0
