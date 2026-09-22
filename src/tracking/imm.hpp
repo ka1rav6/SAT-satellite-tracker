@@ -88,6 +88,9 @@ enum class ImmMode : uint8_t { CV = 0, CA = 1, CT = 2 };
 
 [[nodiscard]] const char* imm_mode_name(ImmMode m) noexcept;
 
+/// Official row 12 → MotionNet / IMM regime id. Integer values match Python.
+enum class MotionRegime : uint8_t { Line = 0, Circular = 1, Figure8 = 2, Random = 3 };
+
 // ---------------------------------------------------------------------------
 // ImmParams
 // ---------------------------------------------------------------------------
@@ -198,8 +201,13 @@ public:
     /// The CT model's current turn-rate estimate, rad/s. Signed.
     [[nodiscard]] double turn_rate_rad_s() const noexcept { return omega_; }
 
+    /// Rebuild the stay/go Markov matrix, then boost this frame's regime.
+    /// Boosts do not stack: every call starts from the default p_stay matrix.
+    void set_regime_prior(MotionRegime regime, float confidence) noexcept;
+
 private:
     void  mix() noexcept;
+    void  reset_pi() noexcept;
     Mat6  transition(ImmMode m, double dt) const noexcept;
     Mat6  process_noise(ImmMode m, double dt) const noexcept;
     void  combine() noexcept;
@@ -210,6 +218,7 @@ private:
     std::array<Vec6, M> xm_{};     ///< per-mode state
     std::array<Mat6, M> Pm_{};     ///< per-mode covariance
     std::array<double, M> mu_{};   ///< mode probabilities
+    std::array<std::array<double, M>, M> pi_{};  ///< Markov P(to j | from i)
 
     Vec6 x_ = Vec6::Zero();        ///< combined
     Mat6 P_ = Mat6::Identity();

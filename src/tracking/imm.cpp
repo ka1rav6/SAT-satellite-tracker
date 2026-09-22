@@ -77,6 +77,7 @@ void ImmFilter::init(Angle2 pos, Rate2 rate, double pos_sigma_urad,
     nis_   = 0.0;
     omega_ = 0.0;
     initialised_ = true;
+    reset_pi();
 }
 
 void ImmFilter::init(const Measurement& m, const ImmParams& p) noexcept {
@@ -183,12 +184,50 @@ ImmFilter::Mat6 ImmFilter::process_noise(ImmMode m, double T) const noexcept {
 // so a filter that is about to take over inherits an honest uncertainty instead
 // of the confident covariance of a model that was wrong.
 // ---------------------------------------------------------------------------
-void ImmFilter::mix() noexcept {
-    // Markov matrix, strongly diagonal, off-diagonals sharing the remainder
-    // equally. Asymmetric transitions (CV -> CT more likely than CT -> CV, say)
-    // would be a claim about the target's behaviour that nothing here supports.
+void ImmFilter::reset_pi() noexcept {
     const double stay = p_.p_stay;
     const double go   = (1.0 - stay) / static_cast<double>(M - 1);
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < M; ++j) {
+            pi_[static_cast<size_t>(i)][static_cast<size_t>(j)] = (i == j) ? stay : go;
+        }
+    }
+}
+
+void ImmFilter::set_regime_prior(MotionRegime regime, float confidence) noexcept {
+    if (!initialised_) return;
+    const float c = std::clamp(confidence, 0.0f, 1.0f);
+    reset_pi();  // never stack boosts across frames
+    auto boost_to = [&](ImmMode mode, double extra) {
+        const size_t j = static_cast<size_t>(mode);
+        for (int i = 0; i < M; ++i) {
+            pi_[static_cast<size_t>(i)][j] *= extra;
+        }
+    };
+    switch (regime) {
+        case MotionRegime::Line:
+            boost_to(ImmMode::CV, 1.0 + 0.5 * static_cast<double>(c));
+            break;
+        case MotionRegime::Circular:
+        case MotionRegime::Figure8:
+            boost_to(ImmMode::CT, 1.0 + 0.5 * static_cast<double>(c));
+            break;
+        case MotionRegime::Random:
+            boost_to(ImmMode::CA, 1.0 + 0.25 * static_cast<double>(c));
+            boost_to(ImmMode::CT, 1.0 + 0.25 * static_cast<double>(c));
+            break;
+    }
+    for (int i = 0; i < M; ++i) {
+        double row = 0.0;
+        for (int j = 0; j < M; ++j) row += pi_[static_cast<size_t>(i)][static_cast<size_t>(j)];
+        if (row <= 0.0) continue;
+        for (int j = 0; j < M; ++j) pi_[static_cast<size_t>(i)][static_cast<size_t>(j)] /= row;
+    }
+}
+
+void ImmFilter::mix() noexcept {
+    // mix() reads the stored pi_. set_regime_prior rebuilds it from stay/go
+    // each frame so a confident figure-8 does not permanently lock CT.
 
     std::array<double, M> c{};
     std::array<std::array<double, M>, M> w{};   // w[j][i] = mu_{i|j}
@@ -196,12 +235,12 @@ void ImmFilter::mix() noexcept {
     for (int j = 0; j < M; ++j) {
         double cj = 0.0;
         for (int i = 0; i < M; ++i) {
-            const double pij = (i == j) ? stay : go;
+            const double pij = pi_[static_cast<size_t>(i)][static_cast<size_t>(j)];
             cj += pij * mu_[static_cast<size_t>(i)];
         }
         c[static_cast<size_t>(j)] = cj;
         for (int i = 0; i < M; ++i) {
-            const double pij = (i == j) ? stay : go;
+            const double pij = pi_[static_cast<size_t>(i)][static_cast<size_t>(j)];
             w[static_cast<size_t>(j)][static_cast<size_t>(i)] =
                 cj > 0.0 ? pij * mu_[static_cast<size_t>(i)] / cj : 1.0 / M;
         }

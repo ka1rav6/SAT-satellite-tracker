@@ -266,6 +266,7 @@ sat_add_test(tracking
     SOURCES tracking/test_measurement.cpp
             tracking/test_kalman.cpp
             tracking/test_track.cpp
+            tracking/test_imm_prior.cpp
             tracking/test_mode_fsm.cpp
             tracking/test_search.cpp
             tracking/test_priority.cpp
