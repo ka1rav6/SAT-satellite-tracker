@@ -811,6 +811,35 @@ make-test-videos:
 calibrate *ARGS: build
     "{{build_dir}}/sat-tracker" --calibrate-centroid {{ARGS}}
 
+# ---------------------------------------------------------------------------
+# MotionNet (SAT-ML §6) — SAT simulator tracks only, no KITTI/MOT/TLE
+# ---------------------------------------------------------------------------
+
+# Dump four official row-12 regimes + weather, then window into shards.
+# Default is a short factory (seeds 1-4, 8 s) so a laptop can finish. Raise
+# --seed-end / --duration for the scored train.
+motion-data seed_end="4" duration="8":
+    "{{build_dir}}/sat-tracker" --version
+    .venv/Scripts/python.exe -m ml.datagen --sweep ml/sweeps/motion_v1.toml \
+        --bin "{{build_dir}}/sat-tracker" --out data/motion_v1 \
+        --seed-end {{seed_end}} --duration {{duration}} --require-dropouts
+
+# Train on data/motion_v1 train/val only (ML-7: test is evaluate-only).
+train-motion:
+    .venv/Scripts/python.exe -m ml.train_motion --dataset data/motion_v1 --out models/motionnet_v1.pt
+
+# SAT-ML §6.6 gate on the held-out test split.
+eval-motion:
+    .venv/Scripts/python.exe -m ml.evaluate_motion --dataset data/motion_v1 --ckpt models/motionnet_v1.pt
+
+# Export the checkpoint to fixed-shape ONNX (opset 17).
+export-motion:
+    .venv/Scripts/python.exe -m ml.export models/motionnet_v1.pt models/motionnet_v1.onnx --task motion
+
+# Official reacq / lock ablation: same seeds with and without the model.
+motion-ablate:
+    .venv/Scripts/python.exe tools/motion_ablate.py --bin "{{build_dir}}/sat-tracker"
+
 # The Stage 9 suite, verbose — the numbers ARE the checkpoints: the S-curve's
 # amplitude, the correction's gain, and the ratio to §10.1.1's bound per SNR bin.
 test-centroid: build
