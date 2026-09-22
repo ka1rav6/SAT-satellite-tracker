@@ -362,6 +362,15 @@ target_compile_definitions(test_video PRIVATE
 )
 add_dependencies(test_video sat-tracker)
 
+# --- MotionNet ONNX wrapper (INV-7) ----------------------------------------
+sat_add_test(ai
+    SOURCES ai/test_motion_net.cpp
+    DEPS    sat_core sat_ai sat_tracking sat_engine sat_scenario sat_perception
+)
+target_compile_definitions(test_ai PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+)
+
 # --- MotionNet tracks-only --gen-dataset (sat_app, INV-1) ------------------
 sat_add_test(dataset
     SOURCES app/test_dataset.cpp

@@ -165,7 +165,9 @@ sat_add_module(sat_perception
 
 # ai — ONNX wrappers and the classical fallbacks that stand in for them.
 sat_add_module(sat_ai
-    PUBLIC_DEPS sat_core
+    SOURCES
+        src/ai/motion_net.cpp
+    PUBLIC_DEPS sat_core sat_tracking
 )
 
 # tracking — Kalman, IMM, association, lifecycle.
@@ -402,7 +404,7 @@ else()
     add_library(sat_cv_oracle INTERFACE)
 endif()
 if(SAT_HAVE_ONNX)
-    target_compile_definitions(sat_ai INTERFACE SAT_HAVE_ONNX=1)
+    target_compile_definitions(sat_ai PUBLIC SAT_HAVE_ONNX=1)
 endif()
 
 # ===========================================================================
