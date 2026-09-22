@@ -269,6 +269,21 @@ public:
     /// No measurement was associated this frame. Runs the lifecycle transition.
     void miss() noexcept;
 
+    // -----------------------------------------------------------------------
+    // MotionNet history ring (SAT-ML §6). Fixed array, INV-4.
+    //
+    // Runtime input is tracker state including coasts, not FrameTruth. miss()
+    // still pushes the predicted [az, el, vaz, vel] so a dropout does not
+    // freeze the window the net sees.
+    // -----------------------------------------------------------------------
+    static constexpr int kHistory = 30;
+    void push_history() noexcept;
+    void history_tensor(float out[kHistory][4]) const noexcept;
+    [[nodiscard]] int history_count() const noexcept { return hist_count_; }
+
+    /// Forward to ImmFilter when the IMM is on. No-op on the plain Kalman path.
+    void set_regime_prior(MotionRegime regime, float confidence) noexcept;
+
     // --- state -------------------------------------------------------------
     [[nodiscard]] TrackState state()     const noexcept { return state_; }
     [[nodiscard]] bool       alive()     const noexcept { return state_ != TrackState::Deleted; }
@@ -453,6 +468,11 @@ private:
     static constexpr int kResidWindow = 32;
     std::array<Angle2, kResidWindow> resid_hist_{};
 
+    /// 30-sample MotionNet ring: [az, el, vaz, vel] packed, oldest overwritten.
+    std::array<float, kHistory * 4> hist_{};
+    int hist_count_ = 0;
+    int hist_head_  = 0;   ///< next write index
+
     float  mean_snr_   = 0.0f;
     float  nis_ema_    = 2.0f;   ///< starts at the value a healthy track has
     double last_sigma_ = 0.0;
@@ -514,6 +534,7 @@ public:
     int step(double dt, std::span<Measurement> meas, int64_t frame) noexcept;
 
     [[nodiscard]] const Track& track() const noexcept { return track_; }
+    [[nodiscard]] Track&       track()       noexcept { return track_; }
 
     // -----------------------------------------------------------------------
     // What the MODE FSM is told, which is not quite what track() says.
