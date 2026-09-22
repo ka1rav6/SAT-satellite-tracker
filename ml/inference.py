@@ -14,7 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
-from ml.datasets import normalise_patch, normalise_scalars
+from ml.datasets import normalise_patch, normalise_scalars, normalise_track_history
+from ml.models.motion import HORIZON, N_REGIMES, constant_velocity_forecast
 
 LOGGER = logging.getLogger(__name__)
 
@@ -54,3 +55,39 @@ class CentroidInference:
         patch_input = normalise_patch(patch)[None, None, ...].astype(np.float32)
         scalar_input = normalise_scalars(np.asarray(scalars))[None, ...].astype(np.float32)
         return np.asarray(self.session.run(["offset"], {"patch": patch_input, "scalars": scalar_input})[0][0])
+
+
+class MotionInference:
+    """Run MotionNet ONNX when available; otherwise constant-velocity (INV-7)."""
+
+    def __init__(self, model_path: Path | None):
+        self.session = None
+        self.using_fallback = True
+        if model_path is None:
+            LOGGER.warning("MotionNet model is disabled; using constant-velocity fallback")
+            return
+        try:
+            import onnxruntime as ort
+
+            self.session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+            self.using_fallback = False
+        except Exception as error:
+            LOGGER.warning("MotionNet failed to load (%s); using constant-velocity fallback", error)
+
+    def predict(self, hist: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return (forecast 15x2 residual+CV, logits 4,) from raw µrad history."""
+        raw = np.asarray(hist, dtype=np.float32)
+        if raw.shape != (30, 4):
+            raise ValueError(f"expected (30, 4) history, got {raw.shape}")
+        raw_b = raw[None, ...]
+        cv = constant_velocity_forecast(torch_from(raw_b)).numpy()[0]
+        if self.session is None:
+            return cv, np.zeros((N_REGIMES,), dtype=np.float32)
+        hist_in = normalise_track_history(raw)[None, ...].astype(np.float32)
+        residual, logits = self.session.run(["forecast", "logits"], {"hist": hist_in})
+        return residual[0] + cv, logits[0]
+
+
+def torch_from(array: np.ndarray):
+    import torch
+    return torch.from_numpy(np.asarray(array, dtype=np.float32))

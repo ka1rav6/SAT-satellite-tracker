@@ -9,7 +9,7 @@ from ml.models.motion import HISTORY_LEN, HORIZON, INPUT_SIZE, MotionNet, N_REGI
 
 def test_constant_velocity_forecast_is_exact_on_a_linear_track():
     """A constant-rate polyline must match CV to 1e-4 µrad — that is the baseline."""
-    from ml.train_motion import constant_velocity_forecast
+    from ml.models.motion import constant_velocity_forecast
 
     dt = 1.0 / 30.0
     rate_az = 1000.0

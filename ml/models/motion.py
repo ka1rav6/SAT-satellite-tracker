@@ -11,6 +11,20 @@ import torch
 from torch import Tensor, nn
 
 HISTORY_LEN, HORIZON, INPUT_SIZE, N_REGIMES, HIDDEN = 30, 15, 4, 4, 24
+DT_S = 1.0 / 30.0
+
+
+def constant_velocity_forecast(hist: Tensor, dt_s: float = DT_S) -> Tensor:
+    """Raw-µrad CV residual: last_rate * k * dt for k=1..15.
+
+    ``hist`` is un-normalised tracker state (B, 30, 4) = [az, el, vaz, vel].
+    CV already owns clean lines; MotionNet learns the residual on top.
+    """
+    if hist.ndim != 3 or hist.shape[-1] != 4:
+        raise ValueError(f"expected (B, T, 4) raw history, got {tuple(hist.shape)}")
+    last_rate = hist[:, -1, 2:4]
+    steps = torch.arange(1, HORIZON + 1, device=hist.device, dtype=hist.dtype) * dt_s
+    return last_rate.unsqueeze(1) * steps.view(1, HORIZON, 1)
 
 
 class MotionNet(nn.Module):

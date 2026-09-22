@@ -19,7 +19,7 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader, Dataset
 
 from ml.datasets import TrackWindowDataset, verify_split_disjoint
-from ml.models.motion import HORIZON, MotionNet
+from ml.models.motion import HORIZON, MotionNet, constant_velocity_forecast
 
 
 def set_all_seeds(seed: int) -> None:
@@ -31,18 +31,6 @@ def set_all_seeds(seed: int) -> None:
     # GRU has a deterministic CPU path; warn_only keeps CUDA from aborting.
     torch.use_deterministic_algorithms(True, warn_only=True)
     torch.backends.cudnn.benchmark = False
-
-
-def constant_velocity_forecast(hist: Tensor, dt_s: float = 1.0 / 30.0) -> Tensor:
-    """Raw-µrad CV residual: last_pos + k * last_rate * dt, minus last_pos.
-
-    ``hist`` is un-normalised tracker state (B, 30, 4) = [az, el, vaz, vel].
-    """
-    if hist.ndim != 3 or hist.shape[-1] != 4:
-        raise ValueError(f"expected (B, T, 4) raw history, got {tuple(hist.shape)}")
-    last_rate = hist[:, -1, 2:4]
-    steps = torch.arange(1, HORIZON + 1, device=hist.device, dtype=hist.dtype) * dt_s
-    return last_rate.unsqueeze(1) * steps.view(1, HORIZON, 1)
 
 
 def horizon_weights(horizon: int, device: torch.device, dtype: torch.dtype) -> Tensor:
