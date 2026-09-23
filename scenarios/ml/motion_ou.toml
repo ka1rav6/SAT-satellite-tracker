@@ -28,8 +28,8 @@ initial_pos_px = [999.5, 999.5]
 
 [target]
 kind       = "target"
-intensity  = 90.0
-size_px    = 8
+intensity  = 220.0
+size_px    = 10
 initial_px = [999.5, 999.5]
 shape.type = "square"
 
@@ -39,8 +39,8 @@ offset_px = [999.5, 999.5]
 
 [[target.motion]]
 kind       = "ou_noise"
-sigma_px_s = 70.0
-tau_s      = 3.0
+sigma_px_s = 90.0
+tau_s      = 0.7
 
 [gimbal]
 max_pan_dps      = 5.0
@@ -52,19 +52,29 @@ encoder_lsb_urad = 20.0
 
 [noise]
 poisson        = true
-gaussian_sigma = 20.0
-salt_pepper    = 0.10
-hot_pixels     = 80
+gaussian_sigma = 10.0
+salt_pepper    = 0.02
+hot_pixels     = 6
 
 [atmosphere]
 mode = "lowlight"
 
 [disturbance]
-jitter_px_per_frame = 12.0
+jitter_px_per_frame = 1.0
 
 [clutter]
-static_sources = 80
+static_sources = 0
 decoy_beacons  = 0
+
+[[event]]
+t_s = 3.2
+action = "occlude_target"
+duration_s = 0.30
+
+[[event]]
+t_s = 7.0
+action = "occlude_target"
+duration_s = 0.35
 
 [control]
 kp   = 8.0

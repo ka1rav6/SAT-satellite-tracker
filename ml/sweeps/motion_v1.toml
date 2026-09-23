@@ -8,14 +8,16 @@ scenarios = [
     "scenarios/ml/motion_linear.toml",
     "scenarios/ml/motion_circular.toml",
     "scenarios/ml/motion_figure8.toml",
+    "scenarios/ml/motion_figure8_wide.toml",
     "scenarios/ml/motion_ou.toml",
 ]
 holdout = [
-    "scenarios/ml/motion_linear_fast.toml",
+    "scenarios/ml/motion_figure8_unseen.toml",
 ]
 seed_start = 1
-seed_end = 40
-duration_s = 20
+seed_end = 30
+holdout_seed_end = 4
+duration_s = 10
 
 [capture]
 what = "tracks"

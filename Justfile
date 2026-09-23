@@ -818,7 +818,7 @@ calibrate *ARGS: build
 # Dump four official row-12 regimes + weather, then window into shards.
 # Default is a short factory (seeds 1-4, 8 s) so a laptop can finish. Raise
 # --seed-end / --duration for the scored train.
-motion-data seed_end="4" duration="8":
+motion-data seed_end="30" duration="10":
     "{{build_dir}}/sat-tracker" --version
     .venv/Scripts/python.exe -m ml.datagen --sweep ml/sweeps/motion_v1.toml \
         --bin "{{build_dir}}/sat-tracker" --out data/motion_v1 \

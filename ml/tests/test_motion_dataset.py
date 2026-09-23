@@ -46,6 +46,21 @@ def test_datagen_windows_a_csv_into_run_disjoint_shards(tmp_path: Path):
     assert int(regime) == 0
 
 
+def test_off_target_windows_are_dropped(tmp_path: Path):
+    """A track stuck on clutter must not become a MotionNet label."""
+    from ml.datagen import build_from_raw
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    lines = ["frame,detected,track_az_urad,track_el_urad,track_vaz,track_vel,"
+             "truth_az_urad,truth_el_urad,regime,scenario_id,seed"]
+    for i in range(50):
+        lines.append(f"{i},1,0,0,0,0,{1_000_000 + i},0,1,3,1")
+    (raw / "stuck_1.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    counts = build_from_raw(raw, tmp_path / "packed")
+    assert sum(counts.values()) == 0
+
+
 def test_require_dropouts_rejects_a_sweep_with_zero_misses(tmp_path: Path):
     """Fail loud when include_dropouts is set but CFAR never dropped.
 

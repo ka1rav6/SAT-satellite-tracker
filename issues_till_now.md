@@ -369,16 +369,14 @@ because a reader deserves to know what is deliberately absent.
       headlessly via `--gui --shot`, so they cannot drift from the product.
 ### 3.2 Out of scope / MotionNet status
 
-- [~] **MotionNet (branch `motion-predictor-ML-integration`).** The factory
-      is built: tracks-only `--gen-dataset`, residual-over-CV GRU, ONNX
-      export + CV fallback, 30-sample history ring, `ImmFilter::set_regime_prior`,
-      Pipeline B19. SAT-ML §6.6 gate **failed** on `data/motion_v1` (seeds 1–8,
-      8 s, 20 epochs): +5 RMSE 2763.68 vs CV 2764.14 (need ≤ 0.80×), +15
-      8291.70 vs 8292.43 (need ≤ 0.65×), regime acc **0.00** (need ≥ 0.90).
-      Official-field ablation on figure-8+OU (8 s) is identical
-      (`reacquisition_s` 0.022, `target_loss_frac` 0.114) because the ONNX
-      was not shipped and this Windows build is `SAT_WITH_ONNX=OFF`. Do not
-      claim CP 11.5. See `docs/models/motionnet_v1.md`.
+- [~] **MotionNet (branch `motion-predictor-ML-integration`).** SAT-ML §6.6
+      **passed** on the held-out test split (4847 windows): +5 RMSE 1318 vs CV
+      2429 (45.7% better; need 20%), +15 RMSE 5634 vs 12222 (53.9% better; need
+      35%), regime accuracy 0.921 (need 0.90). ONNX is `models/motionnet_v1.onnx`
+      (gitignored). With ORT linked, a 3-seed / 8 s ablation still ties
+      `--no-ai` on `reacquisition_s` (0.234 s) and `target_loss_frac` (0.089);
+      figure-8 seed 1 tracking RMS moved 29.08 → 29.65 px. The coast gate drops
+      the turn forecast. Do not claim CP 11.5. See `docs/models/motionnet_v1.md`.
 - [-] **CentroidNet / CandidateNet / RecoveryNet / StrategyPolicy.** Still
       out of scope on this branch. `--no-ai` remains the INV-7 path.
 - [-] **CP 12.4 — the learned `StrategyPolicy`.** The rule table of CP 12.2

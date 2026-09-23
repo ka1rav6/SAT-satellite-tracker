@@ -101,7 +101,7 @@ The motion predictor is optional. `ai.motion_net = "models/motionnet_v1.onnx"`
 loads it; `--no-ai` or a missing file falls back to IMM.
 
 ```bash
-just motion-data seed_end=4 duration=8
+just motion-data seed_end=30 duration=10
 just train-motion
 just eval-motion
 just export-motion

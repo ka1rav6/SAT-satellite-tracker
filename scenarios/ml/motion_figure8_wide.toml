@@ -1,8 +1,8 @@
-# MotionNet factory — official row 12 circular (regime 1).
+# MotionNet factory — official row 12 figure-8 / lissajous (regime 2).
 
 [meta]
-name        = "motion_circular"
-description = "MotionNet: circular + fog so CFAR drops"
+name        = "motion_figure8_wide"
+description = "MotionNet: slower figure-8 so the class is not one period"
 
 [input]
 mode = "synthetic"
@@ -38,10 +38,11 @@ kind      = "constant"
 offset_px = [999.5, 999.5]
 
 [[target.motion]]
-kind       = "circular"
-radius_px = 180.0
-period_s  = 2.5
-phase_deg = 0.0
+kind         = "lissajous"
+amplitude_px = [150.0, 180.0]
+freq_ratio   = 2.0
+period_s     = 7.5
+phase_deg    = 0.0
 
 [gimbal]
 max_pan_dps      = 5.0
@@ -58,7 +59,7 @@ salt_pepper    = 0.02
 hot_pixels     = 6
 
 [atmosphere]
-mode = "fog"
+mode = "rain"
 
 [disturbance]
 jitter_px_per_frame = 1.5

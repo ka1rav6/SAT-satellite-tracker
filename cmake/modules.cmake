@@ -405,6 +405,14 @@ else()
 endif()
 if(SAT_HAVE_ONNX)
     target_compile_definitions(sat_ai PUBLIC SAT_HAVE_ONNX=1)
+    if(TARGET onnxruntime::onnxruntime)
+        target_link_libraries(sat_ai PUBLIC onnxruntime::onnxruntime)
+        # The official DLL has to sit beside the exe. Test binaries and
+        # sat-tracker both land in the build root.
+        if(onnxruntime_DLLS)
+            file(COPY ${onnxruntime_DLLS} DESTINATION "${CMAKE_BINARY_DIR}")
+        endif()
+    endif()
 endif()
 
 # ===========================================================================

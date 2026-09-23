@@ -32,7 +32,8 @@ def test_load_motion_sweep_lists_four_regimes():
     from ml.datagen import load_motion_sweep
 
     sweep = load_motion_sweep(Path("ml/sweeps/motion_v1.toml"))
-    assert len(sweep.scenarios) == 4
+    assert len(sweep.scenarios) >= 4
     assert sweep.include_dropouts
     assert any("figure8" in s for s in sweep.scenarios)
-    assert any("linear_fast" in s for s in sweep.holdout)
+    assert any("figure8_unseen" in s for s in sweep.holdout)
+    assert sweep.holdout_seed_end < sweep.seed_end

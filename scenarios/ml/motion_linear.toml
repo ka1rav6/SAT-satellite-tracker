@@ -31,7 +31,7 @@ initial_pos_px = [400.0, 400.0]
 
 [target]
 kind       = "target"
-intensity  = 90.0
+intensity  = 220.0
 size_px    = 10
 initial_px = [400.0, 400.0]
 shape.type = "square"
@@ -50,19 +50,29 @@ encoder_lsb_urad = 20.0
 
 [noise]
 poisson        = true
-gaussian_sigma = 20.0
-salt_pepper    = 0.10
-hot_pixels     = 40
+gaussian_sigma = 8.0
+salt_pepper    = 0.015
+hot_pixels     = 4
 
 [atmosphere]
 mode = "haze"
 
 [disturbance]
-jitter_px_per_frame = 8.0
+jitter_px_per_frame = 1.0
 
 [clutter]
-static_sources = 40
+static_sources = 0
 decoy_beacons  = 0
+
+[[event]]
+t_s = 3.2
+action = "occlude_target"
+duration_s = 0.30
+
+[[event]]
+t_s = 7.0
+action = "occlude_target"
+duration_s = 0.35
 
 [control]
 kp   = 8.0

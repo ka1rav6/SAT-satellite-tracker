@@ -1,8 +1,12 @@
-# MotionNet factory — official row 12 circular (regime 1).
+# MotionNet hold-out — unseen figure-8 (regime 2), different period and size.
+#
+# Same official motion kind as motion_figure8, different trajectory, so the
+# test split is a turn CV cannot own. Seed count is capped in the sweep so
+# this file does not become the whole test set.
 
 [meta]
-name        = "motion_circular"
-description = "MotionNet: circular + fog so CFAR drops"
+name        = "motion_figure8_unseen"
+description = "MotionNet hold-out: slower, wider figure-8 under fog"
 
 [input]
 mode = "synthetic"
@@ -28,7 +32,7 @@ initial_pos_px = [999.5, 999.5]
 
 [target]
 kind       = "target"
-intensity  = 220.0
+intensity  = 210.0
 size_px    = 10
 initial_px = [999.5, 999.5]
 shape.type = "square"
@@ -38,10 +42,11 @@ kind      = "constant"
 offset_px = [999.5, 999.5]
 
 [[target.motion]]
-kind       = "circular"
-radius_px = 180.0
-period_s  = 2.5
-phase_deg = 0.0
+kind         = "lissajous"
+amplitude_px = [185.0, 130.0]
+freq_ratio   = 2.0
+period_s     = 5.5
+phase_deg    = 20.0
 
 [gimbal]
 max_pan_dps      = 5.0

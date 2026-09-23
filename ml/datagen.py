@@ -11,8 +11,10 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import subprocess
 import tomllib
+from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +22,11 @@ from pathlib import Path
 import numpy as np
 
 from ml.datasets import HISTORY_LEN, HORIZON, verify_split_disjoint
+
+# A window whose tracker is this far from FrameTruth is on the wrong blob.
+# ~25_000 µrad is about 230 px at the 4° plate scale: short coasts stay in,
+# a lock on static clutter does not. Truth is a filter, never a feature.
+ON_TARGET_URAD = 12_000.0
 
 
 def split_for(scenario_id: int, seed: int, test_scenario_ids: set[int] | None = None) -> str:
@@ -76,6 +83,9 @@ def windows_from_run(run: dict[str, np.ndarray], *, require_dropouts: bool = Fal
         raise ValueError("include_dropouts is set but this run never missed a detection")
     samples = []
     for t in range(HISTORY_LEN - 1, n - HORIZON):
+        gap = run["track"][t, :2] - run["truth"][t]
+        if float(np.hypot(gap[0], gap[1])) > ON_TARGET_URAD:
+            continue
         hist = run["track"][t - HISTORY_LEN + 1 : t + 1]
         future = run["truth"][t + 1 : t + 1 + HORIZON] - run["truth"][t]
         det = run["detected"][t - HISTORY_LEN + 1 : t + 1]
@@ -177,6 +187,7 @@ class MotionSweep:
     holdout: list[str]
     seed_start: int
     seed_end: int
+    holdout_seed_end: int
     duration_s: float
     include_dropouts: bool
 
@@ -190,9 +201,14 @@ def load_motion_sweep(path: Path) -> MotionSweep:
         holdout=list(motion.get("holdout", [])),
         seed_start=int(motion.get("seed_start", 1)),
         seed_end=int(motion.get("seed_end", 1)),
+        holdout_seed_end=int(motion.get("holdout_seed_end", motion.get("seed_end", 1))),
         duration_s=float(motion.get("duration_s", 20.0)),
         include_dropouts=bool(capture.get("include_dropouts", True)),
     )
+
+
+def _run_capture(cmd: list[str]) -> None:
+    subprocess.run(cmd, check=True)
 
 
 def capture_motion_sweep(sweep: MotionSweep, sat_tracker: Path, out_dir: Path,
@@ -201,14 +217,17 @@ def capture_motion_sweep(sweep: MotionSweep, sat_tracker: Path, out_dir: Path,
     """Invoke sat-tracker --gen-dataset once per (scenario, seed)."""
     raw = out_dir / "raw"
     raw.mkdir(parents=True, exist_ok=True)
+    # A previous shorter sweep must not mix with this one.
+    for stale in raw.glob("*.csv"):
+        stale.unlink()
     last = seed_end if seed_end is not None else sweep.seed_end
     dur = sweep.duration_s if duration_s is None else duration_s
     files = list(sweep.scenarios) + list(sweep.holdout)
     if not files:
         raise ValueError(f"{sweep} has no scenarios")
-    for scenario in files:
-        for seed in range(sweep.seed_start, last + 1):
-            cmd = [
+    def jobs_for(scenario: str, seed_last: int) -> list[list[str]]:
+        return [
+            [
                 str(sat_tracker),
                 "--gen-dataset",
                 "--scenario", scenario,
@@ -217,7 +236,18 @@ def capture_motion_sweep(sweep: MotionSweep, sat_tracker: Path, out_dir: Path,
                 "--seed", str(seed),
                 "--duration", str(dur),
             ]
-            subprocess.run(cmd, check=True)
+            for seed in range(sweep.seed_start, seed_last + 1)
+        ]
+
+    # Hold-out is an unseen file, not a second copy of the whole seed range.
+    # Flooding test with one regime makes §6.6 regime accuracy a majority-class trick.
+    # A CLI --seed-end shortens both, and never lengthens the hold-out past its cap.
+    hlast = sweep.holdout_seed_end if seed_end is None else min(sweep.holdout_seed_end, seed_end)
+    cmds = [cmd for scenario in sweep.scenarios for cmd in jobs_for(scenario, last)]
+    cmds += [cmd for scenario in sweep.holdout for cmd in jobs_for(scenario, hlast)]
+    workers = min(6, max(1, (os.cpu_count() or 2) // 2), len(cmds))
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(_run_capture, cmds))
     return raw
 
 

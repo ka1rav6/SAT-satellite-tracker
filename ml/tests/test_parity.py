@@ -62,7 +62,10 @@ def test_motion_onnx_matches_pytorch(tmp_path):
         forecast, logits = model(hist)
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     ort_f, ort_l = session.run(None, {"hist": hist.numpy()})
-    assert np.max(np.abs(forecast.numpy() - ort_f)) < 1e-5
+    # The head is multiplied by RESIDUAL_SCALE (µrad). 1e-5 is the tolerance
+    # on that normalised residual, i.e. 1 µrad absolute.
+    from ml.models.motion import RESIDUAL_SCALE
+    assert np.max(np.abs(forecast.numpy() - ort_f)) / RESIDUAL_SCALE < 1e-5
     assert np.max(np.abs(logits.numpy() - ort_l)) < 1e-5
 
 

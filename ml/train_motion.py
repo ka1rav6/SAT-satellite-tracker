@@ -19,7 +19,7 @@ from torch import Tensor, nn
 from torch.utils.data import DataLoader, Dataset
 
 from ml.datasets import TrackWindowDataset, verify_split_disjoint
-from ml.models.motion import HORIZON, MotionNet, constant_velocity_forecast
+from ml.models.motion import HORIZON, MotionNet, RESIDUAL_SCALE, constant_velocity_forecast
 
 
 def set_all_seeds(seed: int) -> None:
@@ -42,8 +42,11 @@ def motion_loss(pred_residual: Tensor, cv: Tensor, target: Tensor,
                 logits: Tensor, regime: Tensor) -> Tensor:
     """Smooth-L1 on CV+residual, horizon-weighted, plus 0.3 * regime CE."""
     weights = horizon_weights(pred_residual.shape[1], pred_residual.device, pred_residual.dtype)
+    # §14.0i: divide by the residual scale so β=0.5 is the quadratic bowl
+    # around a pixel-scale error, then the head still emits µrad.
+    scale = pred_residual.new_tensor(RESIDUAL_SCALE)
     per_step = nn.functional.smooth_l1_loss(
-        pred_residual + cv, target, beta=0.5, reduction="none"
+        (pred_residual + cv) / scale, target / scale, beta=0.5, reduction="none"
     ).mean(-1)
     forecast_loss = (weights * per_step).mean()
     return forecast_loss + 0.3 * nn.functional.cross_entropy(logits, regime)

@@ -28,14 +28,14 @@ initial_pos_px = [300.0, 300.0]
 
 [target]
 kind       = "target"
-intensity  = 95.0
+intensity  = 210.0
 size_px    = 10
 initial_px = [300.0, 300.0]
 shape.type = "square"
 
 [[target.motion]]
 kind          = "linear"
-velocity_px_s = [141.42, 80.0]
+velocity_px_s = [110.0, 45.0]
 
 [gimbal]
 max_pan_dps      = 5.0
@@ -47,19 +47,29 @@ encoder_lsb_urad = 20.0
 
 [noise]
 poisson        = true
-gaussian_sigma = 20.0
-salt_pepper    = 0.10
-hot_pixels     = 40
+gaussian_sigma = 10.0
+salt_pepper    = 0.02
+hot_pixels     = 6
 
 [atmosphere]
 mode = "rain"
 
 [disturbance]
-jitter_px_per_frame = 8.0
+jitter_px_per_frame = 1.5
 
 [clutter]
-static_sources = 40
+static_sources = 0
 decoy_beacons  = 0
+
+[[event]]
+t_s = 3.2
+action = "occlude_target"
+duration_s = 0.30
+
+[[event]]
+t_s = 7.0
+action = "occlude_target"
+duration_s = 0.35
 
 [control]
 kp   = 8.0

@@ -28,7 +28,7 @@ initial_pos_px = [999.5, 999.5]
 
 [target]
 kind       = "target"
-intensity  = 100.0
+intensity  = 220.0
 size_px    = 10
 initial_px = [999.5, 999.5]
 shape.type = "square"
@@ -39,9 +39,9 @@ offset_px = [999.5, 999.5]
 
 [[target.motion]]
 kind         = "lissajous"
-amplitude_px = [400.0, 250.0]
+amplitude_px = [200.0, 120.0]
 freq_ratio   = 2.0
-period_s     = 8.0
+period_s     = 4.0
 phase_deg    = 0.0
 
 [gimbal]
@@ -54,19 +54,29 @@ encoder_lsb_urad = 20.0
 
 [noise]
 poisson        = true
-gaussian_sigma = 20.0
-salt_pepper    = 0.10
-hot_pixels     = 40
+gaussian_sigma = 12.0
+salt_pepper    = 0.02
+hot_pixels     = 6
 
 [atmosphere]
-mode = "fog"
+mode = "rain"
 
 [disturbance]
-jitter_px_per_frame = 10.0
+jitter_px_per_frame = 1.5
 
 [clutter]
-static_sources = 60
+static_sources = 0
 decoy_beacons  = 0
+
+[[event]]
+t_s = 3.2
+action = "occlude_target"
+duration_s = 0.30
+
+[[event]]
+t_s = 7.0
+action = "occlude_target"
+duration_s = 0.35
 
 [control]
 kp   = 8.0

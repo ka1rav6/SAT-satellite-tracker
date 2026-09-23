@@ -35,6 +35,41 @@ def test_train_on_dummy_shards_writes_non_result_sidecar(tmp_path):
     assert out.with_suffix(".json").is_file()
 
 
+def test_residual_head_moves_when_the_label_is_thousands_of_urad():
+    """β=0.5 in raw µrad saturates and Adam never grows the head (§14.0i).
+
+    A constant 4000 µrad offset on top of CV must be at least half-learned
+    in a few dozen steps. If this fails, the §6.6 RMSE gate cannot pass.
+    """
+    from ml.models.motion import RESIDUAL_SCALE, constant_velocity_forecast
+    from ml.train_motion import motion_loss
+
+    torch.manual_seed(0)
+    model = MotionNet()
+    opt = torch.optim.AdamW(model.parameters(), lr=3.0e-4)
+    hist_raw = torch.zeros(32, HISTORY_LEN, INPUT_SIZE)
+    hist_raw[:, :, 2] = 2000.0
+    hist_norm = hist_raw / RESIDUAL_SCALE
+    offset = torch.tensor([4000.0, -1500.0])
+    target = constant_velocity_forecast(hist_raw) + offset
+    regime = torch.zeros(32, dtype=torch.long)
+    cv = constant_velocity_forecast(hist_raw)
+
+    def residual_error() -> float:
+        pred, _ = model(hist_norm)
+        return float((pred - offset).abs().mean())
+
+    before = residual_error()
+    for _ in range(200):
+        opt.zero_grad(set_to_none=True)
+        pred, logits = model(hist_norm)
+        loss = motion_loss(pred, cv, target, logits, regime)
+        loss.backward()
+        opt.step()
+    after = residual_error()
+    assert after < before * 0.5, f"residual did not move: {before:.1f} -> {after:.1f}"
+
+
 def test_motionnet_shapes_and_param_budget():
     """GRU must emit 15-step residuals plus 4 logits and stay under 12k params."""
     model = MotionNet()

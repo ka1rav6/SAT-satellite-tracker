@@ -12,6 +12,10 @@ from torch import Tensor, nn
 
 HISTORY_LEN, HORIZON, INPUT_SIZE, N_REGIMES, HIDDEN = 30, 15, 4, 4, 24
 DT_S = 1.0 / 30.0
+# The linear head is O(1). Multiply by this so the returned residual is µrad.
+# 1e4, not the 1e5 input scale: a few-thousand-µrad turn residual then sits
+# near β=0.5, and 0.3 * CE does not drown the forecast term (§14.0i).
+RESIDUAL_SCALE = 1.0e4
 
 
 def constant_velocity_forecast(hist: Tensor, dt_s: float = DT_S) -> Tensor:
@@ -44,5 +48,7 @@ class MotionNet(nn.Module):
             )
         _, hidden = self.gru(hist)
         hidden = hidden.squeeze(0)
-        forecast = self.forecast(hidden).view(-1, self.horizon, 2)
+        # O(1) head → µrad residual. Training divides by RESIDUAL_SCALE again
+        # so β=0.5 sits on the normalised error, not on a saturated ±1.
+        forecast = self.forecast(hidden).view(-1, self.horizon, 2) * RESIDUAL_SCALE
         return forecast, self.regime(hidden)
