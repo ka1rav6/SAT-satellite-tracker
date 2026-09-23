@@ -42,7 +42,7 @@ Weights are gitignored; regenerate with `just train-motion` then `just export-mo
 coast the search centre moves to the forecast only when regime confidence
 is at least 0.90 and the look is inside `k * position_sigma` of the IMM
 predict. Locked Track aim stays the IMM (INV-2). The same 0.90 floor gates
-`set_regime_prior`. Lowest p95 frame rate in the sweep was 144 FPS.
+`set_regime_prior`. Lowest p95 frame rate in a repeat of the sweep was 135 FPS.
 
 | | reacquisition_s | target_loss_frac |
 |---|---|---|

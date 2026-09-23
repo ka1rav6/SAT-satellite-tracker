@@ -373,7 +373,7 @@ because a reader deserves to know what is deliberately absent.
       **passed** (4847 windows): +5 RMSE 1318 vs CV 2429 (45.7%), +15 5634 vs
       12222 (53.9%), regime accuracy 0.921. Closed loop, 6 seeds × 12 s:
       reacquisition 0.457 s → 0.407 s and target loss 0.1480 → 0.1475 versus
-      `--no-ai`, p95 FPS above 140. The search centre moves only when the
+      `--no-ai`, p95 FPS 135. The search centre moves only when the
       regime call is at least 0.90 confident and inside the IMM gate. Figure-8
       tracking RMS can still rise a few pixels. See `docs/models/motionnet_v1.md`.
 - [-] **CentroidNet / CandidateNet / RecoveryNet / StrategyPolicy.** Still
