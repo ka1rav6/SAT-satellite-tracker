@@ -349,6 +349,7 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     motion_net_.reset();
     last_forecast_ = MotionForecast{};
     motion_prior_applies_ = 0;
+    motion_coast_checks_ = 0;
     motion_coast_uses_ = 0;
     if (sc.ai_enabled && !sc.motion_net.empty()) {
         auto loaded = MotionNet::load(sc.motion_net);
@@ -1101,7 +1102,11 @@ bool Pipeline::step() {
             float hist[Track::kHistory][4];
             tracker_.track().history_tensor(hist);
             last_forecast_ = motion_net_->run(hist);
-            if (last_forecast_.valid && associated >= 0
+            // A lukewarm regime call still moves the IMM, and on a figure-8
+            // that boost raised tracking error by ~10 px without saving a
+            // single miss. Only a confident call is allowed to touch pi_.
+            if (last_forecast_.valid && last_forecast_.confidence >= 0.90f
+                && associated >= 0
                 && tracker_.track().drivable() && tracker_.track().uses_imm()) {
                 tracker_.track().set_regime_prior(
                     last_forecast_.regime, last_forecast_.confidence);
@@ -1300,33 +1305,61 @@ bool Pipeline::step() {
     // worth.
     // -----------------------------------------------------------------------
     Angle2 aim;
-    if (fsm_.tracking_active() && trk.drivable()) {
+    // Locked Track stays on the IMM at the Smith horizon (INV-2). Reacquire
+    // is also tracking_active, but a coast is exactly when the forecast is
+    // allowed to move the look — and only inside k * position_sigma of the
+    // IMM predict, so a wild residual cannot slew the gimbal.
+    const bool coasting = trk.state() == TrackState::Coasting;
+    const bool locked = rec.mode == TrackMode::Track && trk.drivable() && !coasting;
+    if (locked || (fsm_.tracking_active() && trk.drivable() && !coasting)) {
         // CP 10.4: advanced by the controller's prediction horizon, which is
         // ZERO unless the Smith predictor is on. Both sides of the error move
         // together or neither does — control/smith.hpp has the argument, and
         // CP 10.1's double lead is what happens when only one of them moves.
         aim = trk.predict_position(control_.horizon_s());
         if (fsm_.changed_this_frame()) search_.recentre(aim);
-    } else {
-        if (fsm_.changed_this_frame() && rec.mode == TrackMode::Search) {
-            // Coming out of a lost track: search outward from where it was
-            // last believed to be, which is where it is most likely to
-            // reappear. On a cold start this is the initial boresight, which is
-            // the screen centre — the same thing, correctly.
-            search_.recentre(tracker_.has_track() ? trk.position() : search_.centre());
-            search_.restart();
-        }
-        // Coast + valid MotionNet: recentre search/reacquire on the gated
-        // multi-step forecast. Locked Track never uses this path (INV-2).
-        if (last_forecast_.valid && trk.state() == TrackState::Coasting) {
+    } else if (coasting) {
+        // Gimbal aim stays the IMM. The search centre is the current IMM
+        // position unless a confident in-gate forecast replaces it. A
+        // rejected frame must still move the centre up to the IMM, or a
+        // later Search starts where Track was entered.
+        aim = trk.predict_position(control_.horizon_s());
+        if (last_forecast_.valid && last_forecast_.confidence >= 0.90f) {
             const int k = std::min(std::max(trk.consecutive_misses() - 1, 0), 14);
             const Angle2 mn = trk.position() + last_forecast_.step_urad[k];
             const Angle2 imm_p = trk.predict_position(frame_dt * static_cast<double>(k + 1));
             const double gate = static_cast<double>(k + 1) * trk.position_sigma_urad();
+            ++motion_coast_checks_;
             if ((mn - imm_p).norm() <= gate) {
                 search_.recentre(mn);
                 ++motion_coast_uses_;
             }
+        }
+    } else {
+        if (fsm_.changed_this_frame() && rec.mode == TrackMode::Search) {
+            // Lost the track. Start the pattern at the gated forecast when
+            // one exists; otherwise at the last IMM position. A cold start
+            // has neither and stays on the screen centre.
+            // A centre parked during the coast survives a failed final
+            // gate. Snapping back to the IMM position is what throws away
+            // the forecast on the frame the track actually dies.
+            Angle2 centre = search_.centre();
+            const bool parked = motion_coast_uses_ > 0;
+            if (tracker_.has_track() && !parked) centre = trk.position();
+            if (last_forecast_.valid && tracker_.has_track()
+                && last_forecast_.confidence >= 0.90f) {
+                const int k = std::min(std::max(trk.consecutive_misses() - 1, 0), 14);
+                const Angle2 mn = trk.position() + last_forecast_.step_urad[k];
+                const Angle2 imm_p = trk.predict_position(frame_dt * static_cast<double>(k + 1));
+                const double gate = static_cast<double>(k + 1) * trk.position_sigma_urad();
+                ++motion_coast_checks_;
+                if ((mn - imm_p).norm() <= gate) {
+                    centre = mn;
+                    ++motion_coast_uses_;
+                }
+            }
+            search_.recentre(centre);
+            search_.restart();
         }
         // CP 13.1/13.2: the closed-loop strategies need to know what this look
         // saw and how fast the target can move. The open-loop ones ignore both

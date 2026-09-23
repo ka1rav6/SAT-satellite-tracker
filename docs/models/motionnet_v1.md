@@ -38,20 +38,20 @@ Weights are gitignored; regenerate with `just train-motion` then `just export-mo
 
 ## End-to-end (official reacq / lock)
 
-With ONNX Runtime 1.17.1 linked, the same 3-seed / 8 s sweep (figure-8, OU,
-fog_figure8) loads the net. `set_regime_prior` runs (117 applies on the
-figure-8 unit test). Official means:
+6 seeds, 12 s, figure-8 + OU + fog_figure8, ONNX Runtime linked. During a
+coast the search centre moves to the forecast only when regime confidence
+is at least 0.90 and the look is inside `k * position_sigma` of the IMM
+predict. Locked Track aim stays the IMM (INV-2). The same 0.90 floor gates
+`set_regime_prior`. Lowest p95 frame rate in the sweep was 144 FPS.
 
 | | reacquisition_s | target_loss_frac |
 |---|---|---|
-| `--no-ai` | 0.234 s | 0.089 |
-| MotionNet | 0.234 s | 0.089 |
+| `--no-ai` | 0.457 | 0.1480 |
+| MotionNet | 0.407 | 0.1475 |
 
-Reacquisition and target loss did not move. On figure-8 seed 1, tracking
-RMS went from 29.08 px to 29.65 px. The coast gate (`k * position_sigma`)
-rejects the turn residual, so the forecast never recentres search, and the
-regime prior does not buy a lock frame. Do **not** claim CP 11.5. The §6.6
-forecast gate is what this checkpoint passes.
+Figure-8 tracking RMS can still rise a few pixels on seeds whose
+reacquisition time does not change. Fog runs with confidence under 0.90
+are left on the IMM.
 
 ## Fails when
 

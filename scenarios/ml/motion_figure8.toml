@@ -76,7 +76,7 @@ duration_s = 0.30
 [[event]]
 t_s = 7.0
 action = "occlude_target"
-duration_s = 0.35
+duration_s = 0.80
 
 [control]
 kp   = 8.0

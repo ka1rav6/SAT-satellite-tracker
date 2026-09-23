@@ -71,6 +71,11 @@ velocity_px_s = [15.0, -8.0]
 static_sources = 120
 decoy_beacons  = 1
 
+[[event]]
+t_s = 4.0
+action = "occlude_target"
+duration_s = 0.80
+
 [requirements]
 acquisition_s     = 2.0
 tracking_error_px = 10.0

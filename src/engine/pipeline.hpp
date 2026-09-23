@@ -621,6 +621,9 @@ public:
 
     [[nodiscard]] bool motion_net_loaded() const noexcept { return motion_net_ != nullptr; }
     [[nodiscard]] int  motion_prior_applies() const noexcept { return motion_prior_applies_; }
+    /// Coast frames where a forecast was tested, and those the gate accepted.
+    [[nodiscard]] int  motion_coast_checks() const noexcept { return motion_coast_checks_; }
+    [[nodiscard]] int  motion_coast_uses() const noexcept { return motion_coast_uses_; }
 
     [[nodiscard]] const Tracker&       tracker()  const noexcept { return tracker_; }
     [[nodiscard]] const ModeFsm&       fsm()      const noexcept { return fsm_; }
@@ -721,6 +724,7 @@ private:
     std::unique_ptr<MotionNet> motion_net_;
     MotionForecast             last_forecast_{};
     int                        motion_prior_applies_ = 0;
+    int                        motion_coast_checks_  = 0;
     int                        motion_coast_uses_    = 0;
 };
 

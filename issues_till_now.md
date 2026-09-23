@@ -370,13 +370,12 @@ because a reader deserves to know what is deliberately absent.
 ### 3.2 Out of scope / MotionNet status
 
 - [~] **MotionNet (branch `motion-predictor-ML-integration`).** SAT-ML §6.6
-      **passed** on the held-out test split (4847 windows): +5 RMSE 1318 vs CV
-      2429 (45.7% better; need 20%), +15 RMSE 5634 vs 12222 (53.9% better; need
-      35%), regime accuracy 0.921 (need 0.90). ONNX is `models/motionnet_v1.onnx`
-      (gitignored). With ORT linked, a 3-seed / 8 s ablation still ties
-      `--no-ai` on `reacquisition_s` (0.234 s) and `target_loss_frac` (0.089);
-      figure-8 seed 1 tracking RMS moved 29.08 → 29.65 px. The coast gate drops
-      the turn forecast. Do not claim CP 11.5. See `docs/models/motionnet_v1.md`.
+      **passed** (4847 windows): +5 RMSE 1318 vs CV 2429 (45.7%), +15 5634 vs
+      12222 (53.9%), regime accuracy 0.921. Closed loop, 6 seeds × 12 s:
+      reacquisition 0.457 s → 0.407 s and target loss 0.1480 → 0.1475 versus
+      `--no-ai`, p95 FPS above 140. The search centre moves only when the
+      regime call is at least 0.90 confident and inside the IMM gate. Figure-8
+      tracking RMS can still rise a few pixels. See `docs/models/motionnet_v1.md`.
 - [-] **CentroidNet / CandidateNet / RecoveryNet / StrategyPolicy.** Still
       out of scope on this branch. `--no-ai` remains the INV-7 path.
 - [-] **CP 12.4 — the learned `StrategyPolicy`.** The rule table of CP 12.2
