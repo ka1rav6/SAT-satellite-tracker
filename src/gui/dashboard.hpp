@@ -224,6 +224,9 @@ private:
     bool   running_        = true;
     bool   step_once_      = false;
     bool   finished_       = false;
+    /// Interactive dashboard: ignore the scenario's duration and run until
+    /// Pause. Screenshot jobs leave this false so they still end on schedule.
+    bool   continuous_     = true;
     int    steps_per_draw_ = 1;     ///< simulation frames per rendered frame
 
     // --- live traces -------------------------------------------------------

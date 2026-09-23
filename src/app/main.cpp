@@ -19,6 +19,7 @@
 #include "app/verify_repro.hpp"
 #include "app/dataset.hpp"
 #include "scenario/schema.hpp"
+#include "scenario/overlay.hpp"
 
 #if SAT_HAVE_GUI
 #include "gui/dashboard.hpp"
@@ -30,6 +31,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 
 namespace {
 
@@ -162,10 +165,23 @@ int gui_command(int argc, char* argv[], int& i) {
     return 3;
 #else
     std::string path = std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml";
+    std::vector<sat::Override> overrides;
     sat::gui::ScreenshotJob job;
     for (int k = i + 1; k < argc; ++k) {
         const char* a = argv[k];
         if      (std::strcmp(a, "--scenario") == 0 && k + 1 < argc) { path = argv[++k]; }
+        else if (std::strcmp(a, "--set") == 0 && k + 1 < argc) {
+            // Same key=value form as --headless. The dashboard used to drop
+            // this on the floor, so `ai.motion_net=...` never reached the net.
+            const char* kv = argv[++k];
+            const char* eq = std::strchr(kv, '=');
+            if (!eq || eq == kv) {
+                std::fprintf(stderr,
+                    "sat-tracker: --set wants 'dotted.key=value', got '%s'\n", kv);
+                return 1;
+            }
+            overrides.push_back(sat::Override{std::string(kv, eq), std::string(eq + 1)});
+        }
         else if (std::strcmp(a, "--shot")     == 0 && k + 1 < argc) { job.path = argv[++k]; }
         else if (std::strcmp(a, "--shot-after") == 0 && k + 1 < argc) {
             job.after_frames = std::atoi(argv[++k]);
@@ -185,7 +201,24 @@ int gui_command(int argc, char* argv[], int& i) {
         i = k;
     }
 
-    auto r = sat::load_scenario(path);
+    sat::Result<sat::Scenario> r = sat::Err("unset");
+    if (overrides.empty()) {
+        r = sat::load_scenario(path);
+    } else {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            std::fprintf(stderr, "cannot open scenario '%s'\n", path.c_str());
+            return 1;
+        }
+        std::ostringstream buf;
+        buf << in.rdbuf();
+        auto text = sat::apply_overrides(buf.str(), overrides, "--set");
+        if (!text) {
+            std::fprintf(stderr, "%s\n", text.error().c_str());
+            return 1;
+        }
+        r = sat::parse_scenario(*text, path);
+    }
     if (!r) {
         std::fprintf(stderr, "%s\n", r.error().c_str());
         return 1;
@@ -196,6 +229,9 @@ int gui_command(int argc, char* argv[], int& i) {
         return sat::gui::run_dashboard_screenshot(*r, job);
     }
     std::printf("opening dashboard with '%s'\n", r->name.c_str());
+    if (!r->motion_net.empty()) {
+        std::printf("MotionNet: %s\n", r->motion_net.c_str());
+    }
     return sat::gui::run_dashboard(*r);
 #endif
 }

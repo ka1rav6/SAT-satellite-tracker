@@ -106,6 +106,15 @@ public:
     /// §9.2). Set by the engine from the gimbal's rate plus the platform's
     /// analytic rate; it deliberately excludes jitter (see render_frame).
     void set_blur_rate(Rate2 r) noexcept { blur_rate_ = r; }
+
+    /// Keep producing frames after `duration_s`. The dashboard uses this so a
+    /// demo runs until Pause. Headless and screenshot runs leave it off, so
+    /// they still stop on the scenario clock. `next()` already treats
+    /// `max_frames_ == 0` as "no cap".
+    void set_continuous(bool on) noexcept {
+        max_frames_ = on ? 0
+                         : static_cast<int64_t>(cfg_.duration_s * cfg_.camera_hz + 0.5);
+    }
     /// The rate the last frame's exposure smear was integrated along.
     ///
     /// Read-back for tests and for the GUI's timing panel. A-3 was a defect in

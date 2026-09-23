@@ -2,6 +2,12 @@
 
 #include <GL/gl.h>
 
+// Windows ships the OpenGL 1.1 header. GL_CLAMP_TO_EDGE is 1.2 (0x812F) and
+// is missing from that header, which is what breaks the MinGW GUI build.
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 namespace sat::gui {
 
 GlTexture::~GlTexture() {

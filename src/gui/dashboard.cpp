@@ -169,6 +169,10 @@ void Dashboard::rebuild(const Scenario& sc) {
     }
 
     pipeline_.build_from_scenario(scenario_);
+    // A live demo should not die when the scenario clock runs out. The figure-8
+    // file is 20 s, which is only a few seconds of wall time on a high-refresh
+    // display, and the window then sits on the last frame. Pause is the stop.
+    if (continuous_) pipeline_.source().set_continuous(true);
     // P1-2: the dashboard reads the published preview every frame to draw the
     // camera view, so it is the one consumer that needs the copy. Headless
     // runs skip it and save 307 KB per frame. Set AFTER the build, which
@@ -258,8 +262,15 @@ void Dashboard::step_simulation() {
     }
 
     const FrameRecord& r = pipeline_.last();
-    metrics_.add(r);
-    metrics_dirty_ = true;
+    // The collector keeps every sample so it can report an exact p95. That is
+    // right for a timed run and wrong for a demo that never ends: finish()
+    // sorts the whole series every frame. Stop feeding it at the scenario's
+    // own length. The rolling plots above keep updating.
+    const int64_t scored = static_cast<int64_t>(scenario_.duration_s * scenario_.camera_hz);
+    if (!continuous_ || frames_ < scored) {
+        metrics_.add(r);
+        metrics_dirty_ = true;
+    }
 
     // Kept alongside the collector, and only for things the collector does not
     // report: `frames_detected_` is a DETECTION rate, which is a useful live
@@ -409,11 +420,18 @@ void Dashboard::draw_controls() {
         "so a random beacon starts off-screen 92%% of the time - and finding it\n"
         "is the search problem, which is Stage 13 and not built yet.\n\n"
         "Turn this off to see exactly why Stage 13 is needed.");
-    ImGui::TextColored(kMutedCol,
-        "frame %lld of %lld   t = %.2f s",
-        static_cast<long long>(frames_),
-        static_cast<long long>(scenario_.duration_s * scenario_.camera_hz),
-        pipeline_.last().time_s);
+    if (continuous_) {
+        ImGui::TextColored(kMutedCol,
+            "frame %lld   t = %.2f s   runs until Pause",
+            static_cast<long long>(frames_),
+            pipeline_.last().time_s);
+    } else {
+        ImGui::TextColored(kMutedCol,
+            "frame %lld of %lld   t = %.2f s",
+            static_cast<long long>(frames_),
+            static_cast<long long>(scenario_.duration_s * scenario_.camera_hz),
+            pipeline_.last().time_s);
+    }
 
     ImGui::Separator();
 
@@ -1526,6 +1544,8 @@ void Dashboard::draw_scenario_panel() {
 
 int Dashboard::run(const Scenario& initial, ScreenshotJob job) {
     job_ = job;
+    // `--shot` must still finish. A window you are watching should not.
+    continuous_ = job.path.empty();
     glfwSetErrorCallback(glfw_error);
     if (!glfwInit()) {
         std::fprintf(stderr, "sat-tracker: could not initialise GLFW.\n"
