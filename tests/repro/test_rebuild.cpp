@@ -36,6 +36,7 @@
 
 #include "engine/pipeline.hpp"
 #include "scenario/schema.hpp"
+#include "core/profile.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -136,4 +137,63 @@ TEST_CASE("INV-3: a rebuilt run matches a freshly constructed one") {
         INFO("frame = " << i);
         CHECK(rebuilt[i].combined() == fresh[i].combined());
     }
+}
+
+// ---------------------------------------------------------------------------
+// The state a rebuild has to clear that is not part of the fingerprint.
+//
+// The fingerprint covers what a frame LOOKS like, which is what the two cases
+// above compare. It does not cover what the run REPORTS about itself, and the
+// GUI's Reset button resets both or neither: a demo that shows the frame-time
+// percentiles of three pooled runs after two Resets is as wrong as one that
+// shows a different beacon.
+// ---------------------------------------------------------------------------
+TEST_CASE("rebuilding clears the run's accumulated reports") {
+    auto loaded = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+    REQUIRE_MESSAGE(loaded.has_value(), loaded.error());
+    Scenario sc = *loaded;
+    sc.duration_s = 1.0;
+    const auto expected = static_cast<uint64_t>(sc.duration_s * sc.camera_hz);
+
+    Pipeline p;
+    p.build_from_scenario(sc);
+    while (p.step()) {}
+    // The run's own count, whatever it is — the zone also covers the final
+    // step() that reports the end of the run, so it is expected + 1 and the
+    // exact figure is not what this test is about.
+    const uint64_t first = p.timers()[Stage::FrameTotal].count();
+    REQUIRE(first >= expected);
+
+    // Design 15's stage table and every SPEED block read these histograms, and
+    // they accumulate for the life of the object. Without the reset the second
+    // run reported first + first samples — the pooled timings of both runs.
+    p.build_from_scenario(sc);
+    CHECK(p.timers()[Stage::FrameTotal].count() == 0u);
+    while (p.step()) {}
+    CHECK(p.timers()[Stage::FrameTotal].count() == first);
+}
+
+TEST_CASE("rebuilding clears the deadline ladder") {
+    auto loaded = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+    REQUIRE_MESSAGE(loaded.has_value(), loaded.error());
+    Scenario sc = *loaded;
+    sc.duration_s = 1.0;
+
+    Pipeline p;
+    p.build_from_scenario(sc);
+    // One injected stall, late enough that the track is confirmed (the ladder
+    // only climbs while there is a lock to protect) and late enough that the
+    // eight comfortable frames recovery needs do not fit before the run ends.
+    // Injected mode, so the clock is never read and this is the same on any
+    // machine.
+    p.set_deadline(Pipeline::DeadlineMode::Injected, 1000.0);
+    p.inject_stall(25, 1.0e6);
+    while (p.step()) {}
+    REQUIRE(p.deadline().level() > 0);
+
+    // Starting a run over must not begin it already shedding. The budget and
+    // the mode are a run OPTION the caller set, so those stay.
+    p.build_from_scenario(sc);
+    CHECK(p.deadline().level() == 0);
+    CHECK(p.deadline_mode() == Pipeline::DeadlineMode::Injected);
 }

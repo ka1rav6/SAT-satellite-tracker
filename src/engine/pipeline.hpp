@@ -691,6 +691,13 @@ private:
     /// Gains and the plant model together — see the note in pipeline.cpp.
     void reset_controller();
 
+    /// Everything that belongs to ONE RUN: the frame counter, the stage
+    /// timers, the deadline ladder, the forecast counters. Called by every
+    /// build path so that "start this run over" means the same thing in all of
+    /// them — which is what the GUI's Reset button needs and what the headless
+    /// shape, where a Pipeline is built once and discarded, never exercised.
+    void reset_run_state() noexcept;
+
     QuadrantDetector quad_{};       ///< CP 10.7's fine sensor model
     HandoverMonitor  handover_{};
     SatSupervisor    supervisor_{};

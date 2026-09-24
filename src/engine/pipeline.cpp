@@ -224,14 +224,55 @@ void Pipeline::reset_controller() {
                              source_.clock().control_dt());
 }
 
+// ---------------------------------------------------------------------------
+// reset_run_state — everything that belongs to ONE RUN and to nothing else.
+//
+// Both build paths and build_from_video start a run, and each of them used to
+// clear its own idea of what that meant: three lines here, four there, and the
+// governor, the stage timers and the platform-rate injection in neither.
+//
+// That did not matter while a Pipeline was built once and thrown away, which
+// is the headless shape. It matters for the GUI's Reset button, which calls
+// build_from_scenario on the SAME Pipeline — so whatever is left behind is
+// carried into the next run. The frame-time percentiles the demo shows after
+// two Resets were the pooled timings of three runs, and the deadline
+// governor's shed level survived from a run that had already ended.
+//
+// One function so that "what does starting a run clear" has one answer that
+// cannot drift between the paths.
+// ---------------------------------------------------------------------------
+void Pipeline::reset_run_state() noexcept {
+    cmd_rate_ = Rate2{};
+    frame_    = 0;
+    last_     = FrameRecord{};
+
+    // Design 15's stage budget table and the SPEED block of every summary come
+    // from these histograms, and they accumulate for the life of the object.
+    timers_.reset();
+
+    // The governor's LADDER is per-run; its budget and mode are a run OPTION
+    // the caller sets after build (headless does, and so do the tests), so
+    // only the state is cleared. A shed level inherited from a finished run
+    // would degrade the first frames of the next one for no reason.
+    deadline_.reset();
+
+    // CP 10.3's injection. Nothing computes this yet, so it is whatever a
+    // caller last set it to — and a rebuild means "start over from the
+    // scenario", which does not carry it.
+    platform_rate_est_ = Rate2{};
+
+    last_forecast_        = MotionForecast{};
+    motion_prior_applies_ = 0;
+    motion_coast_checks_  = 0;
+    motion_coast_uses_    = 0;
+}
+
 void Pipeline::build(const PipelineConfig& cfg, EmitterSoA emitters) {
     cfg_ = cfg;
     source_.build(cfg_.synthetic, std::move(emitters));
     gimbal_.reset(cfg_.pan, cfg_.tilt, cfg_.initial_boresight);
     reset_controller();
-    cmd_rate_ = Rate2{};
-    frame_    = 0;
-    last_     = FrameRecord{};
+    reset_run_state();
 
     // Pre-size all three snapshot slots from a prototype, so that publishing a
     // frame never allocates (INV-4). This is the one place it is allowed.
@@ -345,11 +386,10 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     // events from, and a timeline is a property of the run's description
     // rather than of its resolved configuration.
     // -----------------------------------------------------------------------
+    // The MODEL itself, which reset_run_state() deliberately does not touch:
+    // it is loaded from the scenario below, and the counters it feeds are
+    // cleared with the rest of the run state.
     motion_net_.reset();
-    last_forecast_ = MotionForecast{};
-    motion_prior_applies_ = 0;
-    motion_coast_checks_ = 0;
-    motion_coast_uses_ = 0;
     if (sc.ai_enabled && !sc.motion_net.empty()) {
         auto loaded = MotionNet::load(sc.motion_net);
         if (!loaded) {
@@ -376,9 +416,7 @@ void Pipeline::build_from_scenario(const Scenario& sc) {
     }
     gimbal_.reset(cfg_.pan, cfg_.tilt, cfg_.initial_boresight);
     reset_controller();
-    cmd_rate_ = Rate2{};
-    frame_    = 0;
-    last_     = FrameRecord{};
+    reset_run_state();
 
     SimSnapshot proto;
     proto.reserve_preview(cfg_.synthetic.camera.width, cfg_.synthetic.camera.height);
