@@ -385,6 +385,65 @@ because a reader deserves to know what is deliberately absent.
 
 ## 4. Closed
 
+- [x] **The GUI's Reset button produced a different run every time.** Press
+      Reset, press Play, get a visibly different simulation — the same seed,
+      every RNG stream reseeded correctly from it, the world rebuilt correctly.
+      `Dashboard::rebuild` calls `Pipeline::build_from_scenario` on the SAME
+      Pipeline, and `SyntheticSource::build` cleared the obvious per-run state
+      and left the rest. `sim_time_s_` was the one that mattered: §7.2's motion
+      algebra evaluates positions at ABSOLUTE time, so the second run started
+      at t = 20 s and put the beacon on whatever phase of its motion the first
+      had ended on. Also `blur_rate_` (the first frame after a Reset was
+      smeared along the previous run's slew), and at the Pipeline level the
+      stage timers (the SPEED panel showed the pooled frame times of every run
+      since the window opened), the deadline governor's shed level and the
+      platform-rate injection.
+      * **Measured:** `spec_defaults`, 2 s, two runs on one Pipeline —
+        **60 frames out of 60 differed**. Now 0, over every scenario in
+        `scenarios/`, asserted by `tests/repro/test_rebuild.cpp`.
+      * **Why nothing caught it:** every reproducibility check in the
+        repository — `test_fingerprint.cpp`, `test_ablation.cpp`'s digest pair,
+        `--verify-reproducibility` — compares two runs made by two FRESH
+        Pipeline objects. That is the headless shape. Not one of them rebuilt
+        the same object twice, which is the GUI shape.
+
+- [x] **Every frame was timestamped one camera period before the world it
+      showed.** `frame_index / camera_hz`, when §6.2's order advances the world
+      before acquiring, so the world is at `(frame_index + 1) / camera_hz` when
+      the frame is rendered.
+      * **Measured:** frame 0, reported `t = 0.0000`, `truth_screen.x =
+        1040.733`; the closed form of `spec_defaults`' 22 px/s target gives
+        1040.000 at t = 0 and **1040.733 at t = 0.0333**.
+      * Reached §7.4's event timeline (events landed a frame late), §9.2's
+        exposure smear (a frame of phase error in the blur direction for row
+        25's periodic options), `centroid.csv`/`trace.csv` timestamps, and
+        row 16's cold acquisition figure (0.067 s → **0.100 s**).
+      * `Clock::tick()` was never called from anywhere in the program, so
+        `FrameTruth::tick` was a hard zero on every frame ever emitted and the
+        time came from the accumulator `core/time.hpp` forbids in so many
+        words. Recorded in design amendment §14.0k.
+
+- [x] **The dashboard's "Clean" preset promised a number it did not produce.**
+      Tooltip: "the loop should track to a few pixels". Panel: ~17 px against a
+      red 10 px budget line, on the one preset where the loop is supposed to
+      look its best. Rows 23 and 25 are not part of the damage CHAIN — §9.3
+      puts them on the true boresight, never the pixels — so nothing in the
+      damage panel reached them and the preset left both running.
+      * **Measured**, `spec_defaults`, full specification in every other
+        respect, 10 s steady state: **0.45 px** with rows 23 and 25 quiet,
+        **17.02 px** with row 23 restored. Both asserted in
+        `tests/loop/test_closed_loop.cpp`, so the 16.33 px floor under row 17
+        is now a measurement rather than arithmetic.
+      * Rows 23 and 25 also gained the live controls the scenario table already
+        claimed they had, so the bound can be dragged into existence in front
+        of a judge.
+
+- [x] **Reset cleared four GUI traces and left five holding the previous run.**
+      The IMM's three mode probabilities, the priority policy's two scores and
+      the SAT strategy timeline kept their history while the time axis
+      restarted, so those panels showed two runs at once with nothing saying so.
+
+
 - [x] **CP 14.1 `--fuzz-scenarios`** — implemented, with explicit corner
       sampling.
 - [x] **Adversarial scenarios** — `scenarios/adversarial/` now holds six.
