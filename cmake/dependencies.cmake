@@ -185,8 +185,10 @@ if(NOT TARGET Eigen3::Eigen)
         GIT_TAG        3.4.0
         GIT_SHALLOW    TRUE)
     set(EIGEN_BUILD_DOC OFF CACHE BOOL "" FORCE)
-    set(BUILD_TESTING   OFF CACHE BOOL "" FORCE)
     set(EIGEN_BUILD_PKGCONFIG OFF CACHE BOOL "" FORCE)
+    # Do not FORCE BUILD_TESTING into the cache. Eigen is an include-only
+    # interface target here (no add_subdirectory), and a cache FORCE would
+    # disable SAT's own CTest on every machine that fetches Eigen.
     FetchContent_Populate(Eigen3)
     # Eigen's own CMakeLists drags in tests and install rules we do not want;
     # an interface target over its include dir is all we need.

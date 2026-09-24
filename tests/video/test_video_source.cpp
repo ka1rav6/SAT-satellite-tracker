@@ -545,6 +545,13 @@ RunMetrics run_bp2(const char* stem, int decode_threads = 0) {
 }  // namespace
 
 TEST_CASE("P0-4: the noiseless control clip scores essentially zero") {
+    // Without OpenCV there is no decoder, so build_from_video() cannot
+    // succeed and run_bp2()'s REQUIRE would report a missing dependency as
+    // a failed BP-2 measurement. Skip the way CP 8.8 above does.
+    if (!video_support_compiled_in()) {
+        MESSAGE("SKIPPED: this build has no video support");
+        return;
+    }
     // THE CONTROL, and it earns its place. A noiseless symmetric box has an
     // exact centroid, so any non-zero result here is a defect in the crop, in
     // the truth generator, or in the coordinate conventions between them — NOT
@@ -573,6 +580,13 @@ TEST_CASE("P0-4: the noiseless control clip scores essentially zero") {
 }
 
 TEST_CASE("P0-4: the codec and row-22 noise cost the centroider nothing measurable") {
+    // Without OpenCV there is no decoder, so build_from_video() cannot
+    // succeed and run_bp2()'s REQUIRE would report a missing dependency as
+    // a failed BP-2 measurement. Skip the way CP 8.8 above does.
+    if (!video_support_compiled_in()) {
+        MESSAGE("SKIPPED: this build has no video support");
+        return;
+    }
     // Same resolution in and out, so the crop is an identity and what remains
     // is H.264 plus additive temporal noise at spec row 22's 20 grey-level cap.
     const RunMetrics m = run_bp2("bp2_noisy_direct_640x480");
@@ -589,6 +603,13 @@ TEST_CASE("P0-4: the codec and row-22 noise cost the centroider nothing measurab
 }
 
 TEST_CASE("P0-4: the full BP-2 rehearsal meets every graded row") {
+    // Without OpenCV there is no decoder, so build_from_video() cannot
+    // succeed and run_bp2()'s REQUIRE would report a missing dependency as
+    // a failed BP-2 measurement. Skip the way CP 8.8 above does.
+    if (!video_support_compiled_in()) {
+        MESSAGE("SKIPPED: this build has no video support");
+        return;
+    }
     // THE ONE THAT MATTERS. 2000x2000 screen mode, noisy, PTZ loop engaged —
     // the shape the problem statement describes, exercising acquisition, the
     // bicubic crop, tracking, retention and handover together.
@@ -642,6 +663,13 @@ TEST_CASE("P0-4: the full BP-2 rehearsal meets every graded row") {
 }
 
 TEST_CASE("P0-4: decode thread count changes the speed and not the answer") {
+    // Without OpenCV there is no decoder, so build_from_video() cannot
+    // succeed and run_bp2()'s REQUIRE would report a missing dependency as
+    // a failed BP-2 measurement. Skip the way CP 8.8 above does.
+    if (!video_support_compiled_in()) {
+        MESSAGE("SKIPPED: this build has no video support");
+        return;
+    }
     // THE ASSERTION THAT MAKES THREADED DECODE SAFE — P0-3.
     //
     // engine/decode_thread.cpp forced single-threaded decode partly on the
