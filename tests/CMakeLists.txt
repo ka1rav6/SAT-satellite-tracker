@@ -247,8 +247,11 @@ target_compile_definitions(test_degrade PRIVATE
 
 # --- CP 2.3-2.5: snapshots and the reproducibility fingerprint --------------
 sat_add_test(repro
-    SOURCES repro/test_fingerprint.cpp
-    DEPS    sat_core sat_engine
+    SOURCES repro/test_fingerprint.cpp repro/test_rebuild.cpp
+    DEPS    sat_core sat_engine sat_scenario
+)
+target_compile_definitions(test_repro PRIVATE
+    SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
 )
 
 # --- CP 5.7, 5.9: the whole detection pipeline against the real simulator ---

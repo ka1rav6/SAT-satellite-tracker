@@ -31,6 +31,45 @@ void SyntheticSource::build(const SyntheticConfig& cfg, EmitterSoA emitters) {
     max_frames_     = static_cast<int64_t>(cfg_.duration_s * cfg_.camera_hz + 0.5);
     have_prev_bore_ = false;
     disturbance_    = Angle2{};
+
+    // -----------------------------------------------------------------------
+    // EVERY piece of per-run state, not just the obvious ones.
+    //
+    // build() is not only "construct a source"; it is also "start this run
+    // over", and the GUI's Reset button is the caller that makes the
+    // difference visible. Reset calls Pipeline::build_from_scenario on the
+    // SAME Pipeline object, so this SyntheticSource is reused rather than
+    // reconstructed, and anything left behind here is carried silently into
+    // the next run.
+    //
+    // `sim_time_s_` was the one that mattered. §7.2's motion algebra evaluates
+    // every emitter's position at ABSOLUTE time t rather than integrating a
+    // velocity — which is exactly what makes the analytic velocity reportable
+    // as truth — so a run that starts at t = 20 s puts the beacon wherever the
+    // previous run left it, on a phase of its figure-8 that has nothing to do
+    // with frame 0. The RNG streams were reseeded correctly, the world was
+    // rebuilt correctly, and the simulation still came out different every
+    // time Reset was pressed. Pipeline::step() meanwhile timestamps frames as
+    // frame_ / camera_hz, which DOES restart at zero, so the world clock and
+    // the event timeline also disagreed by a whole previous run.
+    //
+    // `blur_rate_` is the same class of bug one order smaller: the first frame
+    // after a Reset would be smeared along the slew the PREVIOUS run ended on
+    // until the engine set it again.
+    //
+    // `graded_slot_` is cleared rather than trusted: ensure_scintillation_slots
+    // rebuilds it only when the emitter COUNT changes, and two different
+    // scenarios can have the same count with different kinds.
+    // -----------------------------------------------------------------------
+    sim_time_s_     = 0.0;
+    blur_rate_      = Rate2{};
+    prev_true_bore_ = Angle2{};
+    graded_slot_.clear();
+    // build() installs a bare emitter set, so there is no compiled world until
+    // build_from_scenario says otherwise. Leaving this true would run the
+    // motion algebra over an empty World.
+    have_world_         = false;
+    manual_disturbance_ = false;
 }
 
 void SyntheticSource::advance_world(double dt) noexcept {
