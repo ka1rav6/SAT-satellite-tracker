@@ -135,6 +135,43 @@ int Dashboard::dock_cond() const noexcept {
     return redock_frames_ > 0 ? ImGuiCond_Always : ImGuiCond_Once;
 }
 
+// ---------------------------------------------------------------------------
+// apply_clean_preset — what "Clean" means, in ONE place.
+//
+// It used to mean two different things. The "Clean" BUTTON and the state the
+// dashboard OPENS in were written separately, and both quietened the damage
+// chain only — rows 21, 22 and 24. Rows 23 and 25 are not part of that chain:
+// §9.3 puts them on the TRUE BORESIGHT, never on the pixels, so nothing in the
+// damage panel reached them and neither path ever turned them off.
+//
+// The consequence was the most misleading thing on the dashboard. The button's
+// tooltip said "the loop should track to a few pixels"; the tracking panel
+// then showed about 17 px against a 10 px budget line, on the one preset where
+// the loop is supposed to look its best. Row 23's jitter is redrawn every frame
+// and added where the controller cannot see it, so it leaves a 16.33 px floor
+// under row 17 (design §1.3) that no loop and no predictor can get below. A
+// viewer has no way to tell that floor from a system that does not work, and
+// the dashboard was actively telling them it was the latter.
+//
+// Clean now means clean: rows 21 through 25, all quiet. §14.1's demo then works
+// as written — open with the loop alone with the target at a few pixels, dial
+// each row up, and watch the error respond — and row 23's slider is the single
+// most informative control on the panel, because the jump from 4 px to 17 px
+// when it goes back to 20 IS the bound, demonstrated rather than asserted.
+// ---------------------------------------------------------------------------
+void Dashboard::apply_clean_preset() {
+    SensorChain& c = pipeline_.source().sensor();
+    c.set_atmosphere(Atmosphere::Clear);
+    c.noise().gaussian_sigma  = 0.0;
+    c.noise().salt_pepper_p   = 0.0;
+    c.noise().poisson_enabled = false;
+    c.set_defects_enabled(false);
+
+    DisturbanceGenerator& d = pipeline_.source().disturbance();
+    d.set_jitter_px_per_frame(0.0);
+    d.set_platform_enabled(false);
+}
+
 void Dashboard::rebuild(const Scenario& sc) {
     scenario_ = sc;
 
@@ -200,14 +237,7 @@ void Dashboard::rebuild(const Scenario& sc) {
     // OVERRIDDEN: CLEAN" banner while this preset is active, every row of the
     // specification table reads the LIVE chain rather than the scenario file,
     // and one click on "Full spec" restores the scenario exactly as written.
-    if (start_clean_) {
-        SensorChain& c = pipeline_.source().sensor();
-        c.set_atmosphere(Atmosphere::Clear);
-        c.noise().gaussian_sigma  = 0.0;
-        c.noise().salt_pepper_p   = 0.0;
-        c.noise().poisson_enabled = false;
-        c.set_defects_enabled(false);
-    }
+    if (start_clean_) apply_clean_preset();
 
     centroid_image_.clear();
     centroid_screen_.clear();
@@ -552,13 +582,19 @@ void Dashboard::draw_controls() {
     // ----------------------------------------------------------------------
     {
         const NoiseParams& n0 = chain.noise();
+        const DisturbanceGenerator& d0 = pipeline_.source().disturbance();
         const bool overridden =
                !chain.enabled()
             || chain.atmosphere()    != scenario_.atmosphere
             || n0.poisson_enabled    != scenario_.noise_poisson
             || !chain.defects_enabled()
             || std::abs(n0.gaussian_sigma - scenario_.gaussian_sigma) > 1e-9
-            || std::abs(n0.salt_pepper_p  - scenario_.salt_pepper)    > 1e-9;
+            || std::abs(n0.salt_pepper_p  - scenario_.salt_pepper)    > 1e-9
+            // Rows 23 and 25. The banner's whole job is "the live chain is not
+            // the file", and it could not see the two rows that dominate the
+            // graded tracking number.
+            || std::abs(d0.jitter_px_per_frame() - scenario_.jitter_px_per_frame) > 1e-9
+            || (d0.has_platform() && !d0.platform_enabled());
 
         if (overridden) {
             const bool clean = !chain.enabled()
@@ -581,14 +617,14 @@ void Dashboard::draw_controls() {
 
     // Presets, because §14.1's demo dials damage up in stages and hunting for
     // four sliders mid-presentation is not something anyone should have to do.
-    if (ImGui::Button("Clean")) {
-        chain.set_atmosphere(Atmosphere::Clear);
-        chain.noise().gaussian_sigma  = 0.0;
-        chain.noise().salt_pepper_p   = 0.0;
-        chain.noise().poisson_enabled = false;
-        chain.set_defects_enabled(false);
-    }
-    ImGui::SetItemTooltip("No damage at all. The loop should track to a few pixels.");
+    DisturbanceGenerator& dist = pipeline_.source().disturbance();
+    if (ImGui::Button("Clean")) apply_clean_preset();
+    ImGui::SetItemTooltip(
+        "No damage and no disturbance: rows 21-25 all quiet. This is the one\n"
+        "preset where the loop is alone with the target, and it tracks to a\n"
+        "few pixels. Turn row 23's jitter back up below and watch it jump to\n"
+        "~17 px - that is the 16.33 px floor jitter puts under row 17, not a\n"
+        "loop that stopped working.");
     ImGui::SameLine();
     if (ImGui::Button("Sensor noise")) {
         chain.set_atmosphere(Atmosphere::Clear);
@@ -608,6 +644,8 @@ void Dashboard::draw_controls() {
         chain.noise().salt_pepper_p   = scenario_.salt_pepper;
         chain.noise().poisson_enabled = scenario_.noise_poisson;
         chain.set_defects_enabled(true);
+        dist.set_jitter_px_per_frame(scenario_.jitter_px_per_frame);
+        dist.set_platform_enabled(true);
     }
     // SetItemTooltip is PRINTF-STYLE. "10%" was being read as the conversion
     // "% i", so this pulled an int argument that was never passed — undefined
@@ -649,6 +687,55 @@ void Dashboard::draw_controls() {
         "These alone defeat a brightest-pixel detector - a stuck 255 beats a\n"
         "120-level beacon with no noise present at all. They are isolated\n"
         "single pixels, which is exactly what a median filter removes.");
+
+    // -----------------------------------------------------------------------
+    // Rows 23 and 25 — THE DISTURBANCES, and why they belong in this panel.
+    //
+    // This panel is headed "Damage - specification rows 21-25" and had
+    // controls for 21, 22 and 24 only. The scenario panel's table listed rows
+    // 23 and 25 as live values against the file's, with the comment "every one
+    // of these is live-adjustable from the controls panel" — which was not
+    // true of either, so the comparison could never differ.
+    //
+    // They are the two that decide the graded number. Row 23's jitter is drawn
+    // fresh every frame and added to the TRUE boresight, where the controller
+    // cannot see it and cannot reject it, so it puts a hard 16.33 px floor
+    // under row 17's 10 px budget (design §1.3). Without a control, a viewer
+    // looking at 17 px of tracking error has no way to distinguish that floor
+    // from a loop that does not work — and the single most useful thing the
+    // dashboard can do is let them drag the slider to zero and watch the error
+    // fall to ~4 px, which says "the loop is fine and the budget is the
+    // specification's problem" far better than a paragraph does.
+    // -----------------------------------------------------------------------
+    ImGui::Spacing();
+    ImGui::TextColored(kMutedCol, "Disturbance - rows 23 and 25 (moves the TRUE boresight)");
+
+    float jit = static_cast<float>(dist.jitter_px_per_frame());
+    if (ImGui::SliderFloat("jitter px/frame (row 23)", &jit, 0.0f, 20.0f, "%.1f")) {
+        dist.set_jitter_px_per_frame(jit);
+    }
+    ImGui::SetItemTooltip(
+        "Uniform in [-A, +A], redrawn once per camera frame, applied to the\n"
+        "boresight the frame is RENDERED at while the tracker is told the\n"
+        "commanded one. It is white, so no controller and no predictor can\n"
+        "reject it: over two axes it leaves sqrt(2*A*A/3) of pointing error,\n"
+        "which at the specification's A = 20 is 16.33 px against row 17's\n"
+        "10 px budget. Drag it to 0 and the tracking trace drops to a few px.");
+
+    if (dist.has_platform()) {
+        bool plat = dist.platform_enabled();
+        if (ImGui::Checkbox("platform motion (row 25)", &plat)) {
+            dist.set_platform_enabled(plat);
+        }
+        ImGui::SetItemTooltip(
+            "The mount's carrier drifting under the camera. Unlike jitter it is\n"
+            "smooth, so the filter CAN follow it: the measurement is formed\n"
+            "through the commanded boresight, which carries the drift, and the\n"
+            "loop cancels it without ever being told it exists. Turning it off\n"
+            "should barely move the tracking trace - that is the point.");
+    } else {
+        ImGui::TextColored(kMutedCol, "platform motion (row 25)  -  none in this scenario");
+    }
 
     // Clutter needs a world rebuild, so it sits apart from the live sliders.
     ImGui::Spacing();
@@ -1500,7 +1587,14 @@ void Dashboard::draw_scenario_panel() {
         row_live("-",      "defects (hot/dead)",
                  std::string(live_damage && chain.defects_enabled() ? "on" : "off"),
                  std::string("on"));
-        row("row 25", "platform",        "%zu component(s)", scenario_.platform.size());
+        {
+            const DisturbanceGenerator& d = pipeline_.source().disturbance();
+            row_live("row 25", "platform",
+                     d.has_platform()
+                         ? std::string(d.platform_enabled() ? "on" : "off")
+                         : std::string("none"),
+                     fmt("%zu component(s)", scenario_.platform.size()));
+        }
         row_live("S9.1",   "clutter",
                  fmt("%d sources, %d decoy", live_clutter, live_decoy),
                  fmt("%d sources, %d decoy",

@@ -149,6 +149,11 @@ private:
     void step_simulation();
     void rebuild(const Scenario& sc);
 
+    /// Rows 21-25 all quiet — what the "Clean" button and the dashboard's
+    /// opening state BOTH mean. One function because they were two, and the
+    /// two disagreed about rows 23 and 25; see the note in dashboard.cpp.
+    void apply_clean_preset();
+
     void draw_menu_bar();
     void draw_controls();
     void draw_camera_view();

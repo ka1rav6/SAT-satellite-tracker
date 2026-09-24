@@ -664,3 +664,85 @@ TEST_CASE("simulation time comes from the Clock, not from an accumulator") {
     }
     REQUIRE(frames == static_cast<int64_t>(sc.duration_s * sc.camera_hz));
 }
+
+// ===========================================================================
+// ROW 17, AND WHAT THE 17 px ACTUALLY IS
+// ===========================================================================
+
+TEST_CASE("row 17 is met on the full specification with rows 23 and 25 quiet") {
+    // WHY THIS TEST EXISTS. The spec_defaults summary reports about 17 px of
+    // steady-state tracking error against row 17's 10 px budget, and the
+    // obvious reading of that number is that the loop does not work. It is
+    // not: docs/RESULTS.md §1 and design §1.3 derive a 16.33 px FLOOR under
+    // row 17 from row 23 alone, because jitter is redrawn every camera frame
+    // and added to the TRUE boresight where the controller neither sees it nor
+    // can act on it. sqrt(2 * 20^2 / 3) = 16.33.
+    //
+    // A derivation is not a measurement. This is the measurement: the SAME
+    // scenario, at the FULL specification in every other respect — row 21's
+    // 10 % impulse noise, row 22's read noise at the cap, row 24's atmosphere,
+    // the defects, the mount's limits, latency and encoder — with rows 23 and
+    // 25 turned off through the same live overrides the dashboard's "Clean"
+    // preset uses. If the loop is sound, this is comfortably inside 10 px; if
+    // it is not, no amount of arithmetic about jitter explains the 17.
+    //
+    // It is therefore also the guard on the dashboard's claim. The Clean
+    // preset's tooltip says the loop "tracks to a few pixels", and a tooltip
+    // that states a number nothing checks is how the old one came to promise
+    // a figure it did not produce.
+    auto loaded = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+    REQUIRE_MESSAGE(loaded.has_value(), loaded.error());
+    Scenario sc = *loaded;
+    sc.duration_s = 10.0;
+
+    Pipeline p;
+    p.build_from_scenario(sc);
+    p.set_publish_snapshots(false);
+    // Through the runtime override rather than by editing the Scenario, so
+    // this exercises the path the dashboard actually takes.
+    p.source().disturbance().set_jitter_px_per_frame(0.0);
+    p.source().disturbance().set_platform_enabled(false);
+
+    double sum_sq = 0.0;
+    int    n      = 0;
+    while (p.step()) {
+        const FrameRecord& r = p.last();
+        if (!r.truth_valid || r.track_state != TrackState::Confirmed) continue;
+        // Past the acquisition transient: the beacon starts a quarter of a
+        // frame off-centre by design, and row 17 is graded in steady state
+        // (design §13.1 splits the two and so does the summary).
+        if (r.time_s < 2.0) continue;
+        sum_sq += r.tracking_error_px * r.tracking_error_px;
+        ++n;
+    }
+    REQUIRE(n > 200);
+    const double rms = std::sqrt(sum_sq / n);
+    MESSAGE("steady-state tracking error with rows 23/25 quiet: " << rms << " px");
+    CHECK(rms < 10.0);          // row 17
+    CHECK(rms < 6.0);           // "a few pixels", which is the stronger claim
+
+    // And the counterfactual, so the test cannot pass by measuring nothing:
+    // put row 23 back and the same loop, same seed, must land near the floor.
+    Pipeline q;
+    q.build_from_scenario(sc);
+    q.set_publish_snapshots(false);
+    q.source().disturbance().set_platform_enabled(false);   // row 23 only
+    double sum_sq_j = 0.0;
+    int    nj       = 0;
+    while (q.step()) {
+        const FrameRecord& r = q.last();
+        if (!r.truth_valid || r.track_state != TrackState::Confirmed) continue;
+        if (r.time_s < 2.0) continue;
+        sum_sq_j += r.tracking_error_px * r.tracking_error_px;
+        ++nj;
+    }
+    REQUIRE(nj > 200);
+    const double rms_j = std::sqrt(sum_sq_j / nj);
+    MESSAGE("the same loop with row 23's jitter restored: " << rms_j << " px");
+    // The floor is sqrt(2 * 20^2 / 3) = 16.33 px and the residual control
+    // error adds in quadrature, so the measured value sits just above it. The
+    // window is wide enough not to be a tuning assertion and narrow enough to
+    // fail if the error stops being the jitter.
+    CHECK(rms_j > 14.0);
+    CHECK(rms_j < 22.0);
+}
