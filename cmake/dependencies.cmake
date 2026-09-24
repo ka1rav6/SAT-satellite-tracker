@@ -26,6 +26,12 @@
 
 include(FetchContent)
 
+# This directory holds SAT's own find modules, so MODULE mode can reach them.
+# cmake/Findonnxruntime.cmake is the one that matters: the official ONNX
+# Runtime release tarballs ship no CMake package, which made -DSAT_WITH_ONNX=ON
+# a hard error for anyone who had not installed it through vcpkg. See that file.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+
 # Fetched sources land in build/_deps. `just clean` removes them along with the
 # build tree, which costs a re-download; `just clean-build` keeps them.
 set(FETCHCONTENT_QUIET OFF)

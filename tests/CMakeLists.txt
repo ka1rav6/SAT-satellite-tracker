@@ -371,6 +371,11 @@ sat_add_test(ai
 )
 target_compile_definitions(test_ai PRIVATE
     SAT_SCENARIO_DIR="${CMAKE_SOURCE_DIR}/scenarios"
+    # SAT-ML §4.2's parity fixture. Committed under tests/, never under
+    # models/: it is a deterministic graph with MotionNet's signature and none
+    # of its weights, and the separate directory is what stops it ever being
+    # mistaken for the trained network. tools/make_motion_fixture.py builds it.
+    SAT_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/ai"
 )
 
 # --- MotionNet tracks-only --gen-dataset (sat_app, INV-1) ------------------

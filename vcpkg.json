@@ -23,7 +23,7 @@
   "builtin-baseline": "a1cae005c39be7b18ba319fced856b68d7276271",
   "features": {
     "video": {
-      "description": "MP4 ingest and kernel test oracles (design §8, §16)",
+      "description": "MP4 ingest and kernel test oracles (design \u00a78, \u00a716)",
       "dependencies": [
         {
           "name": "opencv4",
@@ -35,9 +35,15 @@
       ]
     },
     "gui": {
-      "description": "The live dashboard (design §12)",
+      "description": "The live dashboard (design \u00a712)",
       "dependencies": [
         "glfw3"
+      ]
+    },
+    "ml": {
+      "description": "ONNX Runtime for the learned models (design \u00a711, SAT-ML.md)",
+      "dependencies": [
+        "onnxruntime"
       ]
     }
   }

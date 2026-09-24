@@ -9,6 +9,15 @@
 
 cmake_minimum_required(VERSION 3.20)
 
+# CMP0144 (CMake 3.27+): let find_package honour upper-case <PACKAGENAME>_ROOT.
+# Without it, passing -DONNXRUNTIME_ROOT=... — which is the documented way to
+# point at an ONNX Runtime release tarball, and what cmake/Findonnxruntime.cmake
+# reads — emits a developer warning on every configure. Guarded because 3.20 is
+# still the floor and older CMake does not know the policy name.
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
+
 project(sat-tracker
     VERSION 0.1.0
     DESCRIPTION "Self-Adaptive beacon Tracking for mobile FSOC coarse alignment"

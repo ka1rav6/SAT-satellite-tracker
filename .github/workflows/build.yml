@@ -86,6 +86,19 @@ jobs:
             cc: gcc-13
             cxx: g++-13
             extra_cmake: -DSAT_WITH_GUI=OFF
+          # The ML path. SAT_WITH_ONNX defaults to OFF, so until this arm
+          # existed nothing in CI had ever COMPILED the code inside
+          # `#ifdef SAT_HAVE_ONNX` — the MotionNet wrapper's whole inference
+          # body, and the parity test that exercises it. A configuration that
+          # is never built is a configuration that is broken on the day
+          # somebody needs it for a demo.
+          - name: linux-onnx
+            os: ubuntu-latest
+            build_type: Release
+            cc: gcc-13
+            cxx: g++-13
+            onnx: true
+            extra_cmake: -DSAT_WITH_ONNX=ON -DONNXRUNTIME_ROOT=${{ github.workspace }}/.ort
           - name: windows-msvc-release
             os: windows-latest
             build_type: Release
@@ -110,6 +123,21 @@ jobs:
             ninja-build libeigen3-dev libopencv-dev \
             libglfw3-dev libgl1-mesa-dev
 
+      # The official release tarball, not apt or vcpkg: there is no Debian
+      # package, and a vcpkg source build of ONNX Runtime takes hours. The
+      # version is pinned to ml/requirements.txt's onnxruntime so the C++
+      # runtime and the Python exporter are the same release — SAT-ML §4.5
+      # makes that pin part of the reproducibility statement.
+      - name: Install ONNX Runtime
+        if: matrix.onnx
+        run: |
+          ORT_VERSION=1.17.1
+          curl -fsSL -o ort.tgz \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          mkdir -p .ort
+          tar xzf ort.tgz --strip-components=1 -C .ort
+          echo "LD_LIBRARY_PATH=${{ github.workspace }}/.ort/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+
       - name: Install Windows dependencies
         if: runner.os == 'Windows'
         run: |
@@ -124,11 +152,12 @@ jobs:
           echo "CXX=${{ matrix.cxx }}" >> $GITHUB_ENV
 
       - name: Configure
-        run: >
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          -DBUILD_TESTING=ON
-          ${{ matrix.extra_cmake }}
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DBUILD_TESTING=ON \
+            ${{ matrix.extra_cmake }} 2>&1 | tee configure.log
 
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
@@ -140,6 +169,18 @@ jobs:
       # artifact downloads and runs". Proving the binary starts on the runner
       # that built it is the weaker half of that, but it catches a missing DLL
       # or a bad runtime dependency before anyone downloads anything.
+      # An ONNX arm that silently configured without the runtime would pass
+      # every test in this file by taking the INV-7 fallback, and would prove
+      # nothing. This fails the job instead.
+      - name: 'ML: assert the ONNX path was actually compiled in'
+        if: matrix.onnx
+        run: |
+          if ! grep -q 'ONNX Runtime  : TRUE' configure.log; then
+            echo "SAT_WITH_ONNX=ON but ONNX Runtime was not found — the"
+            echo "inference body was not compiled and this arm proves nothing."
+            exit 1
+          fi
+
       - name: Run the binary
         run: ./build/sat-tracker --version
         shell: bash
