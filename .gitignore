@@ -76,10 +76,6 @@ logs/*
 .clangd/
 .cache/
 
-# graphify knowledge graph + generated Obsidian memory vault
-graphify-out/
-obsidian-vault/
-
 # OS junk
 .DS_Store
 Thumbs.db
@@ -98,6 +94,14 @@ ml/__pycache__/
 models/*.pt
 models/*.onnx
 models/*.onnx.data
+
+# ...except the exported MotionNet graph, which SAT-ML §10.5 sizes at ~6k
+# parameters / 24 KB. A checkpoint is training state and belongs nowhere near
+# git; an exported graph that small is the difference between a feature that
+# works on a fresh clone and one that only ever worked on the machine that
+# trained it. Committing it is what lets CI's parity test and a live demo use
+# the real network instead of silently taking the INV-7 fallback.
+!models/motionnet_v1.onnx
 
 
 __pycache__/

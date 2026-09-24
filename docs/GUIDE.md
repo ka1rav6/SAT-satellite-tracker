@@ -418,6 +418,15 @@ just export-motion
 classical IMM keeps running. That is INV-7, and it is how the SIH ablation is
 scored.
 
+**It is off in a fresh clone, and that matters when reading any number here.**
+`SAT_WITH_ONNX` defaults to `OFF`, so a default build has no inference runtime,
+and the exported weights are not committed. Either alone leaves the optional
+empty and the classical IMM running — so every performance figure elsewhere in
+this documentation is a `--no-ai` figure. To turn MotionNet on, reconfigure
+with `-DSAT_WITH_ONNX=ON`, run `just motion-all`, and pass
+`--set ai.motion_net=models/motionnet_v1.onnx`. `docs/models/motionnet_v1.md`
+has the measured gate table and the conditions the model fails under.
+
 ---
 
 ## Where to go next

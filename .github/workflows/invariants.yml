@@ -52,6 +52,17 @@ jobs:
       - name: 'Documentation: links, recipes and anchored numbers'
         run: ./tools/check_docs.py
 
+      # SAT-ML ML-8 makes a model card a deliverable, and a card's numbers are
+      # the claim the whole ML section rests on. They are transcribed by hand
+      # from an evaluation run, and one had already drifted: the MotionNet v1
+      # card quoted a 45.7% / 53.9% improvement from a training run that is not
+      # the one models/motionnet_v1.eval.json records (43.4% / 49.5%). The gate
+      # passes either way, which is what makes this dangerous — nothing looks
+      # wrong until an evaluator checks, and then every other number is in
+      # doubt too. Same class of gate as the numbers half of check_docs.
+      - name: 'Model cards: gate figures match their eval artifact'
+        run: ./tools/check_model_cards.py
+
   link-boundary:
     name: INV-1 link boundary
     runs-on: ubuntu-latest

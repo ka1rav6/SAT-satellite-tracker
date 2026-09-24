@@ -28,13 +28,51 @@ seed 1337, best val at epoch 54.
 
 | | +5 RMSE (µrad) | +15 RMSE (µrad) | regime acc @ ≥1s |
 |---|---|---|---|
-| CV | 2428.825 | 12221.627 | n/a |
-| MotionNet | 1318.304 | 5634.252 | 0.921 |
-| vs CV | 45.7% lower | 53.9% lower | |
+| CV | 2440.694 | 12257.666 | n/a |
+| MotionNet | 1380.805 | 6184.962 | 0.929 |
+| vs CV | 43.4% lower | 49.5% lower | |
+
+Every figure in that table is transcribed from `models/motionnet_v1.eval.json`,
+which is the artifact `ml/evaluate_motion.py` wrote, and
+`tools/check_model_cards.py` fails the build if the two drift apart. An earlier
+version of this card quoted a different training run (CV +5 2428.825,
+MotionNet +5 1318.304, 45.7% / 53.9%, regime 0.921) than the committed
+`eval.json` — the gate passed either way, so the conclusion never changed, but
+a model card whose numbers cannot be found in any artifact is the exact defect
+audit P3-4 built a checker for.
 
 Gate needed +5 ≤ 0.80 CV (20% better), +15 ≤ 0.65 CV (35% better), regime ≥ 0.90.
 All three passed. `models/motionnet_v1.onnx` is the export of this checkpoint.
-Weights are gitignored; regenerate with `just train-motion` then `just export-motion`.
+
+## State of this model IN THIS REPOSITORY — read before quoting it
+
+The numbers above were measured. The network that produced them is **not
+currently active in a fresh clone**, for two independent reasons, and both have
+to be undone before MotionNet does anything at all:
+
+1. **The build has no inference runtime.** `SAT_WITH_ONNX` defaults to `OFF`
+   (`cmake/dependencies.cmake`), so `SAT_HAVE_ONNX` is undefined and
+   `MotionNet::load` returns "ONNX Runtime was not compiled in".
+2. **The weights are not committed.** `models/motionnet_v1.onnx` is produced by
+   `just export-motion` from a checkpoint that is training state and is
+   correctly gitignored. The `.gitignore` now permits the exported graph
+   specifically, so it *can* be committed once regenerated — it is ~24 KB.
+
+Either one alone is enough to leave the optional empty, and Pipeline then runs
+the classical IMM. That is INV-7 working exactly as designed, and it is why
+this is safe to ship in this state rather than a defect.
+
+It does mean one thing that must not be misquoted: **every performance number
+committed elsewhere in this repository is a `--no-ai` number.** MotionNet
+changes none of them until both switches above are flipped. To turn it on:
+
+```bash
+just ml-setup                                    # once
+cmake -S . -B build -DSAT_WITH_ONNX=ON           # reconfigure with the runtime
+just motion-all                                  # data -> train -> gate -> export
+sat-tracker --headless --scenario scenarios/ml/motion_figure8.toml \
+    --set ai.motion_net=models/motionnet_v1.onnx
+```
 
 ## End-to-end (official reacq / lock)
 

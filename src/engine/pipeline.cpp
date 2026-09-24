@@ -1100,11 +1100,12 @@ bool Pipeline::step() {
         if (motion_net_) {
             float hist[Track::kHistory][4];
             tracker_.track().history_tensor(hist);
-            last_forecast_ = motion_net_->run(hist);
+            last_forecast_ = motion_net_->run(hist, static_cast<float>(frame_dt));
             // A lukewarm regime call still moves the IMM, and on a figure-8
             // that boost raised tracking error by ~10 px without saving a
             // single miss. Only a confident call is allowed to touch pi_.
-            if (last_forecast_.valid && last_forecast_.confidence >= 0.90f
+            if (last_forecast_.valid && !last_forecast_.off_training_rate
+                && last_forecast_.confidence >= 0.90f
                 && associated >= 0
                 && tracker_.track().drivable() && tracker_.track().uses_imm()) {
                 tracker_.track().set_regime_prior(
@@ -1309,8 +1310,10 @@ bool Pipeline::step() {
     // allowed to move the look — and only inside k * position_sigma of the
     // IMM predict, so a wild residual cannot slew the gimbal.
     const bool coasting = trk.state() == TrackState::Coasting;
-    const bool locked = rec.mode == TrackMode::Track && trk.drivable() && !coasting;
-    if (locked || (fsm_.tracking_active() && trk.drivable() && !coasting)) {
+    // `tracking_active()` already covers TrackMode::Track, so the separate
+    // `locked` term this condition used to carry was a strict subset of the
+    // second disjunct and could never change the branch taken.
+    if (fsm_.tracking_active() && trk.drivable() && !coasting) {
         // CP 10.4: advanced by the controller's prediction horizon, which is
         // ZERO unless the Smith predictor is on. Both sides of the error move
         // together or neither does — control/smith.hpp has the argument, and
@@ -1323,7 +1326,8 @@ bool Pipeline::step() {
         // rejected frame must still move the centre up to the IMM, or a
         // later Search starts where Track was entered.
         aim = trk.predict_position(control_.horizon_s());
-        if (last_forecast_.valid && last_forecast_.confidence >= 0.90f) {
+        if (last_forecast_.valid && !last_forecast_.off_training_rate
+            && last_forecast_.confidence >= 0.90f) {
             const int k = std::min(std::max(trk.consecutive_misses() - 1, 0), 14);
             const Angle2 mn = trk.position() + last_forecast_.step_urad[k];
             const Angle2 imm_p = trk.predict_position(frame_dt * static_cast<double>(k + 1));
@@ -1345,7 +1349,8 @@ bool Pipeline::step() {
             Angle2 centre = search_.centre();
             const bool parked = motion_coast_uses_ > 0;
             if (tracker_.has_track() && !parked) centre = trk.position();
-            if (last_forecast_.valid && tracker_.has_track()
+            if (last_forecast_.valid && !last_forecast_.off_training_rate
+                && tracker_.has_track()
                 && last_forecast_.confidence >= 0.90f) {
                 const int k = std::min(std::max(trk.consecutive_misses() - 1, 0), 14);
                 const Angle2 mn = trk.position() + last_forecast_.step_urad[k];

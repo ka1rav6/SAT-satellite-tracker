@@ -18,7 +18,6 @@ namespace {
 // without regenerating that file from the real train shards.
 constexpr float kPosScale = 1.0e5f;
 constexpr float kRateScale = 1.0e5f;
-constexpr float kDt = 1.0f / 30.0f;
 constexpr int kHist = 30;
 constexpr int kHorizon = 15;
 
@@ -34,11 +33,17 @@ void normalise_hist(const float hist[30][4], float* out) noexcept {
 }
 
 void compose_forecast(const float hist[30][4], const float* residual,
-                      MotionForecast& fc) noexcept {
+                      float dt_s, MotionForecast& fc) noexcept {
+    // The CV term is recomposed at the CALLER'S dt, not at the training dt.
+    // It used to be hardcoded to 1/30, which silently doubled the
+    // extrapolation on a 60 Hz camera — the same defect class the audit
+    // already recorded as A-3/P2-4 (motion blur sampling the platform rate at
+    // a hardcoded 30 Hz). The residual cannot be corrected this way, because
+    // it is learned; MotionNet::run flags that instead.
     const float vaz = hist[kHist - 1][2];
     const float vel = hist[kHist - 1][3];
     for (int k = 0; k < kHorizon; ++k) {
-        const float step = static_cast<float>(k + 1) * kDt;
+        const float step = static_cast<float>(k + 1) * dt_s;
         fc.step_urad[k] = Angle2{residual[k * 2 + 0] + vaz * step,
                                  residual[k * 2 + 1] + vel * step};
     }
@@ -107,10 +112,11 @@ Result<MotionNet> MotionNet::load(const std::string& path) {
 #endif
 }
 
-MotionForecast MotionNet::run(const float hist[30][4]) noexcept {
+MotionForecast MotionNet::run(const float hist[30][4], float dt_s) noexcept {
     MotionForecast fc{};
 #ifndef SAT_HAVE_ONNX
     (void)hist;
+    (void)dt_s;
     return fc;
 #else
     if (!impl_ || !impl_->ready || !impl_->session) return fc;
@@ -127,9 +133,14 @@ MotionForecast MotionNet::run(const float hist[30][4]) noexcept {
                                         in_names, &input, 1, out_names, 2);
         const float* residual = outs[0].GetTensorData<float>();
         const float* logits = outs[1].GetTensorData<float>();
-        compose_forecast(hist, residual, fc);
+        compose_forecast(hist, residual, dt_s, fc);
         for (int i = 0; i < 4; ++i) fc.regime_logit[i] = logits[i];
         fc.regime = argmax_regime(logits, fc.confidence);
+        // Half a percent: tight enough that 30 vs 29.97 Hz (the video path's
+        // NTSC rate) does not trip it, loose enough that it cannot miss the
+        // 60 Hz case the flag exists for.
+        fc.off_training_rate =
+            std::fabs(dt_s - MotionNet::kTrainingDtS) > 0.005f * MotionNet::kTrainingDtS;
         fc.valid = true;
     } catch (...) {
         fc.valid = false;

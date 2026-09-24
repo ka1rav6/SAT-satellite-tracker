@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import pathlib
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,18 @@ from ml.models.motion import HORIZON, MotionNet, constant_velocity_forecast
 
 PLUS5 = 4    # 0-based index of the +5-frame step
 PLUS15 = 14  # last step
+
+
+def posix(p) -> str:
+    """A path as forward slashes, whatever platform wrote it.
+
+    These strings land in a committed JSON sidecar that a reader on another OS
+    opens, and `str(Path)` on Windows produces "models\\motionnet_v1.pt".
+    Backslashes there are not merely ugly: they are a second escape level
+    inside JSON, they do not round-trip as a path on POSIX, and they advertise
+    which machine trained the model rather than which dataset did.
+    """
+    return pathlib.PurePath(p).as_posix()
 
 
 def rmse_at(pred: np.ndarray, target: np.ndarray, step: int) -> float:
@@ -93,8 +106,8 @@ def evaluate(dataset_root: Path, ckpt: Path, device_name: str = "cpu") -> dict[s
         "is_real_result": "dummy" not in str(dataset_root).lower(),
         "gate_passed": gate_passed(table),
         "table": table,
-        "ckpt": str(ckpt),
-        "dataset": str(dataset_root),
+        "ckpt": posix(ckpt),
+        "dataset": posix(dataset_root),
     }
     print_table(table)
     if not result["gate_passed"]:

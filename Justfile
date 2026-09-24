@@ -22,6 +22,17 @@ vcpkg_baseline := "a1cae005c39be7b18ba319fced856b68d7276271"
 # Parallelism for builds and sweeps.
 jobs := num_cpus()
 
+# How the ML recipes find their interpreter. A repo-local .venv wins (Windows
+# puts it under Scripts/, POSIX under bin/), then $SAT_PYTHON, then python3.
+# See the MotionNet section for why this is resolved rather than hardcoded.
+py_resolve := '''
+if   [[ -x .venv/bin/python ]];         then PY=.venv/bin/python
+elif [[ -x .venv/Scripts/python.exe ]]; then PY=.venv/Scripts/python.exe
+elif [[ -n "${SAT_PYTHON:-}" ]];        then PY="$SAT_PYTHON"
+else                                         PY=python3
+fi
+'''
+
 # Default recipe when you type plain `just`.
 default: build
 
@@ -573,7 +584,7 @@ sanitize:
     ctest --test-dir "{{build_dir}}-asan" --output-on-failure --parallel {{jobs}}
 
 # Run every static invariant gate.
-gates: gate-source gate-inv1-selftest gate-docs
+gates: gate-source gate-inv1-selftest gate-docs gate-model-cards
 
 # Check that the documentation's own references resolve: every `just` recipe it
 # names exists, every repository path it names exists, every link and
@@ -587,6 +598,17 @@ gates: gate-source gate-inv1-selftest gate-docs
 # true.
 gate-docs:
     ./tools/check_docs.py
+
+# Check that every model card's SAT-ML §6.6 gate table matches the eval.json
+# its evaluation actually wrote.
+#
+# ML-8 makes the card a deliverable and its numbers are the claim the whole ML
+# section rests on. They are transcribed by hand, and one had already drifted:
+# the MotionNet v1 card quoted 45.7% / 53.9% from a training run that is not
+# the one models/motionnet_v1.eval.json records (43.4% / 49.5%). Both pass the
+# gate, so no conclusion changed — which is exactly why nobody noticed.
+gate-model-cards:
+    ./tools/check_model_cards.py
 
 # Every gate including the slower reproducibility ones. This is what CI runs.
 gates-full: gates gate-repro gate-repro-opt gate-repro-selftest
@@ -814,31 +836,103 @@ calibrate *ARGS: build
 # ---------------------------------------------------------------------------
 # MotionNet (SAT-ML §6) — SAT simulator tracks only, no KITTI/MOT/TLE
 # ---------------------------------------------------------------------------
+#
+# Every recipe below resolves its interpreter through `py_resolve` rather than
+# naming one. The first version of these recipes hardcoded
+# `.venv/Scripts/python.exe`, which is the Windows venv layout and exists on
+# exactly one machine: CI is Linux, AGENTS.md §8 asks for a dev environment
+# reproducible through Docker, and a training pipeline nobody else can run is
+# a training pipeline whose results nobody else can check. The lookup order is
+# deliberate — a repo-local .venv first (either layout), then SAT_PYTHON for a
+# caller who knows better, then plain python3.
+
+# Create ./.venv and install ml/requirements.txt into it.
+#
+# Optional: the recipes below fall back to python3 when the packages are
+# already importable. It exists so that "how do I train this?" has a one-line
+# answer that is the same on Linux, macOS and Windows.
+
+# Create ./.venv and install the pinned ML dependencies into it.
+ml-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! -d .venv ]]; then
+        echo "Creating .venv…"
+        python3 -m venv .venv
+    fi
+    {{py_resolve}}
+    "$PY" -m pip install --upgrade pip
+    "$PY" -m pip install -r ml/requirements.txt
+    echo
+    echo "Ready. 'just ml-check' verifies the imports."
+
+# Report which interpreter the ML recipes will use and whether it can import
+# what they need.
+#
+# Run this first when an ML recipe fails. It separates "the environment is not
+# set up" from "the code is broken", which otherwise arrive as the same
+# traceback and cost an afternoon.
+
+# Show which interpreter the ML recipes use, and whether its imports resolve.
+ml-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{py_resolve}}
+    echo "interpreter: $PY  ($("$PY" --version 2>&1))"
+    "$PY" -c 'import importlib.util, sys; m=[x for x in ("numpy","torch","onnx","onnxruntime") if importlib.util.find_spec(x) is None]; print("missing: "+", ".join(m)+"\nrun: just ml-setup") or sys.exit(1) if m else print("all ML dependencies importable")'
 
 # Dump four official row-12 regimes + weather, then window into shards.
 # Default is a short factory (seeds 1-4, 8 s) so a laptop can finish. Raise
 # --seed-end / --duration for the scored train.
+
+# Generate the MotionNet track dataset from the simulator.
 motion-data seed_end="30" duration="10":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{py_resolve}}
     "{{build_dir}}/sat-tracker" --version
-    .venv/Scripts/python.exe -m ml.datagen --sweep ml/sweeps/motion_v1.toml \
+    "$PY" -m ml.datagen --sweep ml/sweeps/motion_v1.toml \
         --bin "{{build_dir}}/sat-tracker" --out data/motion_v1 \
         --seed-end {{seed_end}} --duration {{duration}} --require-dropouts
 
 # Train on data/motion_v1 train/val only (ML-7: test is evaluate-only).
 train-motion:
-    .venv/Scripts/python.exe -m ml.train_motion --dataset data/motion_v1 --out models/motionnet_v1.pt
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{py_resolve}}
+    "$PY" -m ml.train_motion --dataset data/motion_v1 --out models/motionnet_v1.pt
 
 # SAT-ML §6.6 gate on the held-out test split.
 eval-motion:
-    .venv/Scripts/python.exe -m ml.evaluate_motion --dataset data/motion_v1 --ckpt models/motionnet_v1.pt
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{py_resolve}}
+    "$PY" -m ml.evaluate_motion --dataset data/motion_v1 --ckpt models/motionnet_v1.pt
 
 # Export the checkpoint to fixed-shape ONNX (opset 17).
 export-motion:
-    .venv/Scripts/python.exe -m ml.export models/motionnet_v1.pt models/motionnet_v1.onnx --task motion
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{py_resolve}}
+    "$PY" -m ml.export models/motionnet_v1.pt models/motionnet_v1.onnx --task motion
 
 # Official reacq / lock ablation: same seeds with and without the model.
 motion-ablate:
-    .venv/Scripts/python.exe tools/motion_ablate.py --bin "{{build_dir}}/sat-tracker"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{py_resolve}}
+    "$PY" tools/motion_ablate.py --bin "{{build_dir}}/sat-tracker"
+
+# The whole MotionNet pipeline in the order SAT-ML §6 specifies:
+# data -> train -> §6.6 gate -> export.
+#
+# It stops at the first failure, which is the point: a model that misses the
+# gate is never exported, so it can never reach a demo. eval-motion exits
+# non-zero when the gate fails.
+
+# The whole MotionNet pipeline: data, train, SAT-ML §6.6 gate, ONNX export.
+motion-all: motion-data train-motion eval-motion export-motion
+    @echo "MotionNet: data, train, §6.6 gate and ONNX export all complete."
 
 # The Stage 9 suite, verbose — the numbers ARE the checkpoints: the S-curve's
 # amplitude, the correction's gain, and the ratio to §10.1.1's bound per SNR bin.

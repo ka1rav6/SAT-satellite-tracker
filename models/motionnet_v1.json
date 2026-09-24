@@ -1,7 +1,7 @@
 {
   "status": "trained",
   "is_real_result": true,
-  "trained_on": "data\\motion_v1",
+  "trained_on": "data/motion_v1",
   "model_card": "docs/models/motionnet_v1.md",
   "metrics": {
     "best_epoch": 54,

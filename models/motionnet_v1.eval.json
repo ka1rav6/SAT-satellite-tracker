@@ -16,6 +16,6 @@
     "gate_regime": 1.0,
     "n_windows": 4721.0
   },
-  "ckpt": "models\\motionnet_v1.pt",
-  "dataset": "data\\motion_v1"
+  "ckpt": "models/motionnet_v1.pt",
+  "dataset": "data/motion_v1"
 }

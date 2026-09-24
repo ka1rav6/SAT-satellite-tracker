@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import pathlib
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +21,18 @@ from torch.utils.data import DataLoader, Dataset
 
 from ml.datasets import TrackWindowDataset, verify_split_disjoint
 from ml.models.motion import HORIZON, MotionNet, RESIDUAL_SCALE, constant_velocity_forecast
+
+
+def posix(p) -> str:
+    """A path as forward slashes, whatever platform wrote it.
+
+    These strings land in a committed JSON sidecar that a reader on another OS
+    opens, and `str(Path)` on Windows produces "models\\motionnet_v1.pt".
+    Backslashes there are not merely ugly: they are a second escape level
+    inside JSON, they do not round-trip as a path on POSIX, and they advertise
+    which machine trained the model rather than which dataset did.
+    """
+    return pathlib.PurePath(p).as_posix()
 
 
 def set_all_seeds(seed: int) -> None:
@@ -123,7 +136,7 @@ def train(dataset_root: Path, output: Path, epochs: int = 60, batch_size: int = 
     result = {
         "status": ("PRELIMINARY — dummy data, not a trained model" if dummy else "trained"),
         "is_real_result": not dummy,
-        "trained_on": str(dataset_root),
+        "trained_on": posix(dataset_root),
         "model_card": f"docs/models/{output.stem}.md",
         "metrics_from_dummy_data" if dummy else "metrics": {
             "best_epoch": best_epoch,
