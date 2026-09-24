@@ -239,10 +239,23 @@ void Dashboard::rebuild(const Scenario& sc) {
     // and one click on "Full spec" restores the scenario exactly as written.
     if (start_clean_) apply_clean_preset();
 
+    // EVERY trace, not four of them.
+    //
+    // The four below were cleared and the five above were not, so after a
+    // Reset the IMM mode-probability plot, the priority policy's two score
+    // traces and the SAT strategy timeline still held the previous run — and
+    // the new run's samples were appended to it on a time axis that had just
+    // restarted at 0.03 s. The result is a plot showing two runs at once with
+    // nothing saying so, which is the same class of mistake as the compliance
+    // panel keeping its own counters (P1-8): a dashboard that disagrees with
+    // itself is worse than one that shows less.
     centroid_image_.clear();
     centroid_screen_.clear();
     tracking_.clear();
     saturation_.clear();
+    imm_cv_.clear(); imm_ca_.clear(); imm_ct_.clear();
+    score_committed_.clear(); score_rival_.clear();
+    strategy_marks_.clear();
     truth_path_x_.clear(); truth_path_y_.clear();
     det_path_x_.clear();   det_path_y_.clear();
 
