@@ -405,6 +405,20 @@ Result<Scenario> parse_scenario(std::string_view toml_text, std::string_view nam
                           line_of(root.at_path("atmosphere.mode").node()), "row 24");
     }
 
+    // --- [atmosphere.turbulence] — audit P2-1 -------------------------------
+    // Row 24's mode above is photometric (alpha/beta on the frame). This block
+    // is the propagation model: Kolmogorov angle-of-arrival jitter at the
+    // boresight and log-normal scintillation on the beacon's irradiance. See
+    // degrade/turbulence.hpp.
+    get_bool  (root, "atmosphere.turbulence.enabled",  sc.turbulence.enabled,  v);
+    get_double(root, "atmosphere.turbulence.r0_m",     sc.turbulence.r0_m,     v);
+    get_double(root, "atmosphere.turbulence.aperture_m", sc.turbulence.aperture_m, v);
+    get_double(root, "atmosphere.turbulence.wavelength_nm",
+               sc.turbulence.wavelength_nm, v);
+    get_double(root, "atmosphere.turbulence.wind_ms",  sc.turbulence.wind_ms,  v);
+    get_double(root, "atmosphere.turbulence.scintillation_index",
+               sc.turbulence.scintillation_index, v);
+
     // --- [disturbance] — rows 23, 25 ---------------------------------------
     get_double(root, "disturbance.jitter_px_per_frame", sc.jitter_px_per_frame, v);
     parse_motion_array(root, "disturbance.platform", sc.platform, v);

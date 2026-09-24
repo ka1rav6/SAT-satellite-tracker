@@ -138,6 +138,7 @@ sat_add_module(sat_degrade
         src/degrade/noise.cpp
         src/degrade/sensor.cpp
         src/degrade/disturbance.cpp
+        src/degrade/turbulence.cpp
     PUBLIC_DEPS sat_core sat_scenario sat_world
 )
 

@@ -59,6 +59,43 @@ enum class EdgeBehaviour : uint8_t { Bounce, Wrap, Exit };
 /// The affine transform each weather mode applies: I <- alpha*I + beta
 /// (design §9.3). Kept as a function of the enum so the table appears once.
 struct AtmosphereCoeffs { double alpha, beta; };
+
+// ---------------------------------------------------------------------------
+// TurbulenceParams — the `[atmosphere.turbulence]` block.
+//
+// Every field is a quantity an optical engineer would recognise and quote,
+// rather than a tuning constant. That is the point: "r0 = 5 cm" is a sentence
+// an evaluator can argue with, and "jitter_gain = 0.37" is not.
+// ---------------------------------------------------------------------------
+struct TurbulenceParams {
+    bool   enabled = false;           ///< opt-in; off leaves every run bit-identical
+
+    // --- angle of arrival ---------------------------------------------------
+    double r0_m          = 0.05;      ///< Fried parameter. 5 cm is "moderate daytime"
+    double aperture_m    = 1.00;      ///< receiver aperture D
+    double wavelength_nm = 1550.0;    ///< the FSOC C-band the PS background describes
+    double wind_ms       = 5.0;       ///< transverse wind; sets the tilt knee f_T
+
+    // --- scintillation ------------------------------------------------------
+    double scintillation_index = 0.0; ///< sigma_I^2; 0 disables the irradiance term
+
+    /// One-axis angle-of-arrival standard deviation, in microradians.
+    ///
+    ///     sigma_AoA^2 = 0.182 * (lambda/D)^2 * (D/r0)^(5/3)
+    ///
+    /// the standard full-aperture tilt result (Hardy, *Adaptive Optics for
+    /// Astronomical Telescopes*, §3; also Tyler 1994). Note the D^(-1/6) net
+    /// dependence once the two powers of D are combined: a BIGGER aperture
+    /// averages tilt down, which is why the knob is worth exposing.
+    [[nodiscard]] double aoa_sigma_urad() const noexcept;
+
+    /// Tilt corner frequency f_T ~ 0.24 * V / D, in Hz. Above this the
+    /// spectrum is the f^(-11/3) inertial band this model synthesises; below
+    /// it, the real spectrum is f^(-2/3) and this model is flat (see the
+    /// simplifications above).
+    [[nodiscard]] double tilt_knee_hz() const noexcept;
+};
+
 [[nodiscard]] AtmosphereCoeffs atmosphere_coeffs(Atmosphere) noexcept;
 
 // ---------------------------------------------------------------------------
@@ -253,6 +290,11 @@ struct Scenario {
 
     // --- [atmosphere] — row 24 --------------------------------------------
     Atmosphere atmosphere = Atmosphere::Clear;
+
+    /// [atmosphere.turbulence] — audit P2-1. Row 24's alpha/beta pair is a
+    /// photometric model; this is the propagation one. OFF by default, so
+    /// every scenario written before it existed is bit-identical.
+    TurbulenceParams turbulence{};
 
     // --- [disturbance] — rows 23, 25 --------------------------------------
     double jitter_px_per_frame = 20.0;    ///< row 23: max +/-20

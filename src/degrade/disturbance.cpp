@@ -9,7 +9,8 @@ namespace {
 
 }  // namespace
 
-void DisturbanceGenerator::build(const Scenario& sc, const ScreenGeometry& scr) {
+void DisturbanceGenerator::build(const Scenario& sc, const ScreenGeometry& scr,
+                                 double camera_hz) {
     jitter_px_ = sc.jitter_px_per_frame;
     ifov_x_    = scr.ifov_x_urad;
     ifov_y_    = scr.ifov_y_urad;
@@ -19,6 +20,10 @@ void DisturbanceGenerator::build(const Scenario& sc, const ScreenGeometry& scr) 
         if (auto c = build_motion_component(m)) platform_.add(std::move(c));
     }
     jitter_held_ = Angle2{};
+
+    // Audit P2-1. Off by default, so a scenario with no
+    // [atmosphere.turbulence] block draws nothing and is bit-identical.
+    turb_.build(sc.turbulence, camera_hz);
 }
 
 void DisturbanceGenerator::advance(double dt, RngSet& rng) {
@@ -47,10 +52,18 @@ Angle2 DisturbanceGenerator::offset(double t_s, RngSet& rng, bool new_frame) {
         jitter_held_ = Angle2{};
     }
 
+    // --- atmospheric angle of arrival (audit P2-1) -------------------------
+    // Stepped once per CAMERA frame for the same reason jitter is: the
+    // synthesised spectrum is defined against the camera's sample rate, and
+    // driving it at the 300 Hz truth tick would make it ten times wider than
+    // the band a 30 Hz camera can resolve.
+    if (new_frame) turb_.step(rng);
+    const Angle2 aoa = turb_.aoa_offset();
+
     // --- platform motion (spec row 25) -------------------------------------
     const MotionState p = platform_.eval(t_s);
-    return Angle2{jitter_held_.x + p.x * ifov_x_,
-                  jitter_held_.y + p.y * ifov_y_};
+    return Angle2{jitter_held_.x + p.x * ifov_x_ + aoa.x,
+                  jitter_held_.y + p.y * ifov_y_ + aoa.y};
 }
 
 Rate2 DisturbanceGenerator::platform_rate(double t_s) const {
@@ -60,6 +73,7 @@ Rate2 DisturbanceGenerator::platform_rate(double t_s) const {
 
 void DisturbanceGenerator::reset() {
     platform_.reset();
+    turb_.reset();
     jitter_held_ = Angle2{};
 }
 

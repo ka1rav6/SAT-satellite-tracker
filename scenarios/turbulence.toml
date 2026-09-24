@@ -1,0 +1,149 @@
+# turbulence.toml — spec_defaults.toml plus atmospheric propagation (audit P2-1).
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS SCENARIO IS FOR
+# ---------------------------------------------------------------------------
+# PS 26169 is a free-space optical communication problem, and the two effects
+# an FSOC evaluator will ask about are angle-of-arrival jitter and
+# scintillation. Row 24's `mode` knob is photometric — it dims and flattens the
+# frame — and says nothing about either.
+#
+# This file is spec_defaults.toml with ONE block added, so it is a clean A/B:
+# any difference in the numbers is turbulence and nothing else. It is based on
+# the DEFAULT scenario rather than on compliance.toml deliberately — the
+# ablation has to start from a run that tracks, or the comparison is between
+# two failures. Run the pair:
+#
+#     sat-tracker --headless --scenario scenarios/spec_defaults.toml
+#     sat-tracker --headless --scenario scenarios/turbulence.toml
+#
+# ---------------------------------------------------------------------------
+# WHY THESE PARAMETER VALUES
+# ---------------------------------------------------------------------------
+#   r0_m = 0.05          Fried parameter. 5 cm is ordinary daytime near-ground
+#                        seeing over a horizontal path — the regime a MOBILE
+#                        FSOC terminal actually operates in, and harder than
+#                        the night-time astronomical figures usually quoted.
+#
+#   aperture_m = 1.0     A 1 m receiver. Tilt variance goes as D^(-1/6) so a
+#                        larger aperture averages AoA jitter DOWN, but it also
+#                        drops the tilt knee f_T = 0.24 V/D to 1.2 Hz, which
+#                        puts the whole 1.2-15 Hz band a 30 Hz camera resolves
+#                        inside the Kolmogorov f^(-11/3) inertial range. At a
+#                        10 cm aperture the knee is 12 Hz and almost none of
+#                        the inertial band is resolved — worth being able to
+#                        say out loud, because it is the honest answer to "is
+#                        your turbulence model doing anything at this frame
+#                        rate?".
+#
+#   wavelength_nm = 1550 The FSOC C-band the problem statement's background
+#                        describes.
+#
+#   scintillation_index  0.4 is moderate-to-strong but not saturated. Beacon
+#                        and decoy scintillate INDEPENDENTLY, which is the
+#                        point: a decoy that faded in step with the target
+#                        would stay perfectly separable by brightness ratio.
+#
+# At these values sigma_AoA is 8.0 urad, which against the 109 urad IFOV of a
+# 4 deg camera over 640 px is about 0.07 px RMS — small beside row 23's 20 px
+# jitter, and deliberately so. The point of this scenario is not to overwhelm
+# the tracker; it is that the disturbance now has the RIGHT SPECTRUM, so the
+# predictor is being asked to extrapolate through correlated atmospheric
+# motion rather than through white noise. Raise `r0_m` down toward 0.02 for
+# the stress case; scenarios/adversarial/ is where that belongs.
+#
+# See degrade/turbulence.hpp for the model, its derivation and its stated
+# simplifications, and tests/degrade/test_turbulence.cpp for the f^(-11/3)
+# acceptance test.
+# ---------------------------------------------------------------------------
+
+[meta]
+name        = "turbulence"
+description = "spec_defaults.toml plus Kolmogorov AoA jitter and log-normal scintillation"
+
+[input]
+mode = "synthetic"                  # design §8.3
+
+[sim]
+truth_hz   = 300                    # 10 sub-ticks per camera frame (design §6.2)
+camera_hz  = 30                     # row 5, minimum 30
+control_hz = 30                     # row 15, minimum 20
+duration_s = 30
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]       # row 1, minimum 2000 x 2000
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"             # row 2
+resolution     = [640, 480]         # row 3
+fov_deg        = [4.0, 3.0]         # row 4
+exposure_ms    = 5.0
+blur_substeps  = 8                  # design §9.2
+initial_pos_px = [999.5, 999.5]     # row 6, the centre of the screen
+
+[target]
+kind       = "target"               # row 7, a beacon spot
+intensity  = 120.0
+size_px    = 10                     # row 10, permitted 5-20
+initial_px = [1040.0, 1020.0]       # row 11: PINNED IN VIEW, see the header
+shape.type = "square"               # row 9
+
+[[target.motion]]                   # row 12, straight line
+kind          = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[gimbal]
+max_pan_dps      = 5.0              # row 13, permitted 5-10
+max_tilt_dps     = 5.0              # row 14, permitted 5-10
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true               # row 21
+gaussian_sigma = 20.0               # row 22, maximum 20 grey levels
+salt_pepper    = 0.10               # row 21, ~10%
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"                      # row 24 — photometric, deliberately left
+                                    # clear so this file isolates turbulence
+
+[atmosphere.turbulence]             # audit P2-1 — the propagation model
+enabled             = true
+r0_m                = 0.05          # Fried parameter, moderate daytime seeing
+aperture_m          = 1.0           # receiver diameter; sets the tilt knee
+wavelength_nm       = 1550.0        # the FSOC C-band
+wind_ms             = 5.0           # transverse wind: f_T = 0.24 V/D = 1.2 Hz
+scintillation_index = 0.4           # sigma_I^2, moderate-to-strong
+
+[disturbance]
+jitter_px_per_frame = 20.0          # row 23, maximum +/- 20
+
+[[disturbance.platform]]            # row 25, linear is mandatory
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]
+
+[clutter]
+static_sources = 0                  # NOT a specification row - see the header
+decoy_beacons  = 0                  # row 8 makes multiple targets OPTIONAL
+
+[ai]
+enabled          = true
+fallback_on_fail = true             # INV-7
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0             # row 16
+tracking_error_px = 10.0            # row 17
+target_loss_frac  = 0.05            # row 18
+reacquisition_s   = 1.0             # row 19
+min_fps           = 20.0            # row 20

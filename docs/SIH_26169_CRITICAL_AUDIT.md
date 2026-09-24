@@ -533,7 +533,7 @@ This is not a generic CV project and must not be judged as one. The question is 
 
 | Missing physics | Status | Consequence | Judge risk |
 |---|---|---|---|
-| **Atmospheric turbulence** | **GAP** | `Atmosphere` is a 5-value enum applying an **affine contrast/brightness change** only. There is no angle-of-arrival jitter, no scintillation (irradiance fluctuation), no beam wander, no Fried parameter, no Greenwood frequency, no C²ₙ | **High.** The PS background is *literally about* atmospheric propagation. "Fog" that only dims the image is a *photometric* model, not a *turbulence* model. Row 24 says "User-defined **reduction in contrast and brightness**", which is the team's defence — but a Dept. of Space evaluator will ask about AoA jitter and scintillation |
+| **Atmospheric turbulence** | **FIXED (§14.0h)** — was GAP | `Atmosphere` is a 5-value enum applying an **affine contrast/brightness change** only. There is no angle-of-arrival jitter, no scintillation (irradiance fluctuation), no beam wander, no Fried parameter, no Greenwood frequency, no C²ₙ | **High.** The PS background is *literally about* atmospheric propagation. "Fog" that only dims the image is a *photometric* model, not a *turbulence* model. Row 24 says "User-defined **reduction in contrast and brightness**", which is the team's defence — but a Dept. of Space evaluator will ask about AoA jitter and scintillation |
 | **Lens distortion / PSF** | Simplified | Beacon rendered as a geometric shape with exact-coverage anti-aliasing; no Airy pattern, no defocus, no radial distortion | Medium — ask "what if the evaluator's clip has a defocused blob?" Mitigant: the Gaussian shape kind partially covers it |
 | **Vignetting / flat-field** | GAP | Fixed-pattern noise exists (gain+offset) but no radial falloff | Low |
 | **Rolling shutter** | GAP | Global shutter assumed | Low — FPA implies global shutter |
@@ -1212,7 +1212,7 @@ Together those say: *"this is not a tracker demo, it is a **validated testbed** 
 
 | ID | Issue | § |
 |---|---|---|
-| **P2-1** | No turbulence model (no AoA jitter, no scintillation) | 8.2 |
+| ~~**P2-1**~~ | ~~No turbulence model (no AoA jitter, no scintillation)~~ **FIXED** — `degrade/turbulence.hpp`, opt-in `[atmosphere.turbulence]`; Kolmogorov AoA at f^(−11/3) (asserted, fitted −3.59) and log-normal scintillation. Design §14.0h | 8.2 |
 | **P2-2** | No external tracking baseline (CSRT/KCF/template) | 14.2 |
 | **P2-3** | No absolute attitude reference → world-frame estimate drifts unboundedly | 8.3 |
 | **P2-4** | Blur samples platform rate at a hardcoded 30 Hz | 7.1 A-3 |

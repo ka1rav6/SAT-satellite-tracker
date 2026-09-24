@@ -33,6 +33,7 @@
 #include "core/frames.hpp"
 #include "core/rng.hpp"
 #include "core/units.hpp"
+#include "degrade/turbulence.hpp"
 #include "scenario/scenario.hpp"
 #include "world/motion_component.hpp"
 
@@ -56,7 +57,7 @@ namespace sat {
 // ---------------------------------------------------------------------------
 class DisturbanceGenerator {
 public:
-    void build(const Scenario& sc, const ScreenGeometry& scr);
+    void build(const Scenario& sc, const ScreenGeometry& scr, double camera_hz);
 
     /// Advance the platform's stochastic components by one truth tick.
     void advance(double dt, RngSet& rng);
@@ -83,7 +84,14 @@ public:
     [[nodiscard]] double jitter_urad_s(double camera_hz) const noexcept;
     [[nodiscard]] double jitter_px_per_frame() const noexcept { return jitter_px_; }
 
+    /// The turbulence model, for the renderer's scintillation gain and for the
+    /// startup diagnostics. A THIRD source alongside jitter and platform
+    /// motion, and like both of them it moves the BORESIGHT, never the pixels
+    /// (degrade/turbulence.hpp says why at length).
+    [[nodiscard]] const TurbulenceModel& turbulence() const noexcept { return turb_; }
+
 private:
+    TurbulenceModel turb_{};
     double          jitter_px_    = 0.0;
     double          ifov_x_       = 1.0;
     double          ifov_y_       = 1.0;

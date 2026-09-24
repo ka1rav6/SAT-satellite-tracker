@@ -143,6 +143,14 @@ public:
 
 private:
     void render_frame(Angle2 true_boresight, double t_s);
+
+    /// Rebuild graded_slot_ if it no longer matches the emitter set. Cheap
+    /// (one size compare per frame) and called from render_frame, because
+    /// emitters can arrive through build_from_scenario OR be installed by
+    /// hand after build() — the benchmarks and several tests do the latter,
+    /// and a slot map sized only in one of those paths is an out-of-bounds
+    /// read in the other.
+    void ensure_scintillation_slots();
     void fill_truth(Angle2 true_bore, Angle2 commanded_bore, FrameTruth& t) const;
 
     StageTimers*    timers_ = nullptr;   ///< not owned; see set_timers()
@@ -158,6 +166,13 @@ private:
     std::vector<float>    radiance_;   ///< float accumulation target
     std::vector<uint8_t>  frame_;      ///< the 8-bit image the detector sees
     std::vector<uint32_t> visible_;    ///< scratch for query_visible
+
+    /// Audit P2-1. Emitter index -> independent scintillation slot, sized once
+    /// at build. Graded emitters (beacon, decoys) get 0..kMaxGraded-1 in
+    /// emitter order; clutter and any graded emitter past the cap get a slot
+    /// TurbulenceModel::irradiance_gain() answers 1.0 for, so the render loop
+    /// needs no second branch and no per-frame lookup.
+    std::vector<uint8_t>  graded_slot_;
 
     Angle2  disturbance_{};            ///< jitter + platform, applied to truth
     Rate2   blur_rate_{};              ///< physical slew, for exposure smear

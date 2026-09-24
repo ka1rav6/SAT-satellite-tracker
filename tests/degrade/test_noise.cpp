@@ -438,7 +438,7 @@ TEST_CASE("CP 4.8: the startup jitter figures match design 9.3") {
     sc.jitter_px_per_frame = 20.0;
 
     DisturbanceGenerator d;
-    d.build(sc, sc.screen_geometry());
+    d.build(sc, sc.screen_geometry(), sc.camera_hz);
 
     const double urad_s = d.jitter_urad_s(30.0);
     const double deg_s  = urad_to_deg(urad_s);
@@ -461,7 +461,7 @@ TEST_CASE("CP 4.8: jitter is bounded by the specified maximum") {
     const ScreenGeometry scr = sc.screen_geometry();
 
     DisturbanceGenerator d;
-    d.build(sc, scr);
+    d.build(sc, scr, sc.camera_hz);
     RngSet rng(42);
 
     double worst = 0.0, sum = 0.0;
@@ -484,7 +484,7 @@ TEST_CASE("CP 4.8: jitter is held constant across a frame, not resampled per tic
     Scenario sc;
     sc.jitter_px_per_frame = 20.0;
     DisturbanceGenerator d;
-    d.build(sc, sc.screen_geometry());
+    d.build(sc, sc.screen_geometry(), sc.camera_hz);
     RngSet rng(1);
 
     const Angle2 a = d.offset(0.0, rng, /*new_frame=*/true);
@@ -522,7 +522,7 @@ TEST_CASE("CP 4.9: all five row-25 platform modes run from the same components")
         CHECK(r->platform[0].kind == c.kind);
 
         DisturbanceGenerator d;
-        d.build(*r, r->screen_geometry());
+        d.build(*r, r->screen_geometry(), r->camera_hz);
         RngSet rng(5);
 
         // It must produce finite, non-trivial motion.
@@ -558,7 +558,7 @@ TEST_CASE("platform motion and target motion draw from different streams") {
 
     RngSet a(77), b(77);
     DisturbanceGenerator d;
-    d.build(sc, sc.screen_geometry());
+    d.build(sc, sc.screen_geometry(), sc.camera_hz);
     for (int i = 0; i < 1000; ++i) d.advance(1.0 / 300.0, a);
 
     // The target's stream must be untouched by all that platform advancing.

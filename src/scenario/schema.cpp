@@ -92,6 +92,30 @@ const std::vector<FieldSpec>& schema() {
         {"disturbance.jitter_px_per_frame", ValueKind::Float, false, 0.0, 20.0, "row 23",
          "the specification caps camera jitter at +/- 20 px per frame"},
 
+        // --- [atmosphere.turbulence] — audit P2-1 ---------------------------
+        //
+        // Bounds are physical ranges an optical engineer would recognise, not
+        // guard rails against typos. r0 below 1 cm is worse than any reported
+        // ground-level seeing; above 1 m the atmosphere is not a factor at all
+        // and the model is a no-op with a cost. Both ends being reachable is
+        // deliberate: the sweep needs the bad end.
+        {"atmosphere.turbulence.enabled", ValueKind::Bool, false, 0.0, 0.0, "",
+         "opt-in; off leaves every pre-existing run bit-identical"},
+        {"atmosphere.turbulence.r0_m", ValueKind::Float, false, 0.01, 1.0, "",
+         "Fried parameter. 1 cm is worse than any reported ground-level seeing; "
+         "past 1 m the atmosphere is not the limiting factor"},
+        {"atmosphere.turbulence.aperture_m", ValueKind::Float, false, 0.01, 10.0, "",
+         "receiver aperture D; tilt variance goes as D^(-1/6), so a bigger "
+         "aperture averages angle-of-arrival jitter down"},
+        {"atmosphere.turbulence.wavelength_nm", ValueKind::Float, false, 200.0, 20000.0, "",
+         "1550 nm is the FSOC C-band the problem statement's background describes"},
+        {"atmosphere.turbulence.wind_ms", ValueKind::Float, false, 0.0, 100.0, "",
+         "transverse wind; sets the tilt knee f_T = 0.24 V/D and the "
+         "scintillation coherence time r0/V"},
+        {"atmosphere.turbulence.scintillation_index", ValueKind::Float, false, 0.0, 4.0, "",
+         "sigma_I^2 = Var(I)/E[I]^2. 0 disables the irradiance term; past ~1 the "
+         "link is in the saturated-scintillation regime"},
+
         // --- [clutter] -------------------------------------------------------
         {"clutter.static_sources", ValueKind::Int, false, 0, 100000, "",
          "design §9.1 calls 50-500 static sources mandatory for credibility"},
@@ -453,6 +477,29 @@ AtmosphereCoeffs atmosphere_coeffs(Atmosphere a) noexcept {
         case Atmosphere::LowLight: return {0.40, -40.0};
     }
     return {1.0, 0.0};
+}
+
+// ---------------------------------------------------------------------------
+// [atmosphere.turbulence] — the propagation model beside row 24's photometric
+// one. Kept here rather than in degrade/ for the same reason
+// atmosphere_coeffs() is: these turn a scenario's stated conditions into
+// numbers, and degrade/ consumes them. See degrade/turbulence.hpp for the
+// physics and the stated simplifications.
+// ---------------------------------------------------------------------------
+
+double TurbulenceParams::aoa_sigma_urad() const noexcept {
+    if (!enabled || r0_m <= 0.0 || aperture_m <= 0.0 || wavelength_nm <= 0.0) return 0.0;
+    const double lambda_m      = wavelength_nm * 1.0e-9;
+    const double lambda_over_d = lambda_m / aperture_m;
+    // sigma^2 = 0.182 * (lambda/D)^2 * (D/r0)^(5/3), in rad^2.
+    const double var_rad2 =
+        0.182 * lambda_over_d * lambda_over_d * std::pow(aperture_m / r0_m, 5.0 / 3.0);
+    return std::sqrt(var_rad2) * 1.0e6;   // rad -> urad
+}
+
+double TurbulenceParams::tilt_knee_hz() const noexcept {
+    if (aperture_m <= 0.0) return 0.0;
+    return 0.24 * wind_ms / aperture_m;
 }
 
 // ---------------------------------------------------------------------------

@@ -77,9 +77,28 @@ void SyntheticSource::build_from_scenario(const Scenario& sc) {
     have_world_ = true;
 
     sensor_.build(sc, cfg.camera.width, cfg.camera.height, rng_);
-    disturb_.build(sc, cfg.screen);
+    disturb_.build(sc, cfg.screen, static_cast<double>(cfg.camera_hz));
     visible_.reserve(world_.emitters.capacity());
+    ensure_scintillation_slots();
     manual_disturbance_ = false;
+}
+
+void SyntheticSource::ensure_scintillation_slots() {
+    // Audit P2-1: each graded emitter gets its own independent scintillation
+    // slot. Anything past the cap is parked on kMaxGraded, which
+    // TurbulenceModel::irradiance_gain() answers 1.0 for — a beacon that
+    // stops scintillating is a far better failure than one that silently
+    // shares a decoy's gain, and neither is an out-of-bounds read.
+    if (graded_slot_.size() == world_.emitters.n) return;
+
+    graded_slot_.assign(world_.emitters.n,
+                        static_cast<uint8_t>(TurbulenceModel::kMaxGraded));
+    size_t slot = 0;
+    for (size_t i = 0; i < world_.emitters.n; ++i) {
+        if (world_.emitters.kind_of(i) == EmitterKind::Clutter) continue;
+        if (slot >= TurbulenceModel::kMaxGraded) break;
+        graded_slot_[i] = static_cast<uint8_t>(slot++);
+    }
 }
 
 void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
@@ -90,6 +109,8 @@ void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
     // procedural texture because the screen the beacon sits on is specified as
     // a uniform field (spec rows 1 and 8); a texture would be scenery, not
     // signal, and every detector downstream would be measured against it.
+    ensure_scintillation_slots();
+
     {
         SAT_ZONE_OPT(timers_, Stage::BackgroundRender);
         std::fill(radiance_.begin(), radiance_.end(), cfg_.background);
@@ -146,6 +167,11 @@ void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
     // -----------------------------------------------------------------------
     const Angle2 bore_rate{blur_rate_.x, blur_rate_.y};
 
+    // Hoisted out of the splat loop: with turbulence off — the default, and
+    // every scenario committed before it existed — this is the only test paid
+    // for scintillation anywhere in the frame.
+    const bool scintillating = disturb_.turbulence().enabled();
+
     {
     SAT_ZONE_OPT(timers_, Stage::EmitterSplat);
     for (int s = 0; s < substeps; ++s) {
@@ -174,9 +200,26 @@ void SyntheticSource::render_frame(Angle2 true_bore, double /*t_s*/) {
             // truncation shifting a rendered centroid, and a clutter source's
             // centroid is never scored against anything. See splat.hpp.
             const bool graded = world_.emitters.kind_of(i) != EmitterKind::Clutter;
+            // Audit P2-1: scintillation multiplies the BEACON'S IRRADIANCE
+            // here, before the splat, so it flows through the exposure
+            // integration, the damage chain, the SNR gate and the detector
+            // exactly as a real irradiance fluctuation would — rather than
+            // being a brightness knob applied to the finished frame.
+            //
+            // Graded emitters only, and each with its own independent gain.
+            // Sources further apart than the isoplanatic angle (~10 urad)
+            // scintillate independently, and every emitter on a 12.5 deg
+            // screen is far past that, so one common gain would be wrong and
+            // a decoy that faded in step with the beacon would be a gift to
+            // the tracker. Clutter is scenery, not a propagating beam; see
+            // degrade/turbulence.hpp for why it is left alone.
+            const double gain = (scintillating && graded)
+                ? disturb_.turbulence().irradiance_gain(graded_slot_[i])
+                : 1.0;
             splat_emitter(radiance_, cfg_.camera.width, cfg_.camera.height, img,
                           static_cast<double>(world_.emitters.size_px[i]),
-                          world_.emitters.shape_of(i), world_.emitters.intensity[i], w,
+                          world_.emitters.shape_of(i),
+                          world_.emitters.intensity[i] * gain, w,
                           graded ? 6.0 : kClutterReachSigmas);
         }
     }

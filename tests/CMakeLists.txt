@@ -238,6 +238,7 @@ sat_add_test(degrade
     SOURCES degrade/test_noise.cpp
             degrade/test_fast_normal.cpp
             degrade/test_ablation.cpp
+            degrade/test_turbulence.cpp
     DEPS    sat_core sat_degrade sat_scenario sat_world sat_engine
 )
 target_compile_definitions(test_degrade PRIVATE
