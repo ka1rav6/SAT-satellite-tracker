@@ -1392,8 +1392,8 @@ Assessed as an interface, not as an implementation.
 
 | # | Requirement | Status | Note |
 |---:|---|---|---|
-| 1 | **`--gen-dataset`** | **NOT IMPLEMENTED** (`main.cpp:246` lists it as "still to come") | **The hard blocker.** No training data can exist without it |
-| 2 | **ONNX Runtime in the C++ dependency graph** | **ABSENT** from `vcpkg.json` | Adds a dependency to a build that is currently clean on 5 CI configs; needs a `SAT_WITH_ML=OFF` path mirroring `SAT_WITH_GUI` |
+| 1 | ~~**`--gen-dataset`**~~ | **RESOLVED** — `src/app/dataset.cpp`, `task=tracks`; design §14.0h | Labels stay in `sat_app` so INV-1 holds. The centroid-patch and candidate-patch factories are still to come |
+| 2 | ~~**ONNX Runtime in the C++ dependency graph**~~ | **RESOLVED** — `cmake/Findonnxruntime.cmake`, `vcpkg.json` `ml` feature, `SAT_WITH_ONNX` (default OFF) and a `linux-onnx` CI arm | The `SAT_WITH_ML=OFF` path this row asked for is `SAT_WITH_ONNX`, and it mirrors `SAT_WITH_GUI` exactly. Before the CI arm existed nothing had ever *compiled* the code inside `#ifdef SAT_HAVE_ONNX` |
 | 3 | **Split discipline by run, not by frame** | Designed (`verify_split_disjoint`) | Frames within a run are heavily correlated; a frame-level split would leak. The design already gets this right |
 | 4 | **Determinism of inference** | **UNRESOLVED** | ONNX Runtime is not bit-exact across versions/providers. `SAT-DESIGN.md` §11.4's answer — hash *discrete decisions* at a declared tolerance, not raw outputs — is the right one and must be implemented before ML lands, or INV-3 breaks |
 | 5 | **Latency budget** | Declared 0.02 ms/frame for CentroidNet; **not measured** | At 236,306 parameters on a 15×15 patch this is plausible for one call/frame; `CandidateNet` at N calls/frame is the risk |
@@ -1412,7 +1412,7 @@ Assessed as an interface, not as an implementation.
 | Risk | Detail | Mitigation |
 |---|---|---|
 | **INV-3 vs ONNX** | Runtime dispatch inside ORT will break bit-exactness | Implement §11.4's tolerance-hashing **before** ML lands; make the fingerprint hash the discrete decision (which candidate was chosen) plus the centroid quantised to a micro-pixel |
-| **INV-4 vs ORT** | ORT allocates per `Run()` | Pre-allocate IO bindings; extend the Debug trap over the inference call |
+| **INV-4 vs ORT** | ORT allocates per `Run()` | **STILL OPEN.** `Ort::Session::Run` returns an owning vector and `MemoryInfo::CreateCpu` allocates. `ai/motion_net.hpp` now says so explicitly — an earlier version of that header claimed the call was allocation-free — and INV-4's Debug trap deliberately does not cover it. IO binding is the fix and is not done |
 | **The frame budget** | §13's budget has no ML line. `CandidateNet` at N candidates/frame is unbounded | Cap candidates before inference (`max_candidates` already exists); add an explicit `Stage::Inference` with a budget |
 | **`--gen-dataset` must not leak truth** | It writes labels, so it is the one place INV-1 is deliberately crossed | Put it in its own module that the tracker cannot link, exactly as `metrics` is; extend `check_source_invariants.py` to cover it |
 | **The ML would currently be a regression** | `models/centroidnet_v1.json` claims 0.274 px val RMSE; the classical centroider **measures 0.19 px** | Target `CandidateNet` (the decoy/clutter problem, where classical fails at 48.8 px) **first**, not `CentroidNet`. This is the highest-value ordering and it is the opposite of the current file ordering |
@@ -1423,6 +1423,28 @@ Assessed as an interface, not as an implementation.
 2. **`CandidateNet` first** — it addresses the two real open failures (moving decoy, 120-source clutter) where classical measures 48.8 px and total lock loss. This is where ML can show a 100× improvement.
 3. `CentroidNet` second, and only if it beats 0.19 px on held-out data. If it does not, **say so and ship the classical one** — that is a *stronger* Technical-Evaluation story than a worse learned model.
 4. Keep `MotionNet` and the learned `StrategyPolicy` out of scope; say so explicitly.
+
+> **AMENDED — `MotionNet` was built first, and the ordering above still stands.**
+>
+> `MotionNet` (M3) landed from `motion-predictor-ML-integration` ahead of
+> `CandidateNet`, which is not the order this section recommends. The
+> recommendation was made on the right grounds and is not withdrawn:
+> `CandidateNet` addresses the two open failures where classical measures
+> 48.8 px and total lock loss, and it remains the highest-value next model.
+>
+> What `MotionNet` did deliver is the whole integration surface this section
+> was worried about — `--gen-dataset`, the ONNX dependency path, the C++
+> wrapper, the INV-7 fallback, a model card, and an end-to-end ablation. That
+> work is not model-specific and `CandidateNet` now inherits it.
+>
+> It also meets its own gate honestly (SAT-ML §6.6: +5 RMSE 43.4 % better than
+> constant-velocity against a 20 % bar, +15 49.5 % against 35 %, regime
+> accuracy 92.9 % against 90 %, measured on a held-out split) and its model
+> card states where it does not help. Two caveats belong here rather than
+> only in the card: the exported weights are **not committed** and
+> `SAT_WITH_ONNX` defaults to **OFF**, so every performance figure elsewhere
+> in this repository is a `--no-ai` figure and MotionNet changes none of them
+> until both are turned on.
 
 ---
 
