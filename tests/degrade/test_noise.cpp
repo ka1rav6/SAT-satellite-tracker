@@ -605,3 +605,90 @@ TEST_CASE("the full chain produces a plausible frame") {
     CHECK(beacon <= 255);
     CHECK(bg >= 0);
 }
+
+// ===========================================================================
+// The live overrides for rows 23 and 25
+// ===========================================================================
+
+TEST_CASE("row 23: the jitter draw does not depend on the amplitude") {
+    // THE PROPERTY, and why it is not pedantry. The amplitude used to gate the
+    // draw — `if (new_frame && jitter_px_ > 0.0)` — so a run with jitter off
+    // consumed nothing from Stream::Jitter while a run with it on consumed two
+    // uniforms a frame. That is invisible while the amplitude can only come
+    // from the scenario file, and wrong the moment the dashboard can move it:
+    // dragging the slider to zero and back would leave the stream in a
+    // different place and the rest of the run would be a DIFFERENT run, not
+    // the same one with the jitter restored.
+    //
+    // The turbulence model states the same rule for the same reason
+    // (PowerLawNoise::next: "ONE draw per call, unconditionally ... a draw
+    // that depended on `ready_` would desynchronise the stream between two
+    // runs that differ only in a consumer").
+    Scenario sc;
+    sc.jitter_px_per_frame = 20.0;
+    const ScreenGeometry scr = sc.screen_geometry();
+
+    DisturbanceGenerator on, off;
+    on.build(sc, scr, sc.camera_hz);
+    off.build(sc, scr, sc.camera_hz);
+    off.set_jitter_px_per_frame(0.0);
+
+    RngSet ra(42), rb(42);
+    for (int i = 0; i < 50; ++i) {
+        (void)on.offset(i / 30.0, ra, /*new_frame=*/true);
+        (void)off.offset(i / 30.0, rb, /*new_frame=*/true);
+    }
+    // Same number of draws taken from the same stream, so the generators are
+    // still in step and turning the amplitude back on resumes the same run.
+    CHECK(ra[Stream::Jitter].raw_state() == rb[Stream::Jitter].raw_state());
+}
+
+TEST_CASE("row 23: zero amplitude contributes exactly zero") {
+    // The old code's early-out produced an exact zero offset. The scaling path
+    // that replaced it must too — not "very small", exactly zero — or a
+    // scenario with no jitter would stop being bit-identical to one that never
+    // had the feature.
+    Scenario sc;
+    sc.jitter_px_per_frame = 0.0;
+    DisturbanceGenerator d;
+    d.build(sc, sc.screen_geometry(), sc.camera_hz);
+    RngSet rng(7);
+    for (int i = 0; i < 100; ++i) {
+        const Angle2 o = d.offset(i / 30.0, rng, /*new_frame=*/true);
+        REQUIRE(o.x == 0.0);
+        REQUIRE(o.y == 0.0);
+    }
+}
+
+TEST_CASE("row 25: the platform override suppresses the offset and the rate together") {
+    // The exposure smear is integrated along platform_rate() while the
+    // boresight is displaced by offset(). Suppressing one and not the other
+    // would smear a frame along a drift that is not being applied — two parts
+    // of the same frame disagreeing about the same physical quantity.
+    Scenario sc;
+    sc.jitter_px_per_frame = 0.0;          // isolate row 25
+    MotionSpec m;
+    m.kind            = "linear";
+    m.velocity_px_s[0] = 15.0;
+    m.velocity_px_s[1] = -8.0;
+    sc.platform.push_back(m);
+
+    DisturbanceGenerator d;
+    d.build(sc, sc.screen_geometry(), sc.camera_hz);
+    RngSet rng(1);
+
+    REQUIRE(d.has_platform());
+    REQUIRE(d.platform_enabled());
+    const Angle2 on_offset = d.offset(2.0, rng, /*new_frame=*/true);
+    const Rate2  on_rate   = d.platform_rate(2.0);
+    CHECK(std::fabs(on_offset.x) > 0.0);
+    CHECK(std::fabs(on_rate.x)   > 0.0);
+
+    d.set_platform_enabled(false);
+    const Angle2 off_offset = d.offset(2.0, rng, /*new_frame=*/true);
+    const Rate2  off_rate   = d.platform_rate(2.0);
+    CHECK(off_offset.x == 0.0);
+    CHECK(off_offset.y == 0.0);
+    CHECK(off_rate.x   == 0.0);
+    CHECK(off_rate.y   == 0.0);
+}

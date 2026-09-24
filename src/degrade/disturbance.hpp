@@ -37,6 +37,7 @@
 #include "scenario/scenario.hpp"
 #include "world/motion_component.hpp"
 
+#include <cstddef>
 #include <memory>
 
 namespace sat {
@@ -79,6 +80,37 @@ public:
 
     void reset();
 
+    // -----------------------------------------------------------------------
+    // LIVE OVERRIDES for spec rows 23 and 25.
+    //
+    // Rows 21, 22 and 24 have been live-adjustable from the dashboard since
+    // the damage panel existed, and the scenario panel reads the LIVE value
+    // for each of them against the file's. Rows 23 and 25 were in that table
+    // too — and in the panel's heading — with no control behind them, so the
+    // comparison could never differ and the panel's claim that "every one of
+    // these is live-adjustable" was false for the two that matter most.
+    //
+    // They matter most because row 17's graded tracking error is dominated by
+    // row 23. Jitter is drawn fresh every frame and added to the TRUE
+    // boresight, so no controller can reject it and it puts row 17 on a
+    // 16.33 px floor (design §1.3, docs/RESULTS.md §1). A viewer looking at
+    // 17 px of tracking error has no way to tell that from a loop that is
+    // failing, and the "Clean" preset told them the loop "should track to a
+    // few pixels" while leaving the jitter on.
+    //
+    // With these, dragging jitter to zero drops the error to ~4 px in front of
+    // the viewer, which is the demonstration that separates the two.
+    // -----------------------------------------------------------------------
+    void set_jitter_px_per_frame(double px) noexcept { jitter_px_ = px > 0.0 ? px : 0.0; }
+
+    /// Row 25's platform motion, on or off. It suppresses the OFFSET only,
+    /// never the stochastic components' advance() — a component that stopped
+    /// drawing would desynchronise Stream::PlatformMotion and the toggle would
+    /// produce a different run rather than the same run without the drift.
+    void set_platform_enabled(bool on) noexcept { platform_on_ = on; }
+    [[nodiscard]] bool platform_enabled() const noexcept { return platform_on_; }
+    [[nodiscard]] bool has_platform() const noexcept { return platform_count_ > 0; }
+
     /// Startup diagnostics. Design §9.3 asks for this exact line to be logged:
     ///     20 px/frame -> 65449 urad/s -> 3.75 deg/s (75% of a 5 deg/s motor)
     [[nodiscard]] double jitter_urad_s(double camera_hz) const noexcept;
@@ -96,6 +128,8 @@ private:
     double          ifov_x_       = 1.0;
     double          ifov_y_       = 1.0;
     CompositeMotion platform_;
+    bool            platform_on_    = true;
+    size_t          platform_count_ = 0;   ///< components built, for the GUI
     Angle2          jitter_held_{};   ///< resampled once per camera frame
 };
 

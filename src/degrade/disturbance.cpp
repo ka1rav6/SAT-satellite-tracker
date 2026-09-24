@@ -16,9 +16,11 @@ void DisturbanceGenerator::build(const Scenario& sc, const ScreenGeometry& scr,
     ifov_y_    = scr.ifov_y_urad;
 
     platform_ = CompositeMotion{};
+    platform_count_ = 0;
     for (const MotionSpec& m : sc.platform) {
-        if (auto c = build_motion_component(m)) platform_.add(std::move(c));
+        if (auto c = build_motion_component(m)) { platform_.add(std::move(c)); ++platform_count_; }
     }
+    platform_on_ = true;
     jitter_held_ = Angle2{};
 
     // Audit P2-1. Off by default, so a scenario with no
@@ -44,12 +46,21 @@ Angle2 DisturbanceGenerator::offset(double t_s, RngSet& rng, bool new_frame) {
     // exceed it a third of the time while a Gaussian scaled to keep it at 3
     // sigma would be far gentler than specified. A uniform bound means the
     // stated figure is exactly the worst case.
-    if (new_frame && jitter_px_ > 0.0) {
+    // TWO DRAWS PER CAMERA FRAME, UNCONDITIONALLY — the same rule
+    // PowerLawNoise::next states for the same reason. The amplitude used to
+    // gate the draw, so switching jitter off consumed nothing and the stream
+    // ran ahead of a run that had left it on. That is invisible while the
+    // amplitude only ever comes from the scenario, and wrong the moment it is
+    // a live slider: dragging jitter to zero and back would have produced a
+    // DIFFERENT run rather than the same one, which is precisely the property
+    // the override exists to demonstrate.
+    //
+    // At jitter_px_ = 0 the scaling makes both terms exactly zero, so the
+    // rendered result is bit-identical to the old early-out.
+    if (new_frame) {
         Pcg32& g = rng[Stream::Jitter];
         jitter_held_ = Angle2{g.next_range(-jitter_px_, jitter_px_) * ifov_x_,
                               g.next_range(-jitter_px_, jitter_px_) * ifov_y_};
-    } else if (jitter_px_ <= 0.0) {
-        jitter_held_ = Angle2{};
     }
 
     // --- atmospheric angle of arrival (audit P2-1) -------------------------
@@ -61,12 +72,17 @@ Angle2 DisturbanceGenerator::offset(double t_s, RngSet& rng, bool new_frame) {
     const Angle2 aoa = turb_.aoa_offset();
 
     // --- platform motion (spec row 25) -------------------------------------
-    const MotionState p = platform_.eval(t_s);
+    // eval() only, never advance(): see set_platform_enabled.
+    const MotionState p = platform_on_ ? platform_.eval(t_s) : MotionState{};
     return Angle2{jitter_held_.x + p.x * ifov_x_ + aoa.x,
                   jitter_held_.y + p.y * ifov_y_ + aoa.y};
 }
 
 Rate2 DisturbanceGenerator::platform_rate(double t_s) const {
+    // Off means off everywhere, the exposure smear included — the blur is
+    // integrated along this rate, and a smear along a drift that is not being
+    // applied would be a disagreement between two parts of the same frame.
+    if (!platform_on_) return Rate2{};
     const MotionState p = platform_.eval(t_s);
     return Rate2{p.vx * ifov_x_, p.vy * ifov_y_};
 }
