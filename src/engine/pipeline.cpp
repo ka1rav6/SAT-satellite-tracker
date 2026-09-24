@@ -2,7 +2,6 @@
 
 #include "engine/pipeline.hpp"
 
-#include <chrono>
 
 #include "engine/truth_csv.hpp"
 #include "scenario/schema.hpp"
@@ -652,9 +651,9 @@ bool Pipeline::step() {
     // of this function. Taken here rather than inside the branch so that the
     // span covers the whole frame including the sub-tick loop, which is what a
     // real deadline would have to cover.
-    const auto frame_started = (deadline_mode_ == DeadlineMode::Realtime)
-                                   ? std::chrono::steady_clock::now()
-                                   : std::chrono::steady_clock::time_point{};
+    const wall::TimePoint frame_started = (deadline_mode_ == DeadlineMode::Realtime)
+                                              ? wall::now()
+                                              : wall::TimePoint{};
 
     // -----------------------------------------------------------------------
     // CP 14.3: the window INV-4 is about.
@@ -1491,9 +1490,7 @@ bool Pipeline::step() {
     if (deadline_mode_ != DeadlineMode::Off) {
         double measured_us = 0.0;
         if (deadline_mode_ == DeadlineMode::Realtime) {
-            measured_us = std::chrono::duration<double, std::micro>(
-                              std::chrono::steady_clock::now() - frame_started)
-                              .count();
+            measured_us = wall::elapsed_us(frame_started);
         }
         // `may_shed`: only while there is a lock to keep fed. See
         // DeadlineGovernor::observe for the run this parameter's absence

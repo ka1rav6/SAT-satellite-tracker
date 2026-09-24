@@ -29,6 +29,52 @@
 namespace sat {
 
 // ---------------------------------------------------------------------------
+// wall — the sanctioned wall clock, for the two places outside this header
+// that legitimately need one.
+//
+// INV-3's checker asserts that <chrono> appears nowhere under src/ except
+// here and in the app and GUI layers, and the comment above says why: keeping
+// the include in one file makes the boundary greppable. Two engine-side call
+// sites nevertheless need real elapsed time —
+//
+//   * the P1-10 deadline governor, which has to know how long a frame ACTUALLY
+//     took before it can say the frame missed its budget, and
+//   * DecodeThread's stall timeout, which has to give up waiting on a
+//     third-party decoder that has hung.
+//
+// Neither feeds a measured duration back into the simulation, and neither
+// value enters the reproducibility fingerprint, so both are inside the
+// invariant's intent. Routing them through this façade keeps them inside its
+// LETTER too, which is better than widening the checker's exclusion list to
+// cover two whole files — a blanket exclusion for engine/pipeline.cpp would
+// retire the invariant over exactly the file it matters most in.
+// ---------------------------------------------------------------------------
+namespace wall {
+
+using Clock     = std::chrono::steady_clock;
+using TimePoint = Clock::time_point;
+
+/// Monotonic now. Never the system clock: a wall-clock step (NTP, DST) must
+/// not be able to make a frame look like it took a negative amount of time.
+[[nodiscard]] inline TimePoint now() noexcept { return Clock::now(); }
+
+/// A time point `seconds` into the future, for condition_variable::wait_until.
+[[nodiscard]] inline TimePoint deadline_in(double seconds) noexcept {
+    return now() + std::chrono::duration_cast<Clock::duration>(
+                       std::chrono::duration<double>(seconds));
+}
+
+/// Microseconds elapsed since `since`. A default-constructed TimePoint means
+/// "never started" and reads back as 0 rather than as the age of the epoch.
+[[nodiscard]] inline double elapsed_us(TimePoint since) noexcept {
+    if (since == TimePoint{}) return 0.0;
+    return std::chrono::duration<double, std::micro>(now() - since).count();
+}
+
+}  // namespace wall
+
+
+// ---------------------------------------------------------------------------
 // Stage — every pipeline step we time separately.
 //
 // The list mirrors design §6.2 and §15 so the measured table can be compared

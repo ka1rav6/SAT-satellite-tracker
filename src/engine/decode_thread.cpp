@@ -1,6 +1,7 @@
 // engine/decode_thread.cpp
 
 #include "engine/decode_thread.hpp"
+#include "core/profile.hpp"
 
 #if SAT_HAVE_OPENCV
 #  include <opencv2/core.hpp>
@@ -8,7 +9,6 @@
 #  include <opencv2/videoio.hpp>
 #endif
 
-#include <chrono>
 #include <cstdlib>
 #include <string>
 #include <thread>
@@ -218,8 +218,7 @@ bool DecodeThread::pop(DecodedFrame& out) {
     // and attempting it would trade a hang for a crash. close() detaches
     // instead of joining when this has fired.
     // ----------------------------------------------------------------------
-    const auto deadline = std::chrono::steady_clock::now()
-                        + std::chrono::duration<double>(stall_timeout_s_);
+    const wall::TimePoint deadline = wall::deadline_in(stall_timeout_s_);
     const bool ready = not_empty_.wait_until(
         lk, deadline, [this] { return size_ > 0 || eof_ || stop_.load(); });
     if (!ready) {
