@@ -1,0 +1,106 @@
+# motion_weave.toml — spec row 12's "sinusoidal", as a STACK.
+#
+# GUIDE.md §12 uses this file. It is scenarios/spec_defaults.toml with only the
+# [[target.motion]] blocks changed, so any difference in the numbers is the
+# motion and nothing else.
+#
+# Row 12 lists "sinusoidal" among the motions a target may follow, and no
+# single component provides it — which is the point of design §7.2's sum. A
+# line plus a one-axis oscillation IS the sinusoidal case, and the same two
+# blocks in the other order, or with a third term added, is any weave you like.
+#
+# Measured, seed 42, 30 s: 26.580 px steady-state tracking error, retention
+# 98.56 %, against spec_defaults' 16.939 px and 99.78 %. Harder than the
+# baseline and it should be: the weave adds lateral acceleration the mount has
+# to chase, on top of the drift it already had.
+#
+#     sat-tracker --headless --scenario scenarios/motion_weave.toml
+
+[meta]
+name        = "motion_weave"
+description = "spec_defaults plus a lateral sinusoid — row 12's stacked sinusoidal case"
+
+[input]
+mode = "synthetic"                  # design §8.3
+
+[sim]
+truth_hz   = 300                    # 10 sub-ticks per camera frame (design §6.2)
+camera_hz  = 30                     # row 5, minimum 30
+control_hz = 30                     # row 15, minimum 20
+duration_s = 30
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]       # row 1, minimum 2000 x 2000
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"             # row 2
+resolution     = [640, 480]         # row 3
+fov_deg        = [4.0, 3.0]         # row 4
+exposure_ms    = 5.0
+blur_substeps  = 8                  # design §9.2
+initial_pos_px = [999.5, 999.5]     # row 6, the centre of the screen
+
+[target]
+kind       = "target"               # row 7, a beacon spot
+intensity  = 120.0
+size_px    = 10                     # row 10, permitted 5-20
+initial_px = [1040.0, 1020.0]       # row 11: PINNED IN VIEW, see the header
+shape.type = "square"               # row 9
+
+[[target.motion]]                   # row 12 — the straight line
+kind          = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[[target.motion]]                   # row 12 — the sinusoidal part
+kind         = "sinusoid"
+axis         = "y"                  # "x" or "y"; one axis per component
+amplitude_px = [0.0, 120.0]         # only the chosen axis is read
+period_s     = 3.0
+phase_deg    = 0.0
+
+[gimbal]
+max_pan_dps      = 5.0              # row 13, permitted 5-10
+max_tilt_dps     = 5.0              # row 14, permitted 5-10
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true               # row 21
+gaussian_sigma = 20.0               # row 22, maximum 20 grey levels
+salt_pepper    = 0.10               # row 21, ~10%
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"                      # row 24
+
+[disturbance]
+jitter_px_per_frame = 20.0          # row 23, maximum +/- 20
+
+[[disturbance.platform]]            # row 25, linear is mandatory
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]
+
+[clutter]
+static_sources = 0                  # NOT a specification row - see the header
+decoy_beacons  = 0                  # row 8 makes multiple targets OPTIONAL
+
+[ai]
+enabled          = true
+fallback_on_fail = true             # INV-7
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0             # row 16
+tracking_error_px = 10.0            # row 17
+target_loss_frac  = 0.05            # row 18
+reacquisition_s   = 1.0             # row 19
+min_fps           = 20.0            # row 20

@@ -429,6 +429,176 @@ has the measured gate table and the conditions the model fails under.
 
 ---
 
+## 12. Run a custom motion function
+
+Spec row 12 asks for four target motions — straight line, circular, figure-8,
+random — and lists spiral, sinusoidal and **user-defined** as optional. Row 25
+asks for the same menu again, for the platform the camera is bolted to.
+
+There is no scripting language for this, and design decision 5 explains the
+refusal: a declarative stack **validates, reproduces, and differentiates**,
+and the third one is not optional here. Every component supplies an exact
+closed-form derivative, because velocity feedforward is fed the true target
+rate, `FrameTruth.world_rate` is what the Kalman filter's speed estimate is
+scored against, and motion blur interpolates across the exposure. A scripted
+path would have to be differenced, and a differenced velocity is noisy and one
+step stale.
+
+So motion is a **sum of components**:
+
+```
+position(t) = Σ componentᵢ(t)
+velocity(t) = Σ componentᵢ'(t)
+```
+
+Each `[[target.motion]]` block is one term. Stack as many as you like.
+
+### The nine components
+
+| `kind` | Keys | What it is |
+|---|---|---|
+| `constant` | `offset_px` | A fixed offset. Usually the first term, to place the pattern's centre |
+| `linear` | `velocity_px_s` | Row 12's straight line |
+| `accel` | `accel_px_s2` | Constant acceleration |
+| `sinusoid` | `axis`, `amplitude_px`, `period_s`, `phase_deg` | One axis only |
+| `circular` | `radius_px`, `period_s`, `phase_deg` | Row 12's circle |
+| `lissajous` | `amplitude_px`, `freq_ratio`, `period_s`, `phase_deg` | Row 12's figure-8 at `freq_ratio = 2` |
+| `spiral` | `r0_px`, `growth_px_s`, `period_s`, `phase_deg` | Row 12's optional spiral |
+| `ou_noise` | `sigma_px_s`, `tau_s` | Row 12's "random" — Ornstein-Uhlenbeck, so it is correlated rather than white |
+| `waypoints` | `points = [[t, x, y], …]` | Row 12's "user-defined" — a Catmull-Rom spline **through** the points you give |
+
+`period_s` must be positive for the four periodic kinds and `tau_s` must be
+positive for `ou_noise`; the schema says so by name and by specification row
+rather than dividing by zero later.
+
+### Three worked examples
+
+Each one is a copy of `scenarios/spec_defaults.toml` with only the
+`[[target.motion]]` blocks replaced, so the difference in the numbers is the
+motion and nothing else. The baseline is **16.939 px** steady-state tracking
+error, 99.78 % retention.
+
+**A figure-8** — this is `scenarios/control/figure8.toml`:
+
+```toml
+[[target.motion]]
+kind          = "lissajous"
+amplitude_px  = [400.0, 250.0]
+freq_ratio    = 2.0          # y twice per x: that is the 8
+period_s      = 8.0
+phase_deg     = 0.0
+```
+
+**Sinusoidal, which row 12 lists but no single component provides.** It is a
+line plus a sideways oscillation, which is the point of the sum —
+[`scenarios/motion_weave.toml`](../scenarios/motion_weave.toml):
+
+```toml
+[[target.motion]]
+kind          = "linear"
+velocity_px_s = [22.0, -11.0]
+
+[[target.motion]]
+kind         = "sinusoid"
+axis         = "y"
+amplitude_px = [0.0, 120.0]
+period_s     = 3.0
+```
+
+Measured: **26.580 px**, retention 98.56 %. Harder than the baseline, as it
+should be — the weave adds acceleration the mount has to chase.
+
+**A user-defined path**, for a track no closed form describes —
+[`scenarios/motion_waypoints.toml`](../scenarios/motion_waypoints.toml):
+
+```toml
+[[target.motion]]
+kind   = "waypoints"
+points = [
+    [ 0.0,  700.0,  700.0],   # [t_s, x_px, y_px]
+    [ 6.0, 1300.0,  800.0],
+    [12.0, 1250.0, 1300.0],
+    [18.0,  800.0, 1250.0],
+    [24.0,  700.0,  700.0],
+]
+```
+
+Note `initial_px = [0.0, 0.0]` in that file: the waypoint stack supplies the
+absolute position, so an initial offset would be added to it and shift the
+whole path.
+
+Measured: **19.057 px**, retention 99.50 %. Catmull-Rom interpolates, so the
+beacon passes **through** the coordinates you typed rather than near them, and
+it is C¹ continuous so the velocity has no jumps — a velocity step would be a
+step input to the feedforward path and would show up as a tracking spike that
+is an artefact of the path description rather than of the tracker.
+
+### Run one
+
+```bash
+# The two above, as committed files:
+just headless "--scenario scenarios/motion_weave.toml"
+just headless "--scenario scenarios/motion_waypoints.toml"
+
+# Or start from the default and edit:
+cp scenarios/spec_defaults.toml scenarios/my_motion.toml
+# edit the [[target.motion]] blocks
+just headless "--scenario scenarios/my_motion.toml"
+just gui      "--scenario scenarios/my_motion.toml"
+```
+
+A bad stack is rejected by the same schema as everything else, naming the
+file, the line, the value and the specification row.
+
+### Moving the platform instead
+
+`[[disturbance.platform]]` takes the identical nine components, driven by
+literally the same factory — `build_motion_component` is called by both, which
+is what makes design §7.2's claim testable rather than aspirational. This
+shakes the camera rather than moving the target:
+
+```toml
+[[disturbance.platform]]      # row 25
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]
+
+[[disturbance.platform]]      # stacked: a drift with a shudder on top
+kind       = "ou_noise"
+sigma_px_s = 40.0
+tau_s      = 0.4
+```
+
+### `--set` cannot do this, and it will tell you so
+
+`--set` addresses **named** keys. A motion stack is an array of tables, and
+`target.motion[0]` is not a name the overlay can reach:
+
+```console
+$ just headless "--scenario scenarios/spec_defaults.toml \
+                 --set target.motion[0].velocity_px_s=[500,0]"
+--set: 'target.motion[0].velocity_px_s' is not a scenario key, so setting it
+would change nothing
+  Keys inside an array of tables — [[target.motion]], [[disturbance.platform]],
+  [[event]] — cannot be set this way.
+  Copy the scenario and edit the stack there; docs/GUIDE.md section 12 has the
+  recipe.
+```
+
+This used to **succeed silently**: the overlay created a table nothing reads,
+the run used the unmodified scenario, and the report printed the baseline
+numbers with no indication anything had been ignored. The same held for an
+ordinary typo — `--set control.kpp=99` ran the base scenario and exited 0.
+Every `--set` key is now checked against the schema first, and a near miss is
+named:
+
+```console
+$ ... --set control.kpp=99
+--set: 'control.kpp' is not a scenario key, so setting it would change nothing
+  Did you mean 'control.kp'?
+```
+
+---
+
 ## Where to go next
 
 | | |

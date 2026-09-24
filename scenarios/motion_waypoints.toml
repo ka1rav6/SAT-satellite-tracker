@@ -1,0 +1,110 @@
+# motion_waypoints.toml — spec row 12's "user-defined", as waypoints.
+#
+# GUIDE.md §12 uses this file. It is scenarios/spec_defaults.toml with only the
+# [[target.motion]] blocks changed.
+#
+# Row 12 allows a user-defined target path and design decision 5 refuses to add
+# a scripting language for it. `waypoints` is the answer: a Catmull-Rom spline
+# through the points given. Catmull-Rom rather than a Bezier because it
+# INTERPOLATES its control points — the beacon passes THROUGH the coordinates
+# typed below rather than near them, which is what someone writing a waypoint
+# list means — and because it is C1 continuous, so the velocity has no jumps.
+# A velocity step would be a step input to the feedforward path and would show
+# up as a tracking spike that is an artefact of the path description rather
+# than of the tracker.
+#
+# Note initial_px is [0, 0]: the waypoint stack supplies the absolute position,
+# so an initial offset would be added to it and move the whole path.
+#
+# Measured, seed 42, 30 s: 19.057 px steady-state tracking error, retention
+# 99.50 %, against spec_defaults' 16.939 px and 99.78 %.
+#
+#     sat-tracker --headless --scenario scenarios/motion_waypoints.toml
+
+[meta]
+name        = "motion_waypoints"
+description = "spec_defaults with a Catmull-Rom waypoint path — row 12's user-defined case"
+
+[input]
+mode = "synthetic"                  # design §8.3
+
+[sim]
+truth_hz   = 300                    # 10 sub-ticks per camera frame (design §6.2)
+camera_hz  = 30                     # row 5, minimum 30
+control_hz = 30                     # row 15, minimum 20
+duration_s = 30
+seed       = 42
+
+[world]
+canvas_px      = [2000, 2000]       # row 1, minimum 2000 x 2000
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"             # row 2
+resolution     = [640, 480]         # row 3
+fov_deg        = [4.0, 3.0]         # row 4
+exposure_ms    = 5.0
+blur_substeps  = 8                  # design §9.2
+initial_pos_px = [999.5, 999.5]     # row 6, the centre of the screen
+
+[target]
+kind       = "target"               # row 7, a beacon spot
+intensity  = 120.0
+size_px    = 10                     # row 10, permitted 5-20
+initial_px = [0.0, 0.0]       # row 11: PINNED IN VIEW, see the header
+shape.type = "square"               # row 9
+
+[[target.motion]]                   # row 12 — "user-defined"
+kind   = "waypoints"
+points = [                          # [t_s, x_px, y_px], absolute screen px
+    [ 0.0,  700.0,  700.0],
+    [ 6.0, 1300.0,  800.0],
+    [12.0, 1250.0, 1300.0],
+    [18.0,  800.0, 1250.0],
+    [24.0,  700.0,  700.0],         # back to the start: a closed loop
+]
+
+[gimbal]
+max_pan_dps      = 5.0              # row 13, permitted 5-10
+max_tilt_dps     = 5.0              # row 14, permitted 5-10
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+resonance_hz     = 0.0
+
+[noise]
+poisson        = true               # row 21
+gaussian_sigma = 20.0               # row 22, maximum 20 grey levels
+salt_pepper    = 0.10               # row 21, ~10%
+hot_pixels     = 40
+
+[atmosphere]
+mode = "clear"                      # row 24
+
+[disturbance]
+jitter_px_per_frame = 20.0          # row 23, maximum +/- 20
+
+[[disturbance.platform]]            # row 25, linear is mandatory
+kind          = "linear"
+velocity_px_s = [15.0, -8.0]
+
+[clutter]
+static_sources = 0                  # NOT a specification row - see the header
+decoy_beacons  = 0                  # row 8 makes multiple targets OPTIONAL
+
+[ai]
+enabled          = true
+fallback_on_fail = true             # INV-7
+
+[logging]
+centroid_csv = "logs/centroid.csv"
+metrics_json = "logs/run.json"
+report_html  = "logs/report.html"
+
+[requirements]
+acquisition_s     = 2.0             # row 16
+tracking_error_px = 10.0            # row 17
+target_loss_frac  = 0.05            # row 18
+reacquisition_s   = 1.0             # row 19
+min_fps           = 20.0            # row 20
