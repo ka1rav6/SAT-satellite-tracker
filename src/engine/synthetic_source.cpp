@@ -2,6 +2,7 @@
 
 #include "engine/synthetic_source.hpp"
 
+#include <cmath>
 #include <algorithm>
 
 namespace sat {
@@ -73,7 +74,33 @@ void SyntheticSource::build(const SyntheticConfig& cfg, EmitterSoA emitters) {
 }
 
 void SyntheticSource::advance_world(double dt) noexcept {
-    sim_time_s_ += dt;
+    // -----------------------------------------------------------------------
+    // THE CLOCK, not an accumulator.
+    //
+    // This line used to be `sim_time_s_ += dt`, which is the one thing
+    // core/time.hpp forbids in so many words: "seconds = tick / truth_hz, NOT
+    // from an accumulated t += dt. Accumulation drifts". The Clock existed,
+    // was configured in build(), and nothing in the entire program ever called
+    // tick() on it — so `clock_.tick_index()` was zero on every frame of every
+    // run, and the `tick` column of FrameTruth was a constant 0.
+    //
+    // Ticking it here makes the Clock the single authority the file says it
+    // is. The time is then an exact integer division, identical on every
+    // machine, and the truth tick means something.
+    //
+    // `dt` is still honoured for the benefit of the world and the disturbance
+    // integrators, which take a step size rather than an instant, and it is
+    // the caller's truth_dt in every path that exists. When it is NOT the
+    // clock's own truth_dt — a test stepping the world by hand — the clock
+    // would disagree with the requested step, so the accumulator is kept for
+    // exactly that case and the clock is used whenever they agree.
+    // -----------------------------------------------------------------------
+    if (std::fabs(dt - clock_.truth_dt()) < 1e-15) {
+        clock_.tick();
+        sim_time_s_ = clock_.seconds();
+    } else {
+        sim_time_s_ += dt;
+    }
 
     if (have_world_) {
         // Design §7.2's motion algebra: each emitter's position comes from
@@ -323,7 +350,41 @@ bool SyntheticSource::next(Angle2 commanded_boresight, SourceFrame& out) {
     const Angle2 true_bore{commanded_boresight.x + disturbance_.x,
                            commanded_boresight.y + disturbance_.y};
 
-    const double t_s = static_cast<double>(frame_index_) / static_cast<double>(cfg_.camera_hz);
+    // -----------------------------------------------------------------------
+    // THE FRAME'S TIMESTAMP IS THE TIME OF THE WORLD IT SHOWS.
+    //
+    // This read `frame_index_ / camera_hz`, and it was wrong by exactly one
+    // camera period on every frame of every run.
+    //
+    // Design §6.2's order is B1 advance the world, B2 advance the
+    // disturbances, B3 step the gimbal, B4 acquire — so by the time this
+    // function runs, Pipeline::step has already called advance_world()
+    // camera_divisor times and the world is at t = (frame_index + 1) / camera_hz.
+    // That is the instant the emitters are splatted at (the splat reads
+    // `world_.emitters`, which World::advance has already moved) and the
+    // instant the boresight disturbance below is evaluated at. Labelling it
+    // frame_index / camera_hz claimed the frame showed the world 33 ms before
+    // the one it actually shows.
+    //
+    // Measured, with jitter and platform motion off so the beacon's position
+    // is purely its own motion, on spec_defaults' 22 px/s linear target:
+    //
+    //   frame 0, reported t = 0.0000, truth_screen.x = 1040.733
+    //   analytic x(0.0000) = 1040.000        analytic x(0.0333) = 1040.733
+    //
+    // Everything downstream that reads a timestamp inherited the error:
+    // centroid.csv and trace.csv, the acquisition time row 16 is graded on,
+    // and — the one that changes behaviour rather than just labels — §7.4's
+    // event timeline and the platform rate the exposure smear is integrated
+    // along, both of which Pipeline::step was computing from the same wrong
+    // `frame_ / camera_hz` expression. An event scheduled at t fired against a
+    // world that was already a frame past t, which is precisely the off-by-one
+    // that pipeline.cpp's own comment says it exists to avoid.
+    //
+    // The clock is asked rather than the arithmetic repeated: advance_world()
+    // ticks it, so it is the same integer division for every consumer.
+    // -----------------------------------------------------------------------
+    const double t_s = sim_time_s_;
     render_frame(true_bore, t_s);
 
     out.pixels              = frame_;

@@ -738,8 +738,13 @@ bool Pipeline::step() {
     // of the camera.
     // -----------------------------------------------------------------------
     if (!video_) {
-        const double t_now = static_cast<double>(frame_)
-                           / std::max(1.0, static_cast<double>(cfg_.synthetic.camera_hz));
+        // The WORLD's clock, not the frame counter. The sub-tick loop above has
+        // already run, so the world is at the instant this frame will be
+        // rendered at and `frame_ / camera_hz` is one camera period behind it —
+        // which made every event land in the frame AFTER the one it was
+        // scheduled for, the exact off-by-one this block's comment claims to
+        // avoid. See SyntheticSource::next for the measurement.
+        const double t_now = source_.sim_time_s();
         for (const ScheduledEvent* e : events_.due(t_now)) {
             switch (e->action) {
                 case EventAction::SetAtmosphere:
@@ -895,9 +900,22 @@ bool Pipeline::step() {
             // permits, would have hit it immediately.
             //
             // The clock already knows the answer and is in scope.
+            //
+            // AND THE SAME DEFECT ONE LEVEL UP. `frame_ * camera_dt` fixed
+            // A-3's hardcoded 30 but kept A-3's premise — that a frame's
+            // instant can be derived from its index — and that premise is
+            // false here for the reason SyntheticSource::next now sets out:
+            // the sub-tick loop has already advanced the world, so the frame
+            // about to be rendered is at (frame_ + 1) * camera_dt. The smear
+            // was integrated along the platform velocity of one frame ago.
+            // For a linear platform that is a constant and invisible; for
+            // row 25's circular, spiral and figure-8 options it is a phase
+            // error of a whole frame in the blur direction, which is exactly
+            // the family of motions A-3 was about.
+            //
+            // The world's own clock answers it without any arithmetic.
             // -----------------------------------------------------------
-            const Rate2 pr = source_.disturbance().platform_rate(
-                static_cast<double>(frame_) * source_.clock().camera_dt());
+            const Rate2 pr = source_.disturbance().platform_rate(source_.sim_time_s());
             source_.set_timers(&timers_);
             source_.set_blur_rate(Rate2{gr.x + pr.x, gr.y + pr.y});
             if (!source_.next(aim_angle, frame)) return false;

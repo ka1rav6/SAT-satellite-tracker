@@ -138,6 +138,16 @@ public:
     /// frame by the engine, so the world moves at 300 Hz while frames come at 30.
     void advance_world(double dt) noexcept;
 
+    /// The world's current simulation time, seconds.
+    ///
+    /// THE one clock. Every consumer that needs to know "when is the world
+    /// right now" asks this rather than recomputing it from a frame index, and
+    /// that is not a style preference: §7.4's event timeline and the exposure
+    /// smear's platform rate were both deriving it as `frame / camera_hz`,
+    /// which is one camera period behind the world by the time a frame is
+    /// rendered. See the note on the timestamp in next().
+    [[nodiscard]] double sim_time_s() const noexcept { return sim_time_s_; }
+
     /// The emitters. They live inside `world_` so that World::advance writes
     /// into the same arrays the renderer reads — there is exactly one copy.
     [[nodiscard]] EmitterSoA&       emitters()       noexcept { return world_.emitters; }

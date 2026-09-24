@@ -563,3 +563,104 @@ TEST_CASE("A-3: motion blur is correct at a camera rate above row 5's minimum") 
     // The bug has to be VISIBLE on most frames for this to be a real guard.
     CHECK(divergent > checked / 2);
 }
+
+// ===========================================================================
+// THE FRAME'S TIMESTAMP IS THE TIME OF THE WORLD IT SHOWS
+// ===========================================================================
+
+TEST_CASE("a frame's timestamp is the instant its truth was evaluated at") {
+    // THE DEFECT. SyntheticSource::next timestamped each frame
+    // `frame_index / camera_hz`, but design §6.2's order is B1 advance the
+    // world, then B4 acquire — so by the time a frame is rendered the world
+    // has already been stepped camera_divisor truth ticks and is at
+    // (frame_index + 1) / camera_hz. Every frame in every run was labelled one
+    // camera period before the world it actually depicted.
+    //
+    // It was invisible in every existing test because almost everything
+    // downstream compares a frame against ITSELF — the tracking error takes the
+    // boresight and the truth from the same frame, and both were shifted
+    // equally. What it did reach was everything that compares a frame against
+    // an ABSOLUTE time: centroid.csv's and trace.csv's `time_s` columns, row
+    // 16's acquisition time, §7.4's event timeline (which fired against a world
+    // already a frame past the scheduled instant) and the platform rate the
+    // exposure smear is integrated along.
+    //
+    // The check is written against the closed form of the target's own motion,
+    // because §7.2's motion algebra makes the truth position an exact function
+    // of absolute time and therefore makes "which t is this frame at" a
+    // question with one right answer rather than a matter of convention.
+    auto loaded = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+    REQUIRE_MESSAGE(loaded.has_value(), loaded.error());
+    Scenario sc = *loaded;
+
+    sc.duration_s = 2.0;
+    // The disturbances move the TRUE boresight, not the target, so they do not
+    // affect truth_screen — but turning them off keeps the failure message
+    // about one thing. The target's own linear motion is what is being read.
+    sc.jitter_px_per_frame = 0.0;
+    sc.platform.clear();
+
+    REQUIRE(sc.targets.size() == 1);
+    REQUIRE(sc.targets[0].motion.size() == 1);
+    REQUIRE(sc.targets[0].motion[0].kind == "linear");
+    const double x0 = sc.targets[0].initial_px[0];
+    const double y0 = sc.targets[0].initial_px[1];
+    const double vx = sc.targets[0].motion[0].velocity_px_s[0];
+    const double vy = sc.targets[0].motion[0].velocity_px_s[1];
+
+    Pipeline p;
+    p.build_from_scenario(sc);
+    p.set_publish_snapshots(false);
+
+    int checked = 0;
+    while (p.step()) {
+        const FrameRecord& r = p.last();
+        REQUIRE(r.truth_valid);
+
+        // The position the closed form gives at the timestamp the frame
+        // carries. If the two disagree the frame is mislabelled, and the size
+        // of the disagreement is the size of the error.
+        CHECK(r.truth_screen.x == doctest::Approx(x0 + vx * r.time_s).epsilon(1e-9));
+        CHECK(r.truth_screen.y == doctest::Approx(y0 + vy * r.time_s).epsilon(1e-9));
+
+        // And the first frame is NOT at t = 0: the world is advanced before it
+        // is looked at, so the earliest frame a run can produce shows the world
+        // one camera period in. Asserted rather than left implicit, because
+        // "frame 0 is at t = 0" is the assumption the defect was made of.
+        if (checked == 0) {
+            CHECK(r.time_s == doctest::Approx(1.0 / sc.camera_hz).epsilon(1e-12));
+        }
+        ++checked;
+    }
+    REQUIRE(checked == static_cast<int>(sc.duration_s * sc.camera_hz));
+}
+
+TEST_CASE("simulation time comes from the Clock, not from an accumulator") {
+    // core/time.hpp: "seconds = tick / truth_hz ... NOT from an accumulated
+    // t += dt. Accumulation drifts". SyntheticSource::advance_world did exactly
+    // the thing that file forbids, and nothing in the program ever called
+    // Clock::tick() at all — so FrameTruth::tick was a hard zero on every frame
+    // of every run, and the one object whose entire job is to be the
+    // simulation's clock was never started.
+    auto loaded = load_scenario(std::string(SAT_SCENARIO_DIR) + "/spec_defaults.toml");
+    REQUIRE_MESSAGE(loaded.has_value(), loaded.error());
+    Scenario sc = *loaded;
+    sc.duration_s = 3.0;
+
+    Pipeline p;
+    p.build_from_scenario(sc);
+    p.set_publish_snapshots(false);
+
+    const int divisor = p.source().clock().camera_divisor();
+    int64_t frames = 0;
+    while (p.step()) {
+        ++frames;
+        // The clock has been ticked once per truth tick and never otherwise.
+        CHECK(p.source().clock().tick_index() == frames * divisor);
+        // And the time is the exact integer division, bit for bit — which an
+        // accumulator cannot promise and which is what INV-3 rests on.
+        CHECK(p.source().sim_time_s()
+              == static_cast<double>(frames * divisor) / sc.truth_hz);
+    }
+    REQUIRE(frames == static_cast<int64_t>(sc.duration_s * sc.camera_hz));
+}
