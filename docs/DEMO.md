@@ -62,7 +62,17 @@ In **Run control → Damage**:
 | `Sensor noise` | specification rows 21–22: shot noise, read noise, hot pixels |
 | atmosphere → `fog` | row 24 |
 | salt & pepper → 0.10 | row 21's 10 % impulse noise — **30,720 impulses against a 100-pixel beacon** |
+| jitter px/frame → 20 | row 23 — **watch the tracking trace jump from ~0.5 px to ~17 px** |
 | `Full spec` | everything at once |
+
+That jitter slider is the one to spend a sentence on. It moves the **true**
+boresight, not the pixels (§9.3), so the camera view barely changes while the
+tracking trace multiplies by thirty. Row 23 is redrawn every frame where the
+controller cannot see it, and on its own it leaves `sqrt(2·20²/3) = 16.33 px`
+under row 17's 10 px budget. Say that the loop tracks to **0.45 px** with it
+off and **17.02 px** with it on, that both numbers are asserted in the test
+suite, and that this is why row 17 is reported as *bound derived* rather than
+FAIL.
 
 It holds. The number behind that: the median filter takes 1,593 impulses down
 to **5** survivors, and the matched filter integrates the beacon over its whole

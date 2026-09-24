@@ -1699,6 +1699,62 @@ sat-tracker --bench
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
 
+## 14.0k AMENDMENT — a frame's timestamp was one camera period before the
+## world it showed, and the Clock was never started
+
+**Status:** adopted, correcting an implementation defect rather than a design
+decision. **Applies to:** §6.2 (the per-frame sequence), §7.4 (the event
+timeline), §9.2 (motion blur), §13.2 (`centroid.csv`), INV-3.
+
+**What was wrong.** `SyntheticSource::next` timestamped each frame
+`frame_index / camera_hz`. §6.2's order is B1 advance the world, B2 advance the
+disturbances, B3 step the gimbal, B4 acquire — so by the time a frame is
+rendered the world has already been stepped `camera_divisor` truth ticks and is
+at `(frame_index + 1) / camera_hz`. That is the instant the emitters are
+splatted at and the instant the boresight disturbance is evaluated at. Every
+frame of every run was labelled one camera period before the world it depicted.
+
+Measured on `spec_defaults`' 22 px/s linear target, with rows 23 and 25 off so
+the beacon's position is purely its own motion:
+
+| frame | reported `t` | `truth_screen.x` | closed form `x(t)` | closed form `x(t + 1/30)` |
+|---|---|---|---|---|
+| 0 | 0.0000 | 1040.733 | 1040.000 | **1040.733** |
+
+**Why nothing caught it.** Almost everything downstream compares a frame
+against *itself*: the tracking error takes the boresight and the truth from the
+same frame and both were shifted equally. What it reached was everything that
+compares a frame against an *absolute* time, and two of those changed
+behaviour rather than labels — both because `Pipeline::step` derived the instant
+from the frame index in the same way:
+
+* §7.4's **event timeline** fired at `frame_ / camera_hz` against a world
+  already a frame past that instant, so an event scheduled at `t` took effect
+  in the frame *after* the one timestamped `t` — the exact off-by-one the code
+  there says it exists to avoid.
+* §9.2's **exposure smear** sampled the platform's analytic rate one frame
+  early. A-3 fixed the hardcoded 30 in that expression but kept its premise,
+  that a frame's instant follows from its index. For a linear platform the rate
+  is constant and it is invisible; for row 25's circular, spiral and figure-8
+  options it is a whole frame of phase error in the blur direction.
+
+The rest are labels, wrong by 33 ms: `centroid.csv`'s and `trace.csv`'s
+`time_s` columns, and row 16's **cold** acquisition figure, which moves from
+0.067 s to 0.100 s. The **in-view** acquisition figure is a difference between
+two frames and does not move.
+
+**And the Clock was never started.** `core/time.hpp` states the rule in so many
+words — "seconds = tick / truth_hz ... NOT from an accumulated `t += dt`.
+Accumulation drifts" — and `advance_world` did exactly that. `Clock::tick()`
+was not called from anywhere in the program, so the one object whose entire job
+is to be the simulation's clock sat at tick 0 for every run, which also made
+`FrameTruth::tick` a hard zero on every frame ever emitted. `advance_world` now
+ticks it and reads the time back from it, so the time is an exact integer
+division and there is one authority for "when is the world" that the event
+timeline and the blur rate both ask rather than each deriving its own answer.
+
+---
+
 ## 14.0j AMENDMENT — `Atmosphere` was a photometric model, not a turbulence
 ## one; Kolmogorov AoA jitter and log-normal scintillation are now beside it
 

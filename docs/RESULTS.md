@@ -18,7 +18,7 @@ to `logs/sweep/compliance.txt`.
 | Row | Requirement | Spec | Measured | Status |
 |---|---|---|---|---|
 | 16 | Acquisition (in view) | ≤ 2 s | **0.067 s** (p95 0.067) | PASS |
-| 16 | Acquisition (cold) | ≤ 2 s | 0.067 s | bound derived — §10.5 |
+| 16 | Acquisition (cold) | ≤ 2 s | 0.100 s | bound derived — §10.5 |
 | 17 | Tracking error | ≤ 10 px | 17.64 px (p95 29.07) | bound derived — floor 16.33 px |
 | 18 | Target loss | < 5 % | **1.67 %** (p95 1.67) | PASS |
 | 19 | Re-acquisition | ≤ 1 s | *no episodes in this arm* | — |
@@ -77,6 +77,27 @@ never observes. Uniform[−A,A] has variance A²/3, so over two axes:
 ```
 RMS floor = sqrt(2 · 400/3) = 16.33 px
 ```
+
+That is a derivation, and a derivation is not a measurement. The measurement is
+`tests/loop/test_closed_loop.cpp`, "row 17 is met on the full specification
+with rows 23 and 25 quiet" — the **same** scenario at the full specification in
+every other respect (row 21's 10 % impulse noise, row 22's read noise at the
+cap, row 24's atmosphere, the defects, the mount's limits, latency and
+encoder), 10 s, steady state, with rows 23 and 25 switched off through the same
+runtime override the dashboard's `Clean` preset uses:
+
+| rows 23 and 25 | steady-state tracking error |
+|---|---:|
+| quiet | **0.45 px** |
+| row 23 restored | **17.02 px** |
+
+The loop meets row 17 by a factor of twenty when it is allowed to. The whole
+shortfall is row 23, and the test asserts both halves, so a regression in the
+loop cannot hide behind the jitter.
+
+In the dashboard this is a slider: **Run control → Damage → jitter px/frame
+(row 23)**. Drag it from 0 to 20 and the tracking trace moves from a few pixels
+to ~17 while nothing else changes.
 
 No controller can go below that — the disturbance displaces the boresight
 *after* the command is issued. Measured **17.60 px**, so the loop contributes

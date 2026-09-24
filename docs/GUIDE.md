@@ -110,6 +110,28 @@ corrupted pixels against a 100-pixel beacon, every one of them brighter), row
 
 Watch the camera view fill with snow and the centroiding trace stay flat.
 
+### Turn the jitter off — the most informative control on the panel
+
+**Damage → jitter px/frame (row 23)**, and its neighbour **platform motion
+(row 25)**. These two are not part of the damage chain: §9.3 applies them to
+the **true boresight**, never to the pixels, which is why the camera view looks
+unchanged while the *tracking* trace moves a long way.
+
+Row 23 is the reason row 17 reads ~17 px against a 10 px budget. It is redrawn
+every camera frame and added where the controller cannot see it, so no loop and
+no predictor can reject it — over two axes it leaves `sqrt(2·20²/3) = 16.33 px`
+of pointing error on its own. Drag the slider to 0, with everything else at the
+specification, and the steady-state tracking error falls to **0.45 px**; put it
+back to 20 and it returns to **17.02 px**.
+
+That is the difference between "the specification's row 17 and row 23 cannot
+both hold" and "this loop does not work", and it takes one drag to show. Both
+figures are asserted in `tests/loop/test_closed_loop.cpp`.
+
+The `Clean` preset does this for you: it quietens rows 21 **through 25**, so
+the dashboard opens with the loop alone with the target and row 17 reading
+green. `Full spec` puts every one of them back exactly as the file has them.
+
 ### Switch the detector
 
 The **Detector** radio buttons switch between the real pipeline (§9.4: a 3×3
