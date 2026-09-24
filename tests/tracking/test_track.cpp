@@ -393,3 +393,33 @@ TEST_CASE("CP 6.5: R is clamped at both ends") {
     tr.step(kDt, std::span<Measurement>(huge), 6);
     CHECK(tr.track().last_sigma_urad() == doctest::Approx(1000.0));
 }
+
+TEST_CASE("MotionNet history ring: 30 updates then 5 coasts push the prediction") {
+    Track t;
+    TrackParams p = params();
+    const double vx = 2000.0;   // urad/s
+    t.start(meas(0.0, 0.0), p, 0);
+    REQUIRE(t.history_count() == 1);
+
+    double x = 0.0;
+    for (int i = 1; i <= 30; ++i) {
+        t.predict(kDt);
+        x = vx * static_cast<double>(i) * kDt;
+        t.update(meas(x, 0.0));
+    }
+    REQUIRE(t.history_count() == Track::kHistory);
+    float h[Track::kHistory][4];
+    t.history_tensor(h);
+    CHECK(h[29][0] == doctest::Approx(static_cast<float>(t.position().x)).epsilon(1e-4));
+    CHECK(h[29][2] == doctest::Approx(static_cast<float>(t.rate().x)).epsilon(1e-2));
+    const float last_hit_az = h[29][0];
+
+    for (int i = 0; i < 5; ++i) {
+        t.predict(kDt);
+        t.miss();
+    }
+    t.history_tensor(h);
+    CHECK(t.state() == TrackState::Coasting);
+    CHECK(h[29][0] == doctest::Approx(static_cast<float>(t.position().x)).epsilon(1e-4));
+    CHECK(h[29][0] != doctest::Approx(last_hit_az));
+}

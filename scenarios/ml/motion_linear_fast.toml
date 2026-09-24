@@ -1,0 +1,92 @@
+# MotionNet hold-out — unseen linear file + later unseen seeds (SAT-ML §2.3).
+
+[meta]
+name        = "motion_linear_fast"
+description = "MotionNet hold-out: faster line under rain"
+
+[input]
+mode = "synthetic"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 20
+seed       = 35
+
+[world]
+canvas_px      = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+exposure_ms    = 5.0
+blur_substeps  = 8
+initial_pos_px = [300.0, 300.0]
+
+[target]
+kind       = "target"
+intensity  = 210.0
+size_px    = 10
+initial_px = [300.0, 300.0]
+shape.type = "square"
+
+[[target.motion]]
+kind          = "linear"
+velocity_px_s = [110.0, 45.0]
+
+[gimbal]
+max_pan_dps      = 5.0
+max_tilt_dps     = 5.0
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 10.0
+salt_pepper    = 0.02
+hot_pixels     = 6
+
+[atmosphere]
+mode = "rain"
+
+[disturbance]
+jitter_px_per_frame = 1.5
+
+[clutter]
+static_sources = 0
+decoy_beacons  = 0
+
+[[event]]
+t_s = 3.2
+action = "occlude_target"
+duration_s = 0.30
+
+[[event]]
+t_s = 7.0
+action = "occlude_target"
+duration_s = 0.35
+
+[control]
+kp   = 8.0
+ki   = 2.0
+kd   = 0.15
+k_ff = 1.0
+
+[tracking]
+imm = true
+
+[ai]
+enabled          = true
+fallback_on_fail = true
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

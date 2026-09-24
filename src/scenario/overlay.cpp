@@ -38,8 +38,12 @@ bool is_bare_word(std::string_view v) {
     if (v.empty()) return false;
     if (!((v[0] >= 'a' && v[0] <= 'z') || (v[0] >= 'A' && v[0] <= 'Z'))) return false;
     for (char c : v) {
+        // Dot and slash are included so `--set ai.motion_net=models/foo.onnx`
+        // is a string. A path is not valid TOML on the right of `=`, same as
+        // a bare word, so quoting it cannot change a value that already parsed.
         const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-                     || (c >= '0' && c <= '9') || c == '_' || c == '-';
+                     || (c >= '0' && c <= '9') || c == '_' || c == '-'
+                     || c == '.' || c == '/' || c == '\\';
         if (!ok) return false;
     }
     return true;
@@ -95,7 +99,13 @@ Result<std::string> apply_overrides(std::string_view toml_text,
         }
         if (!parsed && is_bare_word(o.value)) {
             try {
-                holder = toml::parse("v = \"" + o.value + "\"");
+                std::string escaped;
+                escaped.reserve(o.value.size());
+                for (char c : o.value) {
+                    if (c == '\\' || c == '"') escaped.push_back('\\');
+                    escaped.push_back(c);
+                }
+                holder = toml::parse("v = \"" + escaped + "\"");
                 parsed = true;
             } catch (const toml::parse_error&) {
                 // fall through to the error below

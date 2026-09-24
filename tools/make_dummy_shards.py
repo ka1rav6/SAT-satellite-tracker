@@ -95,6 +95,91 @@ def _candidate_sample(rng: np.random.Generator, patch_px: int) -> tuple[np.ndarr
     return patch, scalars, label, conditions
 
 
+def _track_sample(rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, int, np.ndarray]:
+    """Walk a 45-step polyline in µrad: 30 history + 15 future (SAT-ML §6).
+
+    Four regimes match official PS row 12. Dummy tracks exist so the train
+    loop and split guard can run before --gen-dataset writes SAT FrameTruth.
+    """
+    from ml.datasets import HISTORY_LEN, HORIZON, REGIME_LINE, REGIME_CIRCULAR, REGIME_FIG8
+
+    regime = int(rng.integers(0, 4))
+    dt = 1.0 / 30.0
+    n = HISTORY_LEN + HORIZON
+    t = np.arange(n, dtype=np.float32) * dt
+    if regime == REGIME_LINE:
+        vaz = float(rng.uniform(-1.0e5, 1.0e5))
+        vel = float(rng.uniform(-1.0e5, 1.0e5))
+        az = vaz * t
+        el = vel * t
+    elif regime == REGIME_CIRCULAR:
+        omega = float(rng.uniform(0.5, 2.0))
+        radius = float(rng.uniform(2.0e4, 8.0e4))
+        az = radius * np.sin(omega * t)
+        el = radius * np.cos(omega * t)
+    elif regime == REGIME_FIG8:
+        omega = float(rng.uniform(0.5, 2.0))
+        radius = float(rng.uniform(2.0e4, 8.0e4))
+        az = radius * np.sin(omega * t)
+        el = 0.5 * radius * np.sin(2.0 * omega * t)
+    else:
+        # OU-like random walk: the spec's "random" motion, not a second line.
+        az = np.cumsum(rng.normal(0.0, 2.0e3, size=n)).astype(np.float32)
+        el = np.cumsum(rng.normal(0.0, 2.0e3, size=n)).astype(np.float32)
+    vaz = np.diff(az, prepend=az[0]) / dt
+    vel = np.diff(el, prepend=el[0]) / dt
+    history = np.stack([az[:HISTORY_LEN], el[:HISTORY_LEN],
+                        vaz[:HISTORY_LEN], vel[:HISTORY_LEN]], axis=-1).astype(np.float32)
+    # Residual labels: future truth minus last history position, same as datagen.
+    last_az, last_el = az[HISTORY_LEN - 1], el[HISTORY_LEN - 1]
+    future = np.stack(
+        [az[HISTORY_LEN:] - last_az, el[HISTORY_LEN:] - last_el], axis=-1
+    ).astype(np.float32)
+    detected = np.ones(HISTORY_LEN, dtype=np.uint8)
+    if rng.random() < 0.3:
+        detected[int(rng.integers(0, HISTORY_LEN))] = 0
+    return history, future, regime, detected
+
+
+def _write_track_split(root: Path, split: str, shard_size: int, n_per_split: int) -> int:
+    """Write n_per_split track windows for one split, still run-disjoint."""
+    rows: list[tuple[np.ndarray, np.ndarray, int, np.ndarray, str, int, int]] = []
+    shard_index = 0
+    sample_count = 0
+
+    def flush() -> None:
+        nonlocal rows, shard_index
+        if not rows:
+            return
+        np.savez(
+            root / split / f"shard_{shard_index:04d}.npz",
+            history=np.stack([row[0] for row in rows]).astype(np.float32),
+            future=np.stack([row[1] for row in rows]).astype(np.float32),
+            regime=np.asarray([row[2] for row in rows], dtype=np.int64),
+            detected_hist=np.stack([row[3] for row in rows]).astype(np.uint8),
+            run_id=np.asarray([row[4] for row in rows]),
+            scenario_id=np.asarray([row[5] for row in rows], dtype=np.int32),
+            seed=np.asarray([row[6] for row in rows], dtype=np.int32),
+        )
+        rows = []
+        shard_index += 1
+
+    for scenario_id in SPLIT_SCENARIOS[split]:
+        for seed in SPLIT_SEEDS[split]:
+            if sample_count >= n_per_split:
+                flush()
+                return sample_count
+            rng = np.random.default_rng((scenario_id + 1) * 1_000_003 + seed)
+            history, future, regime, detected = _track_sample(rng)
+            rows.append((history, future, regime, detected,
+                         f"{SCENARIOS[scenario_id]}-{seed:04d}", scenario_id, seed))
+            sample_count += 1
+            if len(rows) >= shard_size:
+                flush()
+    flush()
+    return sample_count
+
+
 def _write_split(root: Path, split: str, samples_per_run: int, shard_size: int,
                  patch_px: int, task: str) -> int:
     rows: list[tuple[np.ndarray, np.ndarray, np.ndarray, str, int, int, np.ndarray]] = []
@@ -139,17 +224,29 @@ def _write_split(root: Path, split: str, samples_per_run: int, shard_size: int,
     return sample_count
 
 
-def generate(root: Path, samples_per_run: int, shard_size: int, patch_px: int, task: str) -> None:
+def generate(root: Path, samples_per_run: int = 2, shard_size: int = 4096,
+             patch_px: int = 15, task: str = "centroid_patches",
+             n_per_split: int | None = None) -> None:
     root.mkdir(parents=True, exist_ok=True)
     for split in ("train", "val", "test"):
         (root / split).mkdir(exist_ok=True)
         for old_shard in sorted((root / split).glob("shard_*.npz")):
             old_shard.unlink()
 
-    counts = {
-        split: _write_split(root, split, samples_per_run, shard_size, patch_px, task)
-        for split in ("train", "val", "test")
-    }
+    if task == "tracks":
+        # MotionNet fixtures are tiny; n_per_split keeps tests off the 11k-run
+        # centroid tables while still using the same (scenario, seed) split rule.
+        per_split = n_per_split if n_per_split is not None else 32
+        counts = {
+            split: _write_track_split(root, split, shard_size, per_split)
+            for split in ("train", "val", "test")
+        }
+        patch_px = 0
+    else:
+        counts = {
+            split: _write_split(root, split, samples_per_run, shard_size, patch_px, task)
+            for split in ("train", "val", "test")
+        }
     manifest = {
         "name": root.name,
         "task": task,
@@ -183,14 +280,20 @@ def generate(root: Path, samples_per_run: int, shard_size: int, patch_px: int, t
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--task", choices=("centroid_patches", "candidates"), default="centroid_patches")
+    parser.add_argument("--task", choices=("centroid_patches", "candidates", "tracks"),
+                        default="centroid_patches")
     parser.add_argument("--samples-per-run", type=int, default=2)
     parser.add_argument("--shard-size", type=int, default=4096)
     parser.add_argument("--patch-px", type=int, default=15)
+    parser.add_argument("--n-per-split", type=int, default=None,
+                        help="track fixtures only: cap samples per split")
     args = parser.parse_args()
-    if args.samples_per_run < 1 or args.shard_size < 1 or args.patch_px != 15:
-        parser.error("samples and shard size must be positive; patch-px is fixed at the documented 15")
-    generate(args.out, args.samples_per_run, args.shard_size, args.patch_px, args.task)
+    if args.samples_per_run < 1 or args.shard_size < 1:
+        parser.error("samples and shard size must be positive")
+    if args.task != "tracks" and args.patch_px != 15:
+        parser.error("patch-px is fixed at the documented 15 for vision tasks")
+    generate(args.out, args.samples_per_run, args.shard_size, args.patch_px, args.task,
+             n_per_split=args.n_per_split)
     print(f"wrote deterministic {args.task} shards to {args.out}")
 
 

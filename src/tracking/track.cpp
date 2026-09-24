@@ -49,6 +49,11 @@ void Track::start(const Measurement& m, const TrackParams& p, int64_t frame) noe
     seed.sigma_urad  = last_sigma_;
     if (p_.imm) imm_.init(seed, p_.imm_params);
     else        kf_.init(seed, p_.kf);
+
+    hist_.fill(0.0f);
+    hist_count_ = 0;
+    hist_head_  = 0;
+    push_history();
 }
 
 void Track::predict(double dt) noexcept {
@@ -238,6 +243,7 @@ void Track::update(const Measurement& m) noexcept {
     // alternating hit/miss pattern that the consecutive-miss counter cannot
     // see, so the check has to be here as well as in miss().
     if (quality_failed()) state_ = TrackState::Deleted;
+    push_history();
 }
 
 void Track::miss() noexcept {
@@ -266,6 +272,40 @@ void Track::miss() noexcept {
     }
 
     if (quality_failed()) state_ = TrackState::Deleted;
+    push_history();
+}
+
+void Track::push_history() noexcept {
+    if (state_ == TrackState::Deleted) return;
+    const Angle2 p = position();
+    const Rate2  r = rate();
+    const int i = hist_head_ * 4;
+    hist_[static_cast<size_t>(i) + 0] = static_cast<float>(p.x);
+    hist_[static_cast<size_t>(i) + 1] = static_cast<float>(p.y);
+    hist_[static_cast<size_t>(i) + 2] = static_cast<float>(r.x);
+    hist_[static_cast<size_t>(i) + 3] = static_cast<float>(r.y);
+    hist_head_ = (hist_head_ + 1) % kHistory;
+    if (hist_count_ < kHistory) ++hist_count_;
+}
+
+void Track::history_tensor(float out[kHistory][4]) const noexcept {
+    for (int t = 0; t < kHistory; ++t) {
+        out[t][0] = out[t][1] = out[t][2] = out[t][3] = 0.0f;
+    }
+    const int prefix = kHistory - hist_count_;
+    const int oldest = (hist_count_ < kHistory) ? 0 : hist_head_;
+    for (int n = 0; n < hist_count_; ++n) {
+        const int src = (oldest + n) % kHistory;
+        const int dst = prefix + n;
+        out[dst][0] = hist_[static_cast<size_t>(src) * 4 + 0];
+        out[dst][1] = hist_[static_cast<size_t>(src) * 4 + 1];
+        out[dst][2] = hist_[static_cast<size_t>(src) * 4 + 2];
+        out[dst][3] = hist_[static_cast<size_t>(src) * 4 + 3];
+    }
+}
+
+void Track::set_regime_prior(MotionRegime regime, float confidence) noexcept {
+    if (p_.imm && imm_.initialised()) imm_.set_regime_prior(regime, confidence);
 }
 
 // ---------------------------------------------------------------------------

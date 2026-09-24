@@ -48,6 +48,7 @@
 #include "perception/pipeline.hpp"
 #include "perception/simple_detector.hpp"
 #include "plant/gimbal.hpp"
+#include "ai/motion_net.hpp"
 #include "search/pattern.hpp"
 #include "tracking/track.hpp"
 
@@ -401,6 +402,10 @@ struct PipelineConfig {
     /// the headless benchmark path turns it off. Reproducibility verification
     /// turns it ON, because the fingerprint is computed from the snapshot.
     bool publish_snapshots = true;
+
+    /// INV-7: --no-ai leaves this false and MotionNet is never loaded.
+    bool        ai_enabled = true;
+    std::string motion_net_path;
 };
 
 // ---------------------------------------------------------------------------
@@ -614,6 +619,12 @@ public:
         return perception_;
     }
 
+    [[nodiscard]] bool motion_net_loaded() const noexcept { return motion_net_ != nullptr; }
+    [[nodiscard]] int  motion_prior_applies() const noexcept { return motion_prior_applies_; }
+    /// Coast frames where a forecast was tested, and those the gate accepted.
+    [[nodiscard]] int  motion_coast_checks() const noexcept { return motion_coast_checks_; }
+    [[nodiscard]] int  motion_coast_uses() const noexcept { return motion_coast_uses_; }
+
     [[nodiscard]] const Tracker&       tracker()  const noexcept { return tracker_; }
     [[nodiscard]] const ModeFsm&       fsm()      const noexcept { return fsm_; }
     [[nodiscard]] const SearchPattern& search()   const noexcept { return search_; }
@@ -707,6 +718,14 @@ private:
     /// benchmark figure comes from.
     bool                         preview_consumers_ = false;
     std::vector<FrameFingerprint> fingerprints_;
+
+    // B19: optional MotionNet beside IMM. unique_ptr so a missing file is
+    // just an empty optional (INV-7), not a dummy that pretends to infer.
+    std::unique_ptr<MotionNet> motion_net_;
+    MotionForecast             last_forecast_{};
+    int                        motion_prior_applies_ = 0;
+    int                        motion_coast_checks_  = 0;
+    int                        motion_coast_uses_    = 0;
 };
 
 }  // namespace sat

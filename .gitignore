@@ -76,6 +76,10 @@ logs/*
 .clangd/
 .cache/
 
+# graphify knowledge graph + generated Obsidian memory vault
+graphify-out/
+obsidian-vault/
+
 # OS junk
 .DS_Store
 Thumbs.db
@@ -88,6 +92,8 @@ Testing/
 dist/
 
 data/
+third_party/
+.venv/
 ml/__pycache__/
 models/*.pt
 models/*.onnx

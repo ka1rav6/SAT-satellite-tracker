@@ -1,0 +1,26 @@
+# MotionNet factory sweep — four official row-12 regimes plus weather.
+#
+# This is NOT a SAT SweepSpec (those vary one base). just motion-data walks
+# the scenario list. Hold out an unseen file + seeds 35-40 as test (SAT-ML §2.3).
+
+[motion]
+scenarios = [
+    "scenarios/ml/motion_linear.toml",
+    "scenarios/ml/motion_circular.toml",
+    "scenarios/ml/motion_figure8.toml",
+    "scenarios/ml/motion_figure8_wide.toml",
+    "scenarios/ml/motion_ou.toml",
+]
+holdout = [
+    "scenarios/ml/motion_figure8_unseen.toml",
+]
+seed_start = 1
+seed_end = 30
+holdout_seed_end = 4
+duration_s = 10
+
+[capture]
+what = "tracks"
+history_len = 30
+horizon = 15
+include_dropouts = true

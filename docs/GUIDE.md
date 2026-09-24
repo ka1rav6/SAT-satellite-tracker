@@ -401,6 +401,25 @@ cannot go red is not a gate.
 
 ---
 
+## 11. MotionNet
+
+MotionNet is a ~6k-parameter GRU that forecasts the beacon 15 frames ahead
+from 30 tracker states. It trains on SAT simulator tracks only — the official
+PS Dataset Link is NA.
+
+```bash
+just motion-data          # sat-tracker --gen-dataset + windowing
+just train-motion
+just eval-motion          # SAT-ML §6.6 gate; do not ship ONNX if this fails
+just export-motion
+```
+
+`--no-ai` (or a missing `ai.motion_net` file) disables the net and the
+classical IMM keeps running. That is INV-7, and it is how the SIH ablation is
+scored.
+
+---
+
 ## Where to go next
 
 | | |

@@ -1,0 +1,99 @@
+# MotionNet factory — official row 12 figure-8 / lissajous (regime 2).
+
+[meta]
+name        = "motion_figure8"
+description = "MotionNet: figure-8 + fog so CFAR drops"
+
+[input]
+mode = "synthetic"
+
+[sim]
+truth_hz   = 300
+camera_hz  = 30
+control_hz = 30
+duration_s = 20
+seed       = 1
+
+[world]
+canvas_px      = [2000, 2000]
+edge_behaviour = "bounce"
+
+[camera]
+type           = "mono"
+resolution     = [640, 480]
+fov_deg        = [4.0, 3.0]
+exposure_ms    = 5.0
+blur_substeps  = 8
+initial_pos_px = [999.5, 999.5]
+
+[target]
+kind       = "target"
+intensity  = 220.0
+size_px    = 10
+initial_px = [999.5, 999.5]
+shape.type = "square"
+
+[[target.motion]]
+kind      = "constant"
+offset_px = [999.5, 999.5]
+
+[[target.motion]]
+kind         = "lissajous"
+amplitude_px = [200.0, 120.0]
+freq_ratio   = 2.0
+period_s     = 4.0
+phase_deg    = 0.0
+
+[gimbal]
+max_pan_dps      = 5.0
+max_tilt_dps     = 5.0
+max_accel_dps2   = 50.0
+time_constant_s  = 0.020
+latency_s        = 0.010
+encoder_lsb_urad = 20.0
+
+[noise]
+poisson        = true
+gaussian_sigma = 12.0
+salt_pepper    = 0.02
+hot_pixels     = 6
+
+[atmosphere]
+mode = "rain"
+
+[disturbance]
+jitter_px_per_frame = 1.5
+
+[clutter]
+static_sources = 0
+decoy_beacons  = 0
+
+[[event]]
+t_s = 3.2
+action = "occlude_target"
+duration_s = 0.30
+
+[[event]]
+t_s = 7.0
+action = "occlude_target"
+duration_s = 0.80
+
+[control]
+kp   = 8.0
+ki   = 2.0
+kd   = 0.15
+k_ff = 1.0
+
+[tracking]
+imm = true
+
+[ai]
+enabled          = true
+fallback_on_fail = true
+
+[requirements]
+acquisition_s     = 2.0
+tracking_error_px = 10.0
+target_loss_frac  = 0.05
+reacquisition_s   = 1.0
+min_fps           = 20.0

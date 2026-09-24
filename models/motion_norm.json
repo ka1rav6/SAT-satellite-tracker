@@ -1,0 +1,9 @@
+{
+  "comment": "Train-split scale baked into src/ai/motion_net.hpp. Dummy and v1 use 1e5 so windows stay O(1).",
+  "az_scale": 1.0e5,
+  "el_scale": 1.0e5,
+  "vaz_scale": 1.0e5,
+  "vel_scale": 1.0e5,
+  "history_len": 30,
+  "horizon": 15
+}

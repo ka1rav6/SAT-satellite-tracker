@@ -1699,7 +1699,7 @@ sat-tracker --bench
 **Rules:** one checkpoint at a time, in order. Write the test first. Do not proceed until the
 acceptance test passes. Four ★ GATEs stop all other work if they fail.
 
-## 14.0h AMENDMENT — `Atmosphere` was a photometric model, not a turbulence
+## 14.0j AMENDMENT — `Atmosphere` was a photometric model, not a turbulence
 ## one; Kolmogorov AoA jitter and log-normal scintillation are now beside it
 
 **Status:** adopted, extending §9.3's row-24 treatment. **Applies to:** §9.3
@@ -1798,6 +1798,27 @@ existed, and every number committed from one, is bit-identical: a disabled
 model draws nothing from `Stream::Atmosphere` and the render path pays one
 hoisted boolean. INV-3 is asserted both ways by the tests, and
 `--verify-reproducibility` passes unchanged.
+## 14.0i AMENDMENT — MotionNet SmoothL1 is on scaled residuals, and factory windows must be on the beacon
+
+**Status:** adopted on branch `motion-predictor-ML-integration`. **Applies to:** SAT-ML.md §6.4, §6.5.
+
+SAT-ML §6.4 writes `smooth_l1_loss(..., beta=0.5)` and says the unit is µrad. At this plate scale one pixel is ~109 µrad and a +5-frame turn residual is thousands of µrad, so β=0.5 µrad is deep in the saturated linear region on every sample. AdamW at 3e-4 then steps the O(1) GRU head by microradians per update and the residual stays ~0. Measured: 20 epochs moved val loss from 1394.39 to 1394.30 and test RMSE matched CV to three figures.
+
+**What changed.** `MotionNet.forward` multiplies the linear head by `RESIDUAL_SCALE` (1e4 µrad) so the tensor the rest of the system sees is still a µrad residual over CV. The loss divides both `(CV + residual)` and the target by that same scale before SmoothL1. 1e4, rather than the 1e5 input normaliser, puts a few-thousand-µrad turn residual near β=0.5, so the 0.3·CE term does not drown the forecast. Inference, ONNX, and the C++ compose path are unchanged: they add a µrad residual to CV. Input normalisation stays 1e5 (`TRACK_POS_SCALE` / `kPosScale`).
+
+**Test mix.** The hold-out file is an unseen figure-8, capped at `holdout_seed_end`, plus seeds ≡ 9 (mod 10) of every regime. A hold-out that is only a faster straight line makes §6.6's 35% +15 bar impossible, because CV is already the conditional mean on a line.
+
+**Factory filter.** `--gen-dataset` rows where the live track is more than 12_000 µrad from FrameTruth are not windowed. Those rows are a lock on clutter; the history does not determine the truth future, so they cannot teach §6.6. Truth is used only as this gate, never as a network input (INV-9).
+
+## 14.0h AMENDMENT — tracks-only `--gen-dataset` ships before centroid/candidate capture
+
+**Status:** adopted on branch `motion-predictor-ML-integration`. **Applies to:** §13.4, SAT-ML.md §2, CP 11.1 / CP 11.5.
+
+Design 13.4 still listed `--gen-dataset` as missing. This branch's assignment is MotionNet (M3), which needs `what = "tracks"` only: live tracker `[az, el, vaz, vel]` plus FrameTruth future angles, windowed in Python, split by `(scenario, seed)`.
+
+**What shipped.** `sat-tracker --gen-dataset --scenario F --out DIR` writes `raw/{name}_{seed}.csv` from `sat_app`. Labels never enter `sat_tracking` or `sat_ai` (INV-1). `ml/datagen.py` builds the shards.
+
+**What is not silently dropped.** The full centroid-patch and candidate-patch factories remain on the SAT-ML §2 / CP 11.1 remaining-work list. They are out of scope for this branch, not cancelled.
 
 ## 14.0g AMENDMENT — a real-time deadline model, and the load-shedding rung
 ## that had to be removed after it was measured

@@ -109,6 +109,12 @@ TEST_CASE("A-6: a bare word is accepted as a string") {
     auto round_trip = apply_overrides(*r, {});
     REQUIRE(round_trip.has_value());
     CHECK(round_trip->find("lowlight") != std::string::npos);
+
+    // A model path has slashes and a dot, so it is not a bare word, but it is
+    // still not valid TOML until quoted. `--set ai.motion_net=models/x.onnx`.
+    auto path = apply_overrides(base, {{"ai.motion_net", "models/motionnet_v1.onnx"}}, "--set");
+    REQUIRE_MESSAGE(path.has_value(), path.error());
+    CHECK(path->find("models/motionnet_v1.onnx") != std::string::npos);
 }
 
 TEST_CASE("A-6: values that already parse keep their own types") {

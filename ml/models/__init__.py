@@ -8,5 +8,6 @@ retain the classical fallbacks described in SAT-DESIGN.md section 11.
 
 from .candidate import CandidateNet
 from .centroid import CentroidNet
+from .motion import MotionNet
 
-__all__ = ["CandidateNet", "CentroidNet"]
+__all__ = ["CandidateNet", "CentroidNet", "MotionNet"]

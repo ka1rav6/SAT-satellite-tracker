@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 
 from ml.models.centroid import CentroidNet
+from ml.models.motion import HISTORY_LEN, INPUT_SIZE, MotionNet
 
 
 def export(model: torch.nn.Module, out_path: Path, patch_px: int = 15) -> None:
@@ -29,6 +30,30 @@ def export(model: torch.nn.Module, out_path: Path, patch_px: int = 15) -> None:
     )
 
 
+def export_motion(model: torch.nn.Module, out_path: Path) -> None:
+    """Fixed batch-1 MotionNet graph: hist (1,30,4) -> forecast, logits."""
+    model.eval()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    dummy = torch.zeros(1, HISTORY_LEN, INPUT_SIZE)
+    torch.onnx.export(
+        model,
+        dummy,
+        out_path,
+        input_names=["hist"],
+        output_names=["forecast", "logits"],
+        opset_version=17,
+        dynamic_axes=None,
+        do_constant_folding=True,
+    )
+
+
+def export_motion_checkpoint(checkpoint_path: Path, out_path: Path) -> None:
+    model = MotionNet()
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    model.load_state_dict(checkpoint.get("model", checkpoint))
+    export_motion(model, out_path)
+
+
 def export_checkpoint(checkpoint_path: Path, out_path: Path) -> None:
     model = CentroidNet()
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
@@ -42,5 +67,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint", type=Path)
     parser.add_argument("out", type=Path)
+    parser.add_argument("--task", choices=("centroid", "motion"), default="centroid")
     args = parser.parse_args()
-    export_checkpoint(args.checkpoint, args.out)
+    if args.task == "motion":
+        export_motion_checkpoint(args.checkpoint, args.out)
+    else:
+        export_checkpoint(args.checkpoint, args.out)

@@ -16,6 +16,7 @@
 
 #include <doctest/doctest.h>
 
+#include "core/units.hpp"
 #include "search/pattern.hpp"
 
 #include <cmath>
@@ -66,7 +67,7 @@ TEST_CASE("CP 6.7: from_camera derives the step from the field of view") {
     const SearchParams   p   = SearchParams::from_camera(cam, scr, 0.15);
 
     // 4 degrees, less 15% overlap.
-    const double fov_x_urad = 4.0 * M_PI / 180.0 * 1e6;
+    const double fov_x_urad = 4.0 * kPi / 180.0 * 1e6;
     CHECK(p.step.x == doctest::Approx(fov_x_urad * 0.85).epsilon(1e-6));
     CHECK(p.step.y < p.step.x);           // 3 degrees vertically
 
@@ -105,8 +106,8 @@ TEST_CASE("CP 6.7: the sweep bound is reported, and it does not meet spec row 16
     const ScreenGeometry scr = ScreenGeometry::make(2000, 2000, cam);
     SearchParams p = SearchParams::from_camera(cam, scr);
 
-    const double rate_5  = 5.0  * M_PI / 180.0 * 1e6;   // spec row 13 default
-    const double rate_10 = 10.0 * M_PI / 180.0 * 1e6;   // spec row 13 maximum
+    const double rate_5  = 5.0  * kPi / 180.0 * 1e6;   // spec row 13 default
+    const double rate_10 = 10.0 * kPi / 180.0 * 1e6;   // spec row 13 maximum
     const double t5  = full_sweep_time_s(p, rate_5);
     const double t10 = full_sweep_time_s(p, rate_10);
     MESSAGE("full cold sweep: " << t5 << " s at 5 deg/s, " << t10 << " s at 10 deg/s");

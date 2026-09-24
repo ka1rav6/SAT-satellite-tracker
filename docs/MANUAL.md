@@ -95,6 +95,25 @@ never graded, and its own header line says so. `centroid.csv` deliberately does
 not, because a graded artifact containing the answer key is worthless as
 evidence. `tools/plot_control.py` renders a trace as a standalone SVG.
 
+### MotionNet
+
+The motion predictor is optional. `ai.motion_net = "models/motionnet_v1.onnx"`
+loads it; `--no-ai` or a missing file falls back to IMM.
+
+```bash
+just motion-data seed_end=30 duration=10
+just train-motion
+just eval-motion
+just export-motion
+sat-tracker --headless --scenario scenarios/ml/motion_figure8.toml \
+    --set ai.motion_net=\"models/motionnet_v1.onnx\"
+sat-tracker --headless --scenario scenarios/ml/motion_figure8.toml --no-ai
+```
+
+`--gen-dataset` writes tracker `[az, el, vaz, vel]` plus FrameTruth angles
+into `DIR/raw/`. Labels stay in `sat_app` (INV-1). Only `task=tracks` ships
+on this branch.
+
 ### Video — Benchmark Performance-2
 
 ```bash

@@ -1,0 +1,54 @@
+"""MotionNet — 30x4 track history to 15-step residual + regime (SAT-ML.md §6.2).
+
+A tiny GRU is the whole model. Anything larger blows the 0.05 ms ONNX budget
+and official row 20 (20 FPS). It does not look at the image: perception already
+handled noise; this net keeps a kinematic guess alive through CFAR dropouts.
+"""
+
+from __future__ import annotations
+
+import torch
+from torch import Tensor, nn
+
+HISTORY_LEN, HORIZON, INPUT_SIZE, N_REGIMES, HIDDEN = 30, 15, 4, 4, 24
+DT_S = 1.0 / 30.0
+# The linear head is O(1). Multiply by this so the returned residual is µrad.
+# 1e4, not the 1e5 input scale: a few-thousand-µrad turn residual then sits
+# near β=0.5, and 0.3 * CE does not drown the forecast term (§14.0i).
+RESIDUAL_SCALE = 1.0e4
+
+
+def constant_velocity_forecast(hist: Tensor, dt_s: float = DT_S) -> Tensor:
+    """Raw-µrad CV residual: last_rate * k * dt for k=1..15.
+
+    ``hist`` is un-normalised tracker state (B, 30, 4) = [az, el, vaz, vel].
+    CV already owns clean lines; MotionNet learns the residual on top.
+    """
+    if hist.ndim != 3 or hist.shape[-1] != 4:
+        raise ValueError(f"expected (B, T, 4) raw history, got {tuple(hist.shape)}")
+    last_rate = hist[:, -1, 2:4]
+    steps = torch.arange(1, HORIZON + 1, device=hist.device, dtype=hist.dtype) * dt_s
+    return last_rate.unsqueeze(1) * steps.view(1, HORIZON, 1)
+
+
+class MotionNet(nn.Module):
+    """30x4 track history -> 15-step (dx, dy) + 4-class regime logits."""
+
+    def __init__(self, hidden: int = HIDDEN, horizon: int = HORIZON):
+        super().__init__()
+        self.horizon = horizon
+        self.gru = nn.GRU(input_size=INPUT_SIZE, hidden_size=hidden, batch_first=True)
+        self.forecast = nn.Linear(hidden, horizon * 2)
+        self.regime = nn.Linear(hidden, N_REGIMES)
+
+    def forward(self, hist: Tensor) -> tuple[Tensor, Tensor]:
+        if hist.ndim != 3 or hist.shape[1:] != (HISTORY_LEN, INPUT_SIZE):
+            raise ValueError(
+                f"expected (B, {HISTORY_LEN}, {INPUT_SIZE}), got {tuple(hist.shape)}"
+            )
+        _, hidden = self.gru(hist)
+        hidden = hidden.squeeze(0)
+        # O(1) head → µrad residual. Training divides by RESIDUAL_SCALE again
+        # so β=0.5 sits on the normalised error, not on a saturated ±1.
+        forecast = self.forecast(hidden).view(-1, self.horizon, 2) * RESIDUAL_SCALE
+        return forecast, self.regime(hidden)
