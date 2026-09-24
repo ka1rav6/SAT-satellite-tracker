@@ -246,9 +246,16 @@ sat_add_module(sat_metrics
         src/metrics/compliance.cpp
         src/metrics/report.cpp
         src/metrics/centroid_harness.cpp
-    PUBLIC_DEPS sat_core sat_world sat_engine
+        src/metrics/machine.cpp
+    PUBLIC_DEPS sat_core sat_world sat_engine sat_degrade
 )
 target_link_libraries(sat_metrics PRIVATE nlohmann_json::nlohmann_json)
+# Audit P3-5: the provenance record names the build type, so a Debug number
+# can never be mistaken for a Release one. Generator expression rather than
+# CMAKE_BUILD_TYPE so multi-config generators (MSVC, Xcode) report the config
+# actually being built rather than the empty string they leave that variable.
+target_compile_definitions(sat_metrics PRIVATE
+    SAT_BUILD_TYPE="$<IF:$<BOOL:$<CONFIG>>,$<CONFIG>,unknown>")
 
 # gui — the dashboard (design §12). Deferred: the engine is built headless-first
 # with the triple-buffered snapshot seam already in place, so the dashboard

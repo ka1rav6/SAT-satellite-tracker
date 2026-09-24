@@ -167,7 +167,7 @@ Measured on `scenarios/compliance.toml` (spec defaults, beacon in view at t=0), 
 | Standalone executable | **IMPL** | `dist/sat-tracker-*-linux-x86_64.tar.gz` exists; `just dist` builds it; CI produces a Windows artifact | Linux tarball only in-repo; **Windows binary not verified by this audit** (`UNVERIFIED`) |
 | Source code, modular & commented | **IMPL** | 27.7 k LOC, 13 CMake modules, linker-enforced boundaries. Comment quality is exceptional | Some comments are **stale** (§15.2) |
 | Technical report (10–15 pp) | **GAP** | `docs/report/.gitkeep` is empty | **Not started.** 20 % of marks depend partly on it |
-| User manual | **IMPL** | `docs/MANUAL.md` (360 ll) + `docs/GUIDE.md` (416 ll) with 6 screenshots | `docs/manual/.gitkeep` empty — the *submitted* manual artefact does not exist as a document |
+| User manual | **IMPL** | `docs/MANUAL.md` (360 ll) + `docs/GUIDE.md` (416 ll) with 6 screenshots | `docs/manual/` removed as of this fix — the manual is `docs/MANUAL.md` + `docs/GUIDE.md`; a PDF for submission is still a packaging step, not a missing document |
 | Demo video (3–5 min, optional) | **GAP** | — | Optional |
 | **Performance log (auto-generated)** | **IMPL** | `run.json` + `centroid.csv` + `report.html`, all three written per run | PS asks for **average** tracking error; project reports RMS/p95/max, **no mean** — §9.3 |
 
@@ -1233,8 +1233,8 @@ Together those say: *"this is not a tracker demo, it is a **validated testbed** 
 | **P3-2** | `dashboard.cpp:177` comment factually stale (straw man vs classical) | 7.1 A-8 |
 | **P3-3** | `run.json` writes `world.edge_behaviour = 0` as an integer, not a name | 5 |
 | **P3-4** | `check_docs.py` verifies links but never numbers | 15.3 |
-| **P3-5** | Performance numbers quoted without a machine specification | 11.2 |
-| **P3-6** | `docs/manual/` and `docs/report/` are empty `.gitkeep` directories | 3.4 |
+| ~~**P3-5**~~ | ~~Performance numbers quoted without a machine specification~~ **FIXED** — `metrics/machine.hpp`; CPU, OS, compiler, build type, thread count and the AVX2/scalar path taken, in `run.json` and in the report's RESOURCES block | 11.2 |
+| ~~**P3-6**~~ | ~~`docs/manual/` and `docs/report/` are empty `.gitkeep` directories~~ **FIXED** — `docs/report/TECHNICAL_REPORT.md` written (P0-5); the empty `docs/manual/` removed, since the manual is `docs/MANUAL.md` + `docs/GUIDE.md` and an empty directory beside them claimed a deliverable that was not there | 3.4 |
 | **P3-7** | `issues_till_now.md:267` says the camera sees "9.8 %" of the screen; every other document and the arithmetic say **7.68 %** ((640x480)/(2000x2000)) | 15.3 |
 
 ---

@@ -2,6 +2,8 @@
 
 #include "metrics/collector.hpp"
 
+#include "metrics/machine.hpp"
+
 #include <cstdio>
 #include <cmath>
 
@@ -628,6 +630,15 @@ std::string format_summary(const RunMetrics& m) {
         }
         line("  peak memory       %8.1f MB  (high-water RSS, not the value at exit)\n",
              static_cast<double>(m.peak_rss_bytes) / (1024.0 * 1024.0));
+        // P3-5. The audit's complaint was that every speed figure this
+        // project prints is a statement about a CPU and none of them said
+        // which. "cores used 1.01 of 4" still does not: four threads could be
+        // a throttling laptop or a server slice. The one line below is what a
+        // reader needs to know whether the number above applies to them, and
+        // the AVX2/scalar token in it is the field that most often explains a
+        // surprising figure — a run forced onto the scalar damage chain is
+        // several times slower and otherwise reads as a tracker regression.
+        line("  machine             %s\n", probe_machine().one_line().c_str());
     }
 
     // --- real-time deadline — P1-10 ----------------------------------------

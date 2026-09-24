@@ -2,6 +2,8 @@
 
 #include "metrics/run_report.hpp"
 
+#include "metrics/machine.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
@@ -279,11 +281,27 @@ std::string run_json(const RunMetrics& m, const Scenario& sc,
     // is a std::map, which sorts keys — so "metrics" came out before
     // "provenance" and the comment above was describing an intention the code
     // did not implement. A test asserting the order is what caught it.
+    // P3-5. Every throughput figure this project publishes is a statement
+    // about a CPU, and `hardware_threads` alone was not one: four threads
+    // could be a throttling laptop or a server slice, and that is a factor of
+    // three on exactly the rows BP-2 is scored on. `avx2` records the path
+    // TAKEN rather than the CPU's capability, because a run that fell back to
+    // the scalar damage chain is several times slower and without this field
+    // reads as a tracker regression. See metrics/machine.hpp.
+    const MachineSpec mach = probe_machine();
     j["provenance"] = {
         {"build",       build_hash},
         {"seed",        sc.seed},
         {"scenario",    sc.name},
         {"ai_enabled",  sc.ai_enabled},
+        {"machine", {
+            {"cpu",               mach.cpu},
+            {"os",                mach.os},
+            {"compiler",          mach.compiler},
+            {"build_type",        mach.build_type},
+            {"hardware_threads",  mach.hardware_threads},
+            {"avx2_damage_chain", mach.avx2_damage_chain},
+        }},
         // INV-3's hash over every published snapshot. A re-run with the same
         // build and seed must reproduce this exactly; if it does not, every
         // number below is suspect and this field is how that gets noticed.

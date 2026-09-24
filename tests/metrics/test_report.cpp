@@ -10,6 +10,7 @@
 
 #include <doctest/doctest.h>
 
+#include "metrics/machine.hpp"
 #include "metrics/report.hpp"
 
 #include <regex>
@@ -175,4 +176,67 @@ TEST_CASE("CP 7.6: row 17 is reported against its derived floor when one applies
     // Without a floor the same number IS a failure, and says so.
     in.requirements.tracking_floor_px = 0.0;
     CHECK(render_report(in).find(">FAIL<") != std::string::npos);
+}
+
+// ===========================================================================
+// P3-5 — the machine specification beside the numbers
+// ===========================================================================
+//
+// The audit's complaint is one line: "performance numbers quoted without a
+// machine specification". Every throughput figure this project publishes is a
+// statement about a CPU, and `hardware_threads: 4` is not one — four threads
+// could be a throttling laptop or a server slice, and that is a factor of
+// three on exactly the rows Benchmark Performance-2 is scored on.
+//
+// These tests assert the CONTRACT rather than the values, because the values
+// are different on every machine the suite runs on. What must hold everywhere
+// is that no field is silently empty and that the probe cannot fail a run.
+
+TEST_CASE("P3-5: the machine probe fills every field and never throws") {
+    const MachineSpec m = probe_machine();
+
+    // "unknown" is an acceptable answer on an exotic host; an EMPTY string is
+    // not, because it renders as a blank column and reads as a bug rather
+    // than as a platform the probe does not cover.
+    CHECK_FALSE(m.cpu.empty());
+    CHECK_FALSE(m.os.empty());
+    CHECK_FALSE(m.compiler.empty());
+    CHECK_FALSE(m.build_type.empty());
+
+    // The build type must be a real CMake configuration, never the empty
+    // string a multi-config generator leaves in CMAKE_BUILD_TYPE. A Debug
+    // number mistaken for a Release one is the specific confusion this field
+    // exists to prevent, and it is worth an assertion.
+    CHECK(m.build_type != "unknown");
+
+    MESSAGE("machine: " << m.one_line());
+}
+
+TEST_CASE("P3-5: the one-line summary names the path taken, not the CPU's capability") {
+    MachineSpec m;
+    m.cpu               = "Test CPU";
+    m.os                = "Linux";
+    m.compiler          = "gcc 13.3.0";
+    m.build_type        = "Release";
+    m.hardware_threads  = 8;
+
+    // The distinction that matters. --no-simd forces the scalar damage chain
+    // on a CPU that has AVX2; the run is several times slower, and without
+    // this token in the record that reads as a tracker regression rather than
+    // as the switch that was passed.
+    m.avx2_damage_chain = true;
+    const std::string with = m.one_line();
+    m.avx2_damage_chain = false;
+    const std::string without = m.one_line();
+
+    CHECK(with.find("AVX2") != std::string::npos);
+    CHECK(with.find("scalar") == std::string::npos);
+    CHECK(without.find("scalar") != std::string::npos);
+    CHECK(without.find("AVX2") == std::string::npos);
+
+    // Everything else a reader needs is on the same line.
+    CHECK(with.find("Test CPU") != std::string::npos);
+    CHECK(with.find("8 threads") != std::string::npos);
+    CHECK(with.find("Release") != std::string::npos);
+    CHECK(with.find("gcc 13.3.0") != std::string::npos);
 }
