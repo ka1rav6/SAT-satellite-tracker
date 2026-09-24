@@ -507,3 +507,78 @@ TEST_CASE("CP 7.7: the matrix breaks out per condition") {
     REQUIRE(fog_at != std::string::npos);
     CHECK(out.find("FAIL", fog_at) != std::string::npos);
 }
+
+// ===========================================================================
+// --set key validation
+// ===========================================================================
+//
+// `apply_overrides` creates any intermediate table it cannot find. That is
+// correct for the overlay — it is what lets `--set atmosphere.turbulence.enabled=true`
+// work on a scenario with no such table — but it meant an unrecognised key was
+// a SILENT NO-OP that still exited 0:
+//
+//     --set control.kpp=99                          typo for control.kp
+//     --set target.motion[0].velocity_px_s=[500,0]  array-of-tables path
+//
+// Both wrote a key the loader never reads, ran the base scenario, and printed
+// a full report. Measured before the check: both produced 16.939 px, identical
+// to passing no --set at all. In a demo that answers "what if you double the
+// target speed?" with the number for the speed that was not changed.
+
+TEST_CASE("--set: a key the schema does not define is rejected, not ignored") {
+    const std::vector<Override> typo{{"control.kpp", "99.0"}};
+    auto r = check_override_keys(typo, "--set");
+    REQUIRE_FALSE(r);
+    MESSAGE(r.error());
+    CHECK(r.error().find("control.kpp") != std::string::npos);
+    CHECK(r.error().find("--set") != std::string::npos);
+    // The suggestion is the point: the key is one character from a real one,
+    // and saying so turns a puzzled re-read into a fix.
+    CHECK(r.error().find("control.kp'") != std::string::npos);
+}
+
+TEST_CASE("--set: an array-of-tables path says why it cannot work") {
+    const std::vector<Override> stack{
+        {"target.motion[0].velocity_px_s", "[500.0, 0.0]"}};
+    auto r = check_override_keys(stack, "--set");
+    REQUIRE_FALSE(r);
+    MESSAGE(r.error());
+    // Not just "unknown key": the overlay addresses named tables and cannot
+    // reach an array element at all, so the message has to point at the file.
+    CHECK(r.error().find("array of tables") != std::string::npos);
+    CHECK(r.error().find("GUIDE") != std::string::npos);
+}
+
+TEST_CASE("--set: a nonsense key gets no misleading suggestion") {
+    // A suggestion that is not actually similar is worse than none — it sends
+    // the reader off to check a key they never meant.
+    auto r = check_override_keys({{"this.is.not.a.key", "5"}}, "--set");
+    REQUIRE_FALSE(r);
+    MESSAGE(r.error());
+    CHECK(r.error().find("Did you mean") == std::string::npos);
+}
+
+TEST_CASE("--set: every key the loader reads is accepted") {
+    // The regression this pairs with: the schema table used to hold only
+    // range-checked NUMERIC keys, so a check like this would have rejected
+    // every string and enum key in the scenario — atmosphere.mode,
+    // ai.motion_net, input.video_file and thirteen others. src/app/sweep.cpp's
+    // comment records that exact failure from the first attempt at this.
+    for (const char* key : {"atmosphere.mode", "ai.motion_net", "input.mode",
+                            "world.edge_behaviour", "logging.centroid_csv",
+                            "meta.name", "camera.type", "sim.seed",
+                            "control.kp", "atmosphere.turbulence.enabled"}) {
+        INFO("key: " << key);
+        CHECK(check_override_keys({{key, "1"}}, "--set").has_value());
+    }
+}
+
+TEST_CASE("--set: the context names the flag, not the sweep") {
+    // A-6's complaint, applied to the new message too.
+    auto a = check_override_keys({{"nope.nope", "1"}}, "--set");
+    auto b = check_override_keys({{"nope.nope", "1"}}, "sweep");
+    REQUIRE_FALSE(a);
+    REQUIRE_FALSE(b);
+    CHECK(a.error().rfind("--set", 0) == 0);
+    CHECK(b.error().rfind("sweep", 0) == 0);
+}

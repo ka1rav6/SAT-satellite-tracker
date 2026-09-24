@@ -25,6 +25,57 @@ constexpr double kInf = std::numeric_limits<double>::infinity();
 // ===========================================================================
 const std::vector<FieldSpec>& schema() {
     static const std::vector<FieldSpec> table = {
+        // --- string- and enum-valued keys ------------------------------------
+        //
+        // These carry no numeric range — their legality is decided by the
+        // loader, against an enum list or by the file existing. They are in
+        // this table anyway, and that is a deliberate change of purpose.
+        //
+        // This table used to hold ONLY range-checked numeric keys, which made
+        // `schema()` a misnomer: a quarter of the scenario's keys were absent,
+        // and anything that asked "is this a real key?" got the wrong answer
+        // for every enum. `src/app/sweep.cpp` hit exactly that and had to fall
+        // back to a behavioural probe; the comment there records it.
+        //
+        // With the table complete it is a registry of EVERY settable key,
+        // which is what `--set` needs to reject a typo instead of silently
+        // doing nothing (see scenario/overlay.cpp), and what the generated
+        // manual needs to cross-reference every key rather than the numeric
+        // subset. `check_range` is only ever called from the numeric getters,
+        // so a String entry here is never range-checked.
+        {"meta.name",        ValueKind::String, false, 0.0, 0.0, "",
+         "free text; names the run in the report and in run.json"},
+        {"meta.description", ValueKind::String, false, 0.0, 0.0, "",
+         "free text; shown in the dashboard's scenario picker"},
+        {"input.mode",       ValueKind::String, false, 0.0, 0.0, "",
+         "synthetic | video_screen | video_direct (design §8.3)"},
+        {"input.video_file", ValueKind::String, false, 0.0, 0.0, "",
+         "path to the clip; required by the two video modes"},
+        {"input.video_truth_csv", ValueKind::String, false, 0.0, 0.0, "",
+         "optional truth track for a supplied clip, so it can be scored"},
+        {"camera.type",      ValueKind::String, false, 0.0, 0.0, "row 2",
+         "the specification names a monochrome sensor"},
+        {"world.edge_behaviour", ValueKind::String, false, 0.0, 0.0, "row 8",
+         "bounce | wrap | clamp | none"},
+        {"atmosphere.mode",  ValueKind::String, false, 0.0, 0.0, "row 24",
+         "clear | haze | rain | fog | lowlight"},
+        {"ai.candidate_net",   ValueKind::String, false, 0.0, 0.0, "",
+         "ONNX path; empty or missing falls back to the classical path (INV-7)"},
+        {"ai.centroid_net",    ValueKind::String, false, 0.0, 0.0, "",
+         "ONNX path; empty or missing falls back to the classical path (INV-7)"},
+        {"ai.motion_net",      ValueKind::String, false, 0.0, 0.0, "",
+         "ONNX path; empty or missing leaves the IMM running (INV-7)"},
+        {"ai.recovery_net",    ValueKind::String, false, 0.0, 0.0, "",
+         "ONNX path; empty or missing falls back to the classical path (INV-7)"},
+        {"ai.strategy_policy", ValueKind::String, false, 0.0, 0.0, "",
+         "ONNX path; empty or missing leaves the rule-table supervisor (INV-7)"},
+        {"logging.centroid_csv", ValueKind::String, false, 0.0, 0.0, "",
+         "the graded centroiding log (design §13.2)"},
+        {"logging.metrics_json", ValueKind::String, false, 0.0, 0.0, "",
+         "the run's machine-readable record"},
+        {"logging.report_html",  ValueKind::String, false, 0.0, 0.0, "",
+         "the self-contained HTML report"},
+
         // --- [sim] ----------------------------------------------------------
         {"sim.truth_hz",   ValueKind::Int,   false, 30,   10000, "",
          "the world advances at this rate; must divide evenly by camera_hz and control_hz (INV-3)"},

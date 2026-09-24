@@ -219,6 +219,14 @@ int run_sweep(const SweepOptions& opt) {
         if (spec.duration_s > 0.0) {
             ov.push_back(Override{"sim.duration_s", std::to_string(spec.duration_s)});
         }
+        // The behavioural probe above already catches an inert axis, but it
+        // can only say "this axis changes nothing". Checking the key first
+        // says WHICH key and suggests the right one, which is the difference
+        // between a two-minute fix and a puzzled re-read of the sweep file.
+        if (auto keys = check_override_keys(ov, "sweep"); !keys) {
+            std::fprintf(stderr, "%s\n", keys.error().c_str());
+            return 1;
+        }
         auto text = apply_overrides(base_text, ov);
         if (!text) {
             std::fprintf(stderr, "%s\n", text.error().c_str());

@@ -46,6 +46,37 @@ struct Override {
     std::string value;
 };
 
+/// Reject any override key the scenario schema does not define.
+///
+/// SEPARATE FROM apply_overrides ON PURPOSE. That function is a general TOML
+/// overlay and is unit-tested with synthetic documents (`[a] x = 1`); this is
+/// the scenario-specific POLICY, and it belongs at the CLI boundary where a
+/// human typed the key. The division is the one this header already describes:
+/// the overlay does syntax, the schema does meaning.
+///
+/// WHAT IT PREVENTS. `apply_overrides` creates any intermediate table it
+/// cannot find, so before this check an unrecognised key was a silent no-op
+/// that still exited 0:
+///
+///     --set control.kpp=99                          (a typo for control.kp)
+///     --set target.motion[0].velocity_px_s=[500,0]  (an array-of-tables path)
+///
+/// Both wrote a key the loader never reads, ran the BASE scenario, and printed
+/// a full report. Measured before this check, both produced 16.939 px —
+/// byte-identical to passing no --set at all.
+///
+/// That is the worst failure mode available to a tuning switch. In a demo it
+/// answers "what if you double the target speed?" with the number for the
+/// speed that was not changed; in a script it records an experiment that never
+/// ran. `--set` is meant to be typed by hand under time pressure, which is
+/// exactly when a key gets mistyped.
+///
+/// Array-of-table paths are rejected by the same rule and correctly so: the
+/// overlay addresses named tables and cannot reach an array element at all.
+/// Motion stacks are edited in a scenario file — docs/GUIDE.md §12.
+[[nodiscard]] Result<void> check_override_keys(const std::vector<Override>& ov,
+                                               std::string_view context = "--set");
+
 /// Apply overrides to a TOML document and return the new document text.
 ///
 /// Creates intermediate tables as needed, so an override can set a key whose

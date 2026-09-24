@@ -212,6 +212,12 @@ int gui_command(int argc, char* argv[], int& i) {
         }
         std::ostringstream buf;
         buf << in.rdbuf();
+        // Same guard as --headless: a key the schema does not define would
+        // otherwise open the dashboard on the unmodified scenario.
+        if (auto keys = sat::check_override_keys(overrides, "--set"); !keys) {
+            std::fprintf(stderr, "%s\n", keys.error().c_str());
+            return 1;
+        }
         auto text = sat::apply_overrides(buf.str(), overrides, "--set");
         if (!text) {
             std::fprintf(stderr, "%s\n", text.error().c_str());

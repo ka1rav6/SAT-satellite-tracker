@@ -2,9 +2,13 @@
 
 #include "scenario/overlay.hpp"
 
+#include "scenario/schema.hpp"
+
 #include <toml++/toml.hpp>
 
+#include <algorithm>
 #include <sstream>
+#include <vector>
 
 namespace sat {
 
@@ -49,7 +53,62 @@ bool is_bare_word(std::string_view v) {
     return true;
 }
 
+/// Edit distance, capped — only used to suggest a nearer key in an error.
+size_t edit_distance(std::string_view a, std::string_view b) {
+    std::vector<size_t> prev(b.size() + 1), cur(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); ++j) prev[j] = j;
+    for (size_t i = 1; i <= a.size(); ++i) {
+        cur[0] = i;
+        for (size_t j = 1; j <= b.size(); ++j) {
+            const size_t sub = prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
+            cur[j] = std::min({cur[j - 1] + 1, prev[j] + 1, sub});
+        }
+        prev = cur;
+    }
+    return prev[b.size()];
+}
+
+/// The closest schema key to `key`, or empty when nothing is close enough.
+///
+/// A suggestion that is not actually similar is worse than none: it sends the
+/// reader off to check a key they never meant. The threshold is a third of the
+/// key's length, so `control.kpp` finds `control.kp` and `this.is.not.a.key`
+/// finds nothing.
+std::string nearest_key(std::string_view key) {
+    size_t best = key.size() / 3 + 1;
+    std::string out;
+    for (const FieldSpec& f : schema()) {
+        const size_t d = edit_distance(key, f.path);
+        if (d < best) { best = d; out = f.path; }
+    }
+    return out;
+}
+
 }  // namespace
+
+Result<void> check_override_keys(const std::vector<Override>& ov,
+                                 std::string_view context) {
+    const std::string pre(context);
+    for (const Override& o : ov) {
+        if (find_field(o.key) != nullptr) continue;
+
+        std::ostringstream os;
+        os << pre << ": '" << o.key << "' is not a scenario key, so setting "
+           << "it would change nothing";
+        const std::string near = nearest_key(o.key);
+        if (!near.empty()) {
+            os << "\n  Did you mean '" << near << "'?";
+        }
+        if (o.key.find('[') != std::string::npos) {
+            os << "\n  Keys inside an array of tables — [[target.motion]],"
+                  " [[disturbance.platform]], [[event]] — cannot be set this"
+                  " way.\n  Copy the scenario and edit the stack there;"
+                  " docs/GUIDE.md section 12 has the recipe.";
+        }
+        return Err(os.str());
+    }
+    return Ok();
+}
 
 Result<std::string> apply_overrides(std::string_view toml_text,
                                     const std::vector<Override>& ov,
@@ -70,6 +129,7 @@ Result<std::string> apply_overrides(std::string_view toml_text,
         if (path.empty() || path.back().empty()) {
             return Err(pre + ": empty override key");
         }
+
 
         // Parse the value on its own, as a one-key document. This is what makes
         // the value's TYPE come from TOML's own rules rather than from a guess
@@ -150,8 +210,11 @@ Result<std::string> apply_overrides(std::string_view toml_text,
             }
             toml::table* as_table = child->as_table();
             if (!as_table) {
+                // Was hardcoded to "sweep: " regardless of context, so the
+                // same defect reported through --headless blamed a sweep that
+                // was not running. Same class as audit A-6.
                 return Err(
-                    "sweep: override key '" + o.key + "' runs through '" + path[i] +
+                    pre + ": override key '" + o.key + "' runs through '" + path[i] +
                     "', which is not a table in the base scenario");
             }
             cur = as_table;
